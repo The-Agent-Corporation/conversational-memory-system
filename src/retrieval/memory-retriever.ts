@@ -57,8 +57,39 @@ export class MemoryRetriever {
     };
 
     await this.store.saveInjection(packet);
+    await this.recordSelectedSummaryAccess(summaries, selected, createdAt);
     return packet;
   }
+
+  private async recordSelectedSummaryAccess(
+    summaries: Summary[],
+    selected: RankedMemory[],
+    accessedAt: string
+  ): Promise<void> {
+    const selectedSummaryIds = new Set(
+      selected
+        .map((memory) => memory.summaryId)
+        .filter((summaryId): summaryId is string => summaryId !== null)
+    );
+
+    for (const summary of summaries) {
+      if (!selectedSummaryIds.has(summary.id)) {
+        continue;
+      }
+
+      await this.store.saveSummary({
+        ...summary,
+        lastAccessedAt: accessedAt,
+        retrievedAt: accessedAt,
+        retrievalCount: summary.retrievalCount + 1,
+        strength: strengthen(summary.strength)
+      });
+    }
+  }
+}
+
+function strengthen(strength: number): number {
+  return Math.min(1, Number((strength + 0.05).toFixed(2)));
 }
 
 function rankMemories(
