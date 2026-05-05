@@ -9,6 +9,7 @@ interface RankedMemory {
   id: string;
   text: string;
   score: number;
+  tokenCount: number;
   scoringMethod: "keyword overlap" | "vector similarity";
   summaryId: string | null;
   sourceTurnRanges: TurnRange[];
@@ -38,8 +39,13 @@ export class MemoryRetriever {
       return null;
     }
 
-    const selected = ranked.slice(0, 3);
+    const selected = selectMemories(ranked, request.maxMemoryTokens);
+    if (selected.length === 0) {
+      return null;
+    }
+
     const createdAt = request.requestedAt ?? new Date().toISOString();
+    const selectedTokenCount = selected.reduce((sum, memory) => sum + memory.tokenCount, 0);
     const packet: InjectionPacket = {
       id: injectionId(request, selected, createdAt),
       hostSessionId: request.hostSessionId,
@@ -52,7 +58,7 @@ export class MemoryRetriever {
       boxIds: [...new Set(selected.flatMap((memory) => memory.boxIds))],
       relevanceReason: buildRelevanceReason(selected),
       confidence: Math.min(0.95, Math.max(0.1, selected[0].score)),
-      disclosureText: `Retrieved ${selected.length} memory item${selected.length === 1 ? "" : "s"} for ${request.currentTopicSummary}.`,
+      disclosureText: buildDisclosureText(selected.length, request.currentTopicSummary, selectedTokenCount, request.maxMemoryTokens),
       createdAt
     };
 
@@ -87,6 +93,29 @@ export class MemoryRetriever {
       });
     }
   }
+}
+
+function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): RankedMemory[] {
+  if (maxMemoryTokens === undefined) {
+    return ranked.slice(0, 3);
+  }
+
+  const selected: RankedMemory[] = [];
+  let usedTokens = 0;
+
+  for (const memory of ranked) {
+    if (selected.length >= 3) {
+      break;
+    }
+    if (usedTokens + memory.tokenCount > maxMemoryTokens) {
+      continue;
+    }
+
+    selected.push(memory);
+    usedTokens += memory.tokenCount;
+  }
+
+  return selected;
 }
 
 function strengthen(strength: number): number {
@@ -126,6 +155,7 @@ function rankSummary(
       id: summary.id,
       text: summary.summaryText,
       score: vectorScore * summary.confidence,
+      tokenCount: summary.tokenCount,
       scoringMethod: "vector similarity",
       summaryId: summary.id,
       sourceTurnRanges: summary.sourceTurnRanges,
@@ -138,6 +168,7 @@ function rankSummary(
     id: summary.id,
     text: summary.summaryText,
     score: scoreText(topicWords, summary.summaryText) * summary.confidence,
+    tokenCount: summary.tokenCount,
     scoringMethod: "keyword overlap",
     summaryId: summary.id,
     sourceTurnRanges: summary.sourceTurnRanges,
@@ -161,6 +192,7 @@ function rankAnchor(
       id: anchor.id,
       text: anchor.content,
       score: vectorScore * anchorWeight,
+      tokenCount: estimateTokenCount(anchor.content),
       scoringMethod: "vector similarity",
       summaryId: null,
       sourceTurnRanges: [],
@@ -173,6 +205,7 @@ function rankAnchor(
     id: anchor.id,
     text: anchor.content,
     score: scoreText(topicWords, anchor.content) * anchorWeight,
+    tokenCount: estimateTokenCount(anchor.content),
     scoringMethod: "keyword overlap",
     summaryId: null,
     sourceTurnRanges: [],
@@ -259,6 +292,25 @@ function dedupeTurnRanges(ranges: TurnRange[]): TurnRange[] {
 function buildRelevanceReason(selected: RankedMemory[]): string {
   const [first] = selected;
   return `Top ${first.kind} match ${first.id} scored ${first.score.toFixed(2)} by ${first.scoringMethod}.`;
+}
+
+function buildDisclosureText(
+  selectedCount: number,
+  currentTopicSummary: string,
+  selectedTokenCount: number,
+  maxMemoryTokens?: number
+): string {
+  const base = `Retrieved ${selectedCount} memory item${selectedCount === 1 ? "" : "s"} for ${currentTopicSummary}.`;
+
+  if (maxMemoryTokens === undefined) {
+    return base;
+  }
+
+  return `${base} Packed using ${selectedTokenCount}/${maxMemoryTokens} memory tokens.`;
+}
+
+function estimateTokenCount(value: string): number {
+  return Math.max(1, Math.ceil(value.split(/\s+/).filter(Boolean).length * 1.3));
 }
 
 const STOP_WORDS = new Set([

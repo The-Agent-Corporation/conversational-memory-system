@@ -11,6 +11,7 @@ export interface InjectionRequest {
   hostSessionId: string;
   currentTopicSummary: string;
   requestedAt?: string;
+  maxMemoryTokens?: number;
 }
 
 export interface MemoryServiceOptions {
