@@ -1,3 +1,4 @@
+import { BoxAssigner } from "../boxes/box-assigner.js";
 import type { Summary } from "../domain/types.js";
 import type { Embedder } from "../embeddings/embedder.js";
 import {
@@ -13,11 +14,15 @@ export interface PreCompactionResult {
 }
 
 export class PreCompactor {
+  private readonly boxAssigner: BoxAssigner;
+
   constructor(
     private readonly store: MemoryStore,
     private readonly summarizer: Summarizer = new DeterministicSummarizer(),
     private readonly embedder?: Embedder
-  ) {}
+  ) {
+    this.boxAssigner = new BoxAssigner(store);
+  }
 
   async compactCompletedTopic(span: CompletedTopicSpan): Promise<PreCompactionResult> {
     const sourceTurns = await this.store.listTurns(span.hostSessionId);
@@ -51,11 +56,12 @@ export class PreCompactor {
       halfLifeHours: 168,
       outcomeScore: null
     };
+    const assignedSummary = await this.boxAssigner.assignSummary(summary);
 
-    await this.store.saveSummary(summary);
+    await this.store.saveSummary(assignedSummary);
 
     return {
-      summary,
+      summary: assignedSummary,
       sourceTurnCount: turnsInSpan.length
     };
   }
