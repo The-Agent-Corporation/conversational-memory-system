@@ -10,6 +10,7 @@ interface RankedMemory {
   text: string;
   score: number;
   tokenCount: number;
+  canUseStub: boolean;
   scoringMethod: "keyword overlap" | "vector similarity";
   summaryId: string | null;
   sourceTurnRanges: TurnRange[];
@@ -115,7 +116,32 @@ function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): Ranke
     usedTokens += memory.tokenCount;
   }
 
+  if (selected.length === 0) {
+    const stub = buildMemoryStub(ranked[0], maxMemoryTokens);
+    if (stub) {
+      return [stub];
+    }
+  }
+
   return selected;
+}
+
+function buildMemoryStub(memory: RankedMemory, maxTokens: number): RankedMemory | null {
+  if (!memory.canUseStub || maxTokens < 3) {
+    return null;
+  }
+
+  const words = memory.text.split(/\s+/).filter(Boolean);
+  if (words.length <= maxTokens) {
+    return memory;
+  }
+
+  return {
+    ...memory,
+    text: `${words.slice(0, maxTokens - 1).join(" ")}...`,
+    tokenCount: maxTokens,
+    scoringMethod: memory.scoringMethod
+  };
 }
 
 function strengthen(strength: number): number {
@@ -156,6 +182,7 @@ function rankSummary(
       text: summary.summaryText,
       score: vectorScore * summary.confidence,
       tokenCount: summary.tokenCount,
+      canUseStub: true,
       scoringMethod: "vector similarity",
       summaryId: summary.id,
       sourceTurnRanges: summary.sourceTurnRanges,
@@ -169,6 +196,7 @@ function rankSummary(
     text: summary.summaryText,
     score: scoreText(topicWords, summary.summaryText) * summary.confidence,
     tokenCount: summary.tokenCount,
+    canUseStub: true,
     scoringMethod: "keyword overlap",
     summaryId: summary.id,
     sourceTurnRanges: summary.sourceTurnRanges,
@@ -193,6 +221,7 @@ function rankAnchor(
       text: anchor.content,
       score: vectorScore * anchorWeight,
       tokenCount: estimateTokenCount(anchor.content),
+      canUseStub: false,
       scoringMethod: "vector similarity",
       summaryId: null,
       sourceTurnRanges: [],
@@ -206,6 +235,7 @@ function rankAnchor(
     text: anchor.content,
     score: scoreText(topicWords, anchor.content) * anchorWeight,
     tokenCount: estimateTokenCount(anchor.content),
+    canUseStub: false,
     scoringMethod: "keyword overlap",
     summaryId: null,
     sourceTurnRanges: [],

@@ -165,11 +165,40 @@ describe("MemoryRetriever", () => {
       hostSessionId: "session_1",
       currentTopicSummary: "Smith PIP demand",
       requestedAt: "2026-05-04T10:10:00.000Z",
-      maxMemoryTokens: 5
+      maxMemoryTokens: 2
     });
 
     expect(packet).toBeNull();
     await expect(store.listInjections("session_1")).resolves.toEqual([]);
+  });
+
+  it("uses a stub summary when the full summary exceeds the explicit token budget", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_large",
+      summaryText: "Smith PIP demand strategy coverage timing provider bill review wage loss benefits and deadline planning.",
+      tokenCount: 14
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 5
+    });
+
+    expect(packet?.sourceSummaryIds).toEqual(["summary_large"]);
+    expect(packet?.selectedMemory).toBe("Smith PIP demand strategy...");
+    expect(packet?.disclosureText).toContain("using 5/5 memory tokens");
+    await expect(store.listSummaries()).resolves.toEqual([
+      expect.objectContaining({
+        id: "summary_large",
+        retrievalCount: 1
+      })
+    ]);
   });
 
   it("updates selected summary access metadata when memory is retrieved", async () => {
