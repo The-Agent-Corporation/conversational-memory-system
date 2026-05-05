@@ -82,7 +82,8 @@ export class MemoryRetriever {
         lastAccessedAt: accessedAt,
         retrievedAt: accessedAt,
         retrievalCount: summary.retrievalCount + 1,
-        strength: strengthen(summary.strength)
+        strength: strengthen(summary.strength),
+        state: summary.state === "stale" ? "revived" : summary.state
       });
     }
   }
