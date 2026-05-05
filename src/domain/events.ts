@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IsoDateTimeSchema, JsonValueSchema, RoleSchema } from "./types.js";
+import { IsoDateTimeSchema, JsonObjectSchema, RoleSchema } from "./types.js";
 
 export const HostNameSchema = z.enum([
   "roscoe-hermes",
@@ -20,7 +20,7 @@ export const ConversationTurnEventSchema = z.object({
   role: RoleSchema,
   content: z.string(),
   createdAt: IsoDateTimeSchema,
-  metadata: z.record(JsonValueSchema)
+  metadata: JsonObjectSchema
 });
 
 export const ControlSignalEventSchema = z.object({
@@ -38,7 +38,7 @@ export const ControlSignalEventSchema = z.object({
     "sleep_review_requested"
   ]),
   createdAt: IsoDateTimeSchema,
-  metadata: z.record(JsonValueSchema)
+  metadata: JsonObjectSchema
 });
 
 export const HostEventSchema = z.discriminatedUnion("type", [

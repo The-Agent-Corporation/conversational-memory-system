@@ -134,4 +134,21 @@ describe("domain schemas", () => {
 
     expect(parsed.success).toBe(false);
   });
+
+  it("rejects non-plain object turn metadata values", () => {
+    const parsed = TurnSchema.safeParse({
+      id: "turn_1",
+      threadId: "thread_1",
+      sequence: 1,
+      role: "user",
+      content: "Let's discuss the Smith PIP claim.",
+      createdAt: "2026-05-04T10:00:00.000Z",
+      provenance: "direct_user_input",
+      trustLevel: "high",
+      metadata: { pattern: /not-json/ },
+      contentHash: "hash_1"
+    });
+
+    expect(parsed.success).toBe(false);
+  });
 });

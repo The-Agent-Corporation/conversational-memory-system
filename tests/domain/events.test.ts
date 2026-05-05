@@ -61,4 +61,21 @@ describe("host events", () => {
 
     expect(parsed.signal).toBe("new_conversation");
   });
+
+  it("rejects non-plain object host event metadata values", () => {
+    const parsed = HostEventSchema.safeParse({
+      id: "event_4",
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      sequence: 4,
+      type: "conversation_turn",
+      role: "user",
+      content: "Let's talk about Smith PIP.",
+      createdAt: "2026-05-04T10:06:00.000Z",
+      metadata: { pattern: /not-json/ }
+    });
+
+    expect(parsed.success).toBe(false);
+  });
 });

@@ -9,15 +9,44 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number().finite(),
-    z.boolean(),
-    z.null(),
-    z.array(JsonValueSchema),
-    z.record(JsonValueSchema)
-  ])
+export type JsonObject = { [key: string]: JsonValue };
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const isJsonValue = (value: unknown): value is JsonValue => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return true;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.values(value).every(isJsonValue);
+  }
+
+  return false;
+};
+
+export const JsonValueSchema: z.ZodType<JsonValue> = z.custom<JsonValue>(isJsonValue, {
+  message: "Expected JSON value"
+});
+
+export const JsonObjectSchema: z.ZodType<JsonObject> = z.custom<JsonObject>(
+  (value) => isPlainObject(value) && Object.values(value).every(isJsonValue),
+  { message: "Expected JSON object" }
 );
 
 export const RoleSchema = z.enum(["user", "assistant", "system", "tool"]);
@@ -68,7 +97,7 @@ export const TurnSchema = z.object({
   createdAt: IsoDateTimeSchema,
   provenance: ProvenanceSchema,
   trustLevel: TrustLevelSchema,
-  metadata: z.record(JsonValueSchema),
+  metadata: JsonObjectSchema,
   contentHash: z.string().min(1)
 });
 
