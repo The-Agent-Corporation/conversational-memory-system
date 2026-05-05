@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Anchor, Summary } from "../../src/domain/types.js";
+import type { Embedder } from "../../src/embeddings/embedder.js";
 import { MemoryRetriever } from "../../src/retrieval/memory-retriever.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 
@@ -112,5 +113,104 @@ describe("MemoryRetriever", () => {
 
     expect(first?.id).not.toBe(second?.id);
     await expect(store.listInjections("session_1")).resolves.toEqual([first, second]);
+  });
+
+  it("uses vector similarity for embedded summaries when an embedder is configured", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_pip",
+      summaryText: "Personal injury protection wage loss benefits.",
+      embedding: {
+        provider: "test",
+        model: "tiny",
+        dimensions: 2,
+        vector: [1, 0],
+        createdAt: "2026-05-04T10:05:00.000Z"
+      }
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_bi",
+      summaryText: "Bodily injury liability carrier tender.",
+      embedding: {
+        provider: "test",
+        model: "tiny",
+        dimensions: 2,
+        vector: [0, 1],
+        createdAt: "2026-05-04T10:06:00.000Z"
+      }
+    }));
+    const embedder: Embedder = {
+      provider: "test",
+      model: "tiny",
+      dimensions: 2,
+      async embed() {
+        return {
+          provider: "test",
+          model: "tiny",
+          dimensions: 2,
+          vector: [1, 0],
+          createdAt: "2026-05-04T10:10:00.000Z"
+        };
+      }
+    };
+
+    const retriever = new MemoryRetriever(store, { embedder });
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "lost wages no fault benefits",
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    expect(packet).not.toBeNull();
+    expect(packet?.sourceSummaryIds[0]).toBe("summary_pip");
+    expect(packet?.selectedMemory).toContain("Personal injury protection");
+    expect(packet?.relevanceReason).toContain("vector similarity");
+  });
+
+  it("falls back to keyword ranking when stored embedding metadata is incompatible", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_vector_only",
+      summaryText: "Personal injury protection wage loss benefits.",
+      embedding: {
+        provider: "other-provider",
+        model: "tiny",
+        dimensions: 2,
+        vector: [1, 0],
+        createdAt: "2026-05-04T10:05:00.000Z"
+      }
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_keyword",
+      summaryText: "Smith PIP demand strategy and coverage timing."
+    }));
+    const embedder: Embedder = {
+      provider: "test",
+      model: "tiny",
+      dimensions: 2,
+      async embed() {
+        return {
+          provider: "test",
+          model: "tiny",
+          dimensions: 2,
+          vector: [1, 0],
+          createdAt: "2026-05-04T10:10:00.000Z"
+        };
+      }
+    };
+
+    const retriever = new MemoryRetriever(store, { embedder });
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    expect(packet?.sourceSummaryIds[0]).toBe("summary_keyword");
+    expect(packet?.relevanceReason).toContain("keyword overlap");
   });
 });

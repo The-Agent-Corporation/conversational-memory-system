@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Anchor, InjectionPacket, Summary, TurnRange } from "../domain/types.js";
+import { cosineSimilarity, type Embedder } from "../embeddings/embedder.js";
 import type { InjectionRequest } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
@@ -8,20 +9,30 @@ interface RankedMemory {
   id: string;
   text: string;
   score: number;
+  scoringMethod: "keyword overlap" | "vector similarity";
   summaryId: string | null;
   sourceTurnRanges: TurnRange[];
   boxIds: string[];
 }
 
 export class MemoryRetriever {
-  constructor(private readonly store: MemoryStore) {}
+  constructor(
+    private readonly store: MemoryStore,
+    private readonly options: { embedder?: Embedder } = {}
+  ) {}
 
   async prepareInjection(request: InjectionRequest): Promise<InjectionPacket | null> {
     const [summaries, anchors] = await Promise.all([
       this.store.listSummaries(),
       this.store.listAnchors()
     ]);
-    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors);
+    const topicEmbedding = this.options.embedder
+      ? await this.options.embedder.embed(request.currentTopicSummary)
+      : null;
+    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, {
+      embedder: this.options.embedder,
+      topicEmbedding
+    });
 
     if (ranked.length === 0) {
       return null;
@@ -53,41 +64,110 @@ export class MemoryRetriever {
 function rankMemories(
   topicSummary: string,
   summaries: Summary[],
-  anchors: Anchor[]
+  anchors: Anchor[],
+  options: {
+    embedder?: Embedder;
+    topicEmbedding: Summary["embedding"];
+  } = { topicEmbedding: null }
 ): RankedMemory[] {
   const topicWords = significantWords(topicSummary);
   const ranked: RankedMemory[] = [
-    ...summaries.map((summary) => rankSummary(topicWords, summary)),
-    ...anchors.map((anchor) => rankAnchor(topicWords, anchor))
+    ...summaries.map((summary) => rankSummary(topicWords, summary, options)),
+    ...anchors.map((anchor) => rankAnchor(topicWords, anchor, options))
   ].filter((memory) => memory.score > 0);
 
   return ranked.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
 }
 
-function rankSummary(topicWords: Set<string>, summary: Summary): RankedMemory {
+function rankSummary(
+  topicWords: Set<string>,
+  summary: Summary,
+  options: {
+    embedder?: Embedder;
+    topicEmbedding: Summary["embedding"];
+  }
+): RankedMemory {
+  const vectorScore = embeddingScore(options, summary.embedding);
+  if (vectorScore !== null) {
+    return {
+      kind: "summary",
+      id: summary.id,
+      text: summary.summaryText,
+      score: vectorScore * summary.confidence,
+      scoringMethod: "vector similarity",
+      summaryId: summary.id,
+      sourceTurnRanges: summary.sourceTurnRanges,
+      boxIds: summary.boxIds
+    };
+  }
+
   return {
     kind: "summary",
     id: summary.id,
     text: summary.summaryText,
     score: scoreText(topicWords, summary.summaryText) * summary.confidence,
+    scoringMethod: "keyword overlap",
     summaryId: summary.id,
     sourceTurnRanges: summary.sourceTurnRanges,
     boxIds: summary.boxIds
   };
 }
 
-function rankAnchor(topicWords: Set<string>, anchor: Anchor): RankedMemory {
+function rankAnchor(
+  topicWords: Set<string>,
+  anchor: Anchor,
+  options: {
+    embedder?: Embedder;
+    topicEmbedding: Summary["embedding"];
+  }
+): RankedMemory {
   const anchorWeight = anchor.anchorType === "deadline" || anchor.anchorType === "decision" ? 1.1 : 1;
+  const vectorScore = embeddingScore(options, anchor.embedding);
+  if (vectorScore !== null) {
+    return {
+      kind: "anchor",
+      id: anchor.id,
+      text: anchor.content,
+      score: vectorScore * anchorWeight,
+      scoringMethod: "vector similarity",
+      summaryId: null,
+      sourceTurnRanges: [],
+      boxIds: anchor.boxId ? [anchor.boxId] : []
+    };
+  }
 
   return {
     kind: "anchor",
     id: anchor.id,
     text: anchor.content,
     score: scoreText(topicWords, anchor.content) * anchorWeight,
+    scoringMethod: "keyword overlap",
     summaryId: null,
     sourceTurnRanges: [],
     boxIds: anchor.boxId ? [anchor.boxId] : []
   };
+}
+
+function embeddingScore(
+  options: {
+    embedder?: Embedder;
+    topicEmbedding: Summary["embedding"];
+  },
+  memoryEmbedding: Summary["embedding"]
+): number | null {
+  if (!options.embedder || !options.topicEmbedding || !memoryEmbedding) {
+    return null;
+  }
+  if (
+    memoryEmbedding.provider !== options.embedder.provider ||
+    memoryEmbedding.model !== options.embedder.model ||
+    memoryEmbedding.dimensions !== options.embedder.dimensions ||
+    memoryEmbedding.dimensions !== options.topicEmbedding.dimensions
+  ) {
+    return null;
+  }
+
+  return Math.max(0, cosineSimilarity(options.topicEmbedding.vector, memoryEmbedding.vector));
 }
 
 function scoreText(topicWords: Set<string>, text: string): number {
@@ -146,7 +226,7 @@ function dedupeTurnRanges(ranges: TurnRange[]): TurnRange[] {
 
 function buildRelevanceReason(selected: RankedMemory[]): string {
   const [first] = selected;
-  return `Top ${first.kind} match ${first.id} scored ${first.score.toFixed(2)} by keyword overlap.`;
+  return `Top ${first.kind} match ${first.id} scored ${first.score.toFixed(2)} by ${first.scoringMethod}.`;
 }
 
 const STOP_WORDS = new Set([
