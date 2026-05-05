@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CompletedTopicSpan } from "../../src/topic/topic-monitor.js";
 import { PreCompactor } from "../../src/compaction/pre-compactor.js";
-import type { Turn } from "../../src/domain/types.js";
+import type { Box, Turn } from "../../src/domain/types.js";
 import type { Embedder } from "../../src/embeddings/embedder.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import type { Summarizer } from "../../src/summarization/summarizer.js";
@@ -35,6 +35,24 @@ const completedSpan = (overrides: Partial<CompletedTopicSpan> = {}): CompletedTo
   lastEventId: "event_2",
   updatedAt: "2026-05-04T10:00:10.000Z",
   completedAt: "2026-05-04T10:05:00.000Z",
+  ...overrides
+});
+
+const makeBox = (overrides: Partial<Box> = {}): Box => ({
+  id: "box_topic_smith_pip",
+  title: "Smith PIP",
+  description: "Existing approved topic box.",
+  parentBoxId: null,
+  childBoxIds: [],
+  summaryIds: [],
+  turnRanges: [],
+  state: "approved",
+  createdAt: "2026-05-04T09:00:00.000Z",
+  updatedAt: "2026-05-04T09:00:00.000Z",
+  caseId: null,
+  boxType: "topic",
+  summary: "Smith PIP",
+  lastActivityAt: "2026-05-04T09:00:00.000Z",
   ...overrides
 });
 
@@ -171,5 +189,31 @@ describe("PreCompactor", () => {
       createdAt: "2026-05-04T10:05:01.000Z"
     });
     await expect(store.listSummaries()).resolves.toEqual([result.summary]);
+  });
+
+  it("assigns compacted summaries to matching existing boxes", async () => {
+    const store = new InMemoryStore();
+    await store.saveBox(makeBox());
+    await store.saveTurn(makeTurn({
+      id: "turn_1",
+      sequence: 1,
+      content: "Let's talk about Smith PIP."
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_2",
+      sequence: 2,
+      role: "assistant",
+      content: "The Smith PIP issue is about demand timing."
+    }));
+
+    const compactor = new PreCompactor(store);
+    const result = await compactor.compactCompletedTopic(completedSpan());
+
+    expect(result.summary.boxIds).toEqual(["box_topic_smith_pip"]);
+    const boxes = await store.listBoxes();
+    expect(boxes[0].summaryIds).toEqual(["summary_session_1_1_2"]);
+    expect(boxes[0].turnRanges).toEqual([
+      { threadId: "session_1", startSequence: 1, endSequence: 2 }
+    ]);
   });
 });
