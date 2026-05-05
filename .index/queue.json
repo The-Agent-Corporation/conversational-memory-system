@@ -1,0 +1,51 @@
+{
+  "available": [
+    {
+      "taskId": "TASK-001",
+      "metadata": {
+        "capabilities": "planning, architecture",
+        "priority": "critical"
+      }
+    },
+    {
+      "taskId": "TASK-002",
+      "metadata": {
+        "capabilities": "data-model, backend",
+        "priority": "critical"
+      }
+    },
+    {
+      "taskId": "TASK-003",
+      "metadata": {
+        "capabilities": "backend, memory",
+        "priority": "high"
+      }
+    },
+    {
+      "taskId": "TASK-004",
+      "metadata": {
+        "capabilities": "memory, architecture",
+        "priority": "high"
+      }
+    },
+    {
+      "taskId": "TASK-005",
+      "metadata": {
+        "capabilities": "memory, architecture",
+        "priority": "critical"
+      }
+    },
+    {
+      "taskId": "TASK-006",
+      "metadata": {
+        "capabilities": "research, memory",
+        "priority": "medium"
+      }
+    }
+  ],
+  "claimed": [],
+  "review": [],
+  "blocked": [],
+  "done": [],
+  "indexedAt": "2026-04-13T14:55:27.725Z"
+}

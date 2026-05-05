@@ -1,0 +1,21 @@
+{
+  "columns": [
+    {
+      "name": "Backlog",
+      "tasks": []
+    },
+    {
+      "name": "In Progress",
+      "tasks": []
+    },
+    {
+      "name": "Review",
+      "tasks": []
+    },
+    {
+      "name": "Done",
+      "tasks": []
+    }
+  ],
+  "indexedAt": "2026-04-13T14:55:27.724Z"
+}

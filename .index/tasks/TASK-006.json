@@ -1,0 +1,29 @@
+{
+  "id": "TASK-006",
+  "title": "Scope Breathe-style enhancements as phase-gated subtasks",
+  "status": "backlog",
+  "column": "Backlog",
+  "priority": "medium",
+  "capabilities": [
+    "research",
+    "memory"
+  ],
+  "depends_on": [
+    "TASK-001",
+    "TASK-004",
+    "TASK-005"
+  ],
+  "claimed_by": null,
+  "claimed_at": null,
+  "created": "2026-03-31",
+  "updated": "2026-03-31",
+  "parent": null,
+  "workflow": null,
+  "verification_type": "automatic",
+  "side_effect_class": "none",
+  "approval_required": false,
+  "estimated_size": "medium",
+  "execution_mode": "auto",
+  "success_criteria": [],
+  "indexedAt": "2026-04-01T12:36:48.768Z"
+}
