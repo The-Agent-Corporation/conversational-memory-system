@@ -31,7 +31,7 @@ export class MemoryService {
         host: event.host,
         profileId: event.profileId,
         hostSessionId: event.hostSessionId,
-        ...event.metadata
+        sourceMetadata: event.metadata
       },
       contentHash: createHash("sha256").update(event.content).digest("hex")
     });

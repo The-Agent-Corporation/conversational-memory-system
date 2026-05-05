@@ -1,4 +1,15 @@
-import type { Anchor, Box, InjectionPacket, Summary, Turn } from "../domain/types.js";
+import {
+  AnchorSchema,
+  BoxSchema,
+  InjectionPacketSchema,
+  SummarySchema,
+  TurnSchema,
+  type Anchor,
+  type Box,
+  type InjectionPacket,
+  type Summary,
+  type Turn
+} from "../domain/types.js";
 import type { MemoryStore } from "./memory-store.js";
 
 export class InMemoryStore implements MemoryStore {
@@ -9,42 +20,58 @@ export class InMemoryStore implements MemoryStore {
   private readonly injections: InjectionPacket[] = [];
 
   async saveTurn(turn: Turn): Promise<void> {
-    this.turns.push(turn);
+    this.upsertById(this.turns, structuredClone(TurnSchema.parse(turn)));
   }
 
   async listTurns(threadId: string): Promise<Turn[]> {
-    return this.turns.filter((turn) => turn.threadId === threadId);
+    return this.turns
+      .filter((turn) => turn.threadId === threadId)
+      .sort((left, right) => left.sequence - right.sequence)
+      .map((turn) => structuredClone(turn));
   }
 
   async saveSummary(summary: Summary): Promise<void> {
-    this.summaries.push(summary);
+    this.upsertById(this.summaries, structuredClone(SummarySchema.parse(summary)));
   }
 
   async listSummaries(): Promise<Summary[]> {
-    return [...this.summaries];
+    return structuredClone(this.summaries);
   }
 
   async saveBox(box: Box): Promise<void> {
-    this.boxes.push(box);
+    this.upsertById(this.boxes, structuredClone(BoxSchema.parse(box)));
   }
 
   async listBoxes(): Promise<Box[]> {
-    return [...this.boxes];
+    return structuredClone(this.boxes);
   }
 
   async saveAnchor(anchor: Anchor): Promise<void> {
-    this.anchors.push(anchor);
+    this.upsertById(this.anchors, structuredClone(AnchorSchema.parse(anchor)));
   }
 
   async listAnchors(): Promise<Anchor[]> {
-    return [...this.anchors];
+    return structuredClone(this.anchors);
   }
 
   async saveInjection(packet: InjectionPacket): Promise<void> {
-    this.injections.push(packet);
+    this.upsertById(this.injections, structuredClone(InjectionPacketSchema.parse(packet)));
   }
 
   async listInjections(hostSessionId: string): Promise<InjectionPacket[]> {
-    return this.injections.filter((packet) => packet.hostSessionId === hostSessionId);
+    return this.injections
+      .filter((packet) => packet.hostSessionId === hostSessionId)
+      .map((packet) => structuredClone(packet));
+  }
+
+  private upsertById<T extends { id: string }>(items: T[], item: T): void {
+    const existingIndex = items.findIndex((existing) => existing.id === item.id);
+
+    if (existingIndex === -1) {
+      items.push(item);
+      return;
+    }
+
+    items[existingIndex] = item;
   }
 }
