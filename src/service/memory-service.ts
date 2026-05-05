@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { HostEvent } from "../domain/events.js";
 import { TurnSchema, type InjectionPacket, type Turn } from "../domain/types.js";
+import { MemoryRetriever } from "../retrieval/memory-retriever.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
 export interface InjectionRequest {
@@ -8,10 +9,15 @@ export interface InjectionRequest {
   profileId: string;
   hostSessionId: string;
   currentTopicSummary: string;
+  requestedAt?: string;
 }
 
 export class MemoryService {
-  constructor(private readonly store: MemoryStore) {}
+  private readonly retriever: MemoryRetriever;
+
+  constructor(private readonly store: MemoryStore) {
+    this.retriever = new MemoryRetriever(store);
+  }
 
   async ingestEvent(event: HostEvent): Promise<void> {
     if (event.type === "control_signal") {
@@ -39,8 +45,8 @@ export class MemoryService {
     await this.store.saveTurn(turn);
   }
 
-  async prepareInjection(_request: InjectionRequest): Promise<InjectionPacket | null> {
-    return null;
+  async prepareInjection(request: InjectionRequest): Promise<InjectionPacket | null> {
+    return this.retriever.prepareInjection(request);
   }
 
   private provenanceForRole(role: Turn["role"]): Turn["provenance"] {
