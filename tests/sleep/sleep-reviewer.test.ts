@@ -110,4 +110,79 @@ describe("SleepReviewer", () => {
     expect(result.proposedBoxes).toEqual([]);
     await expect(store.listBoxes()).resolves.toEqual([makeBox()]);
   });
+
+  it("decays old untouched summaries and marks weak summaries stale", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_old",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      strength: 0.8,
+      halfLifeHours: 24
+    }));
+
+    const reviewer = new SleepReviewer(store);
+    const result = await reviewer.decaySummaries({
+      reviewedAt: "2026-05-03T00:00:00.000Z",
+      staleStrengthThreshold: 0.25
+    });
+
+    expect(result.updatedSummaries).toEqual([
+      expect.objectContaining({
+        id: "summary_old",
+        strength: 0.2,
+        state: "stale"
+      })
+    ]);
+    await expect(store.listSummaries()).resolves.toEqual(result.updatedSummaries);
+  });
+
+  it("uses last access time when decaying retrieved summaries", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_recent",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      lastAccessedAt: "2026-05-02T12:00:00.000Z",
+      retrievedAt: "2026-05-02T12:00:00.000Z",
+      retrievalCount: 1,
+      strength: 0.8,
+      halfLifeHours: 24
+    }));
+
+    const reviewer = new SleepReviewer(store);
+    const result = await reviewer.decaySummaries({
+      reviewedAt: "2026-05-03T00:00:00.000Z",
+      staleStrengthThreshold: 0.25
+    });
+
+    expect(result.updatedSummaries).toEqual([
+      expect.objectContaining({
+        id: "summary_recent",
+        strength: 0.57,
+        state: "compacted"
+      })
+    ]);
+  });
+
+  it("does not decay summaries when the review time is not after the decay reference", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_now",
+      createdAt: "2026-05-03T00:00:00.000Z",
+      strength: 0.8,
+      halfLifeHours: 24
+    }));
+
+    const reviewer = new SleepReviewer(store);
+    const result = await reviewer.decaySummaries({
+      reviewedAt: "2026-05-03T00:00:00.000Z"
+    });
+
+    expect(result.updatedSummaries).toEqual([]);
+    await expect(store.listSummaries()).resolves.toEqual([makeSummary({
+      id: "summary_now",
+      createdAt: "2026-05-03T00:00:00.000Z",
+      strength: 0.8,
+      halfLifeHours: 24
+    })]);
+  });
 });

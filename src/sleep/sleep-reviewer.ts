@@ -4,10 +4,15 @@ import type { MemoryStore } from "../storage/memory-store.js";
 export interface SleepReviewRequest {
   reviewedAt: string;
   minimumSummariesPerBox?: number;
+  staleStrengthThreshold?: number;
 }
 
 export interface SleepReviewResult {
   proposedBoxes: Box[];
+}
+
+export interface SummaryDecayResult {
+  updatedSummaries: Summary[];
 }
 
 export class SleepReviewer {
@@ -34,6 +39,25 @@ export class SleepReviewer {
     }
 
     return { proposedBoxes };
+  }
+
+  async decaySummaries(request: SleepReviewRequest): Promise<SummaryDecayResult> {
+    const summaries = await this.store.listSummaries();
+    const updatedSummaries: Summary[] = [];
+    const staleStrengthThreshold = request.staleStrengthThreshold ?? 0.2;
+
+    for (const summary of summaries) {
+      const decayed = decaySummary(summary, request.reviewedAt, staleStrengthThreshold);
+
+      if (!decayed) {
+        continue;
+      }
+
+      await this.store.saveSummary(decayed);
+      updatedSummaries.push(decayed);
+    }
+
+    return { updatedSummaries };
   }
 }
 
@@ -106,6 +130,50 @@ function dedupeTurnRanges(ranges: TurnRange[]): TurnRange[] {
 
 function latestTimestamp(timestamps: string[]): string | null {
   return timestamps.sort().at(-1) ?? null;
+}
+
+function decaySummary(
+  summary: Summary,
+  reviewedAt: string,
+  staleStrengthThreshold: number
+): Summary | null {
+  if (!isDecayEligible(summary)) {
+    return null;
+  }
+
+  const referenceAt = summary.lastAccessedAt ?? summary.retrievedAt ?? summary.createdAt;
+  const ageHours = hoursBetween(referenceAt, reviewedAt);
+
+  if (ageHours <= 0) {
+    return null;
+  }
+
+  const decayedStrength = roundStrength(
+    summary.strength * Math.pow(0.5, ageHours / summary.halfLifeHours)
+  );
+  const decayedState = decayedStrength < staleStrengthThreshold ? "stale" : summary.state;
+
+  if (decayedStrength === summary.strength && decayedState === summary.state) {
+    return null;
+  }
+
+  return {
+    ...summary,
+    strength: decayedStrength,
+    state: decayedState
+  };
+}
+
+function isDecayEligible(summary: Summary): boolean {
+  return summary.state === "compacted" || summary.state === "active" || summary.state === "revived" || summary.state === "stale";
+}
+
+function hoursBetween(start: string, end: string): number {
+  return (Date.parse(end) - Date.parse(start)) / (1000 * 60 * 60);
+}
+
+function roundStrength(value: number): number {
+  return Number(Math.max(0, Math.min(1, value)).toFixed(2));
 }
 
 function normalizeTitle(title: string): string {
