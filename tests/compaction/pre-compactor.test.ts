@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CompletedTopicSpan } from "../../src/topic/topic-monitor.js";
 import { PreCompactor } from "../../src/compaction/pre-compactor.js";
 import type { Turn } from "../../src/domain/types.js";
+import type { Embedder } from "../../src/embeddings/embedder.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import type { Summarizer } from "../../src/summarization/summarizer.js";
 
@@ -124,5 +125,51 @@ describe("PreCompactor", () => {
       detailLevel: "medium",
       tokenCount: 6
     });
+  });
+
+  it("embeds the completed summary when an embedder is configured", async () => {
+    const store = new InMemoryStore();
+    await store.saveTurn(makeTurn({ id: "turn_1", sequence: 1 }));
+    const summarizer: Summarizer = {
+      async summarize() {
+        return {
+          summaryText: "Smith PIP demand strategy",
+          model: "test-summarizer",
+          promptVersion: "test-v1",
+          confidence: 0.9,
+          detailLevel: "brief",
+          tokenCount: 4
+        };
+      }
+    };
+    const embedder: Embedder = {
+      provider: "test",
+      model: "tiny",
+      dimensions: 2,
+      async embed(text) {
+        return {
+          provider: "test",
+          model: "tiny",
+          dimensions: 2,
+          vector: text.includes("Smith PIP") ? [1, 0] : [0, 1],
+          createdAt: "2026-05-04T10:05:01.000Z"
+        };
+      }
+    };
+    const compactor = new PreCompactor(store, summarizer, embedder);
+
+    const result = await compactor.compactCompletedTopic(completedSpan({
+      sourceTurnRange: { threadId: "session_1", startSequence: 1, endSequence: 1 },
+      turnCount: 1
+    }));
+
+    expect(result.summary.embedding).toEqual({
+      provider: "test",
+      model: "tiny",
+      dimensions: 2,
+      vector: [1, 0],
+      createdAt: "2026-05-04T10:05:01.000Z"
+    });
+    await expect(store.listSummaries()).resolves.toEqual([result.summary]);
   });
 });

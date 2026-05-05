@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { HostEvent } from "../domain/events.js";
 import { TurnSchema, type InjectionPacket, type Turn } from "../domain/types.js";
+import type { Embedder } from "../embeddings/embedder.js";
 import { MemoryRetriever } from "../retrieval/memory-retriever.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
@@ -12,11 +13,15 @@ export interface InjectionRequest {
   requestedAt?: string;
 }
 
+export interface MemoryServiceOptions {
+  embedder?: Embedder;
+}
+
 export class MemoryService {
   private readonly retriever: MemoryRetriever;
 
-  constructor(private readonly store: MemoryStore) {
-    this.retriever = new MemoryRetriever(store);
+  constructor(private readonly store: MemoryStore, options: MemoryServiceOptions = {}) {
+    this.retriever = new MemoryRetriever(store, { embedder: options.embedder });
   }
 
   async ingestEvent(event: HostEvent): Promise<Turn | null> {
