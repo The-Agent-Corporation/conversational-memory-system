@@ -4,6 +4,12 @@ import type { Anchor, InjectionPacket, Turn } from "../../domain/types.js";
 import { MemoryService } from "../../service/memory-service.js";
 import type { MemoryStore } from "../../storage/memory-store.js";
 import {
+  createSummarizerFromEnv,
+  type Summarizer,
+  type SummarizerEnvironment,
+  type SummarizerFactoryOptions
+} from "../../summarization/summarizer.js";
+import {
   TopicMonitor,
   type CompletedTopicSpan,
   type RollingTopicState
@@ -21,16 +27,25 @@ export interface HermesAdapterResult {
   compaction: PreCompactionResult | null;
 }
 
+export interface HermesMemoryAdapterOptions {
+  summarizer?: Summarizer;
+  env?: SummarizerEnvironment;
+  summarizerOptions?: SummarizerFactoryOptions;
+}
+
 export class HermesMemoryAdapter {
   private readonly service: MemoryService;
   private readonly monitor = new TopicMonitor();
   private readonly anchorDetector: AnchorDetector;
   private readonly preCompactor: PreCompactor;
 
-  constructor(store: MemoryStore) {
+  constructor(store: MemoryStore, options: HermesMemoryAdapterOptions = {}) {
     this.service = new MemoryService(store);
     this.anchorDetector = new AnchorDetector(store);
-    this.preCompactor = new PreCompactor(store);
+    this.preCompactor = new PreCompactor(
+      store,
+      options.summarizer ?? createSummarizerFromEnv(options.env, options.summarizerOptions)
+    );
   }
 
   async processTimelineRow(row: HermesTimelineRow): Promise<HermesAdapterResult> {

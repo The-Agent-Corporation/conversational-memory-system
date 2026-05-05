@@ -1,6 +1,11 @@
 import type { Summary } from "../domain/types.js";
 import type { CompletedTopicSpan } from "../topic/topic-monitor.js";
 import type { Turn } from "../domain/types.js";
+import {
+  OpenRouterSummarizer,
+  type OpenRouterEnvironment,
+  type OpenRouterSummarizerOptions
+} from "./openrouter-summarizer.js";
 
 export interface SummarizerInput {
   span: CompletedTopicSpan;
@@ -14,6 +19,20 @@ export type SummaryDraft = Pick<
 
 export interface Summarizer {
   summarize(input: SummarizerInput): Promise<SummaryDraft>;
+}
+
+export type SummarizerEnvironment = OpenRouterEnvironment;
+export type SummarizerFactoryOptions = Partial<Omit<OpenRouterSummarizerOptions, "apiKey" | "model">>;
+
+export function createSummarizerFromEnv(
+  env: SummarizerEnvironment = process.env,
+  options: SummarizerFactoryOptions = {}
+): Summarizer {
+  if (env.OPENROUTER_API_KEY?.trim() && env.OPENROUTER_MODEL?.trim()) {
+    return OpenRouterSummarizer.fromEnv(env, options);
+  }
+
+  return new DeterministicSummarizer();
 }
 
 export class DeterministicSummarizer implements Summarizer {
