@@ -19,9 +19,9 @@ export class MemoryService {
     this.retriever = new MemoryRetriever(store);
   }
 
-  async ingestEvent(event: HostEvent): Promise<void> {
+  async ingestEvent(event: HostEvent): Promise<Turn | null> {
     if (event.type === "control_signal") {
-      return;
+      return null;
     }
 
     const turn = TurnSchema.parse({
@@ -43,6 +43,7 @@ export class MemoryService {
     });
 
     await this.store.saveTurn(turn);
+    return turn;
   }
 
   async prepareInjection(request: InjectionRequest): Promise<InjectionPacket | null> {
