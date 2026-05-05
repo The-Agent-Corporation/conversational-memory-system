@@ -1,6 +1,7 @@
 import { AnchorDetector } from "../../anchors/anchor-detector.js";
 import { PreCompactor, type PreCompactionResult } from "../../compaction/pre-compactor.js";
 import type { Anchor, InjectionPacket, Turn } from "../../domain/types.js";
+import type { Embedder } from "../../embeddings/embedder.js";
 import { MemoryService } from "../../service/memory-service.js";
 import type { MemoryStore } from "../../storage/memory-store.js";
 import {
@@ -29,6 +30,7 @@ export interface HermesAdapterResult {
 
 export interface HermesMemoryAdapterOptions {
   summarizer?: Summarizer;
+  embedder?: Embedder;
   env?: SummarizerEnvironment;
   summarizerOptions?: SummarizerFactoryOptions;
 }
@@ -40,11 +42,12 @@ export class HermesMemoryAdapter {
   private readonly preCompactor: PreCompactor;
 
   constructor(store: MemoryStore, options: HermesMemoryAdapterOptions = {}) {
-    this.service = new MemoryService(store);
+    this.service = new MemoryService(store, { embedder: options.embedder });
     this.anchorDetector = new AnchorDetector(store);
     this.preCompactor = new PreCompactor(
       store,
-      options.summarizer ?? createSummarizerFromEnv(options.env, options.summarizerOptions)
+      options.summarizer ?? createSummarizerFromEnv(options.env, options.summarizerOptions),
+      options.embedder
     );
   }
 

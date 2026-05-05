@@ -1,4 +1,5 @@
 import type { Summary } from "../domain/types.js";
+import type { Embedder } from "../embeddings/embedder.js";
 import {
   DeterministicSummarizer,
   type Summarizer
@@ -14,7 +15,8 @@ export interface PreCompactionResult {
 export class PreCompactor {
   constructor(
     private readonly store: MemoryStore,
-    private readonly summarizer: Summarizer = new DeterministicSummarizer()
+    private readonly summarizer: Summarizer = new DeterministicSummarizer(),
+    private readonly embedder?: Embedder
   ) {}
 
   async compactCompletedTopic(span: CompletedTopicSpan): Promise<PreCompactionResult> {
@@ -25,6 +27,7 @@ export class PreCompactor {
         turn.sequence <= span.sourceTurnRange.endSequence
     );
     const draft = await this.summarizer.summarize({ span, sourceTurns: turnsInSpan });
+    const embedding = this.embedder ? await this.embedder.embed(draft.summaryText) : null;
 
     const summary: Summary = {
       id: summaryIdForSpan(span),
@@ -32,7 +35,7 @@ export class PreCompactor {
       sourceTurnRanges: [span.sourceTurnRange],
       sourceSummaryIds: [],
       boxIds: [],
-      embedding: null,
+      embedding,
       createdAt: span.completedAt,
       model: draft.model,
       promptVersion: draft.promptVersion,
