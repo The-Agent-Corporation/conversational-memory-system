@@ -115,6 +115,72 @@ describe("MemoryRetriever", () => {
     await expect(store.listInjections("session_1")).resolves.toEqual([first, second]);
   });
 
+  it("updates selected summary access metadata when memory is retrieved", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      strength: 0.8,
+      retrievalCount: 2,
+      lastAccessedAt: "2026-05-04T09:00:00.000Z",
+      retrievedAt: "2026-05-04T09:00:00.000Z"
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    await expect(store.listSummaries()).resolves.toEqual([
+      expect.objectContaining({
+        id: "summary_1",
+        strength: 0.85,
+        retrievalCount: 3,
+        lastAccessedAt: "2026-05-04T10:10:00.000Z",
+        retrievedAt: "2026-05-04T10:10:00.000Z"
+      })
+    ]);
+  });
+
+  it("caps strengthened summaries at one and leaves unselected summaries unchanged", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_selected",
+      strength: 0.98
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_unselected",
+      summaryText: "Jones BI coverage limits.",
+      strength: 0.3
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    await expect(store.listSummaries()).resolves.toEqual([
+      expect.objectContaining({
+        id: "summary_selected",
+        strength: 1,
+        retrievalCount: 1
+      }),
+      expect.objectContaining({
+        id: "summary_unselected",
+        strength: 0.3,
+        retrievalCount: 0,
+        lastAccessedAt: null,
+        retrievedAt: null
+      })
+    ]);
+  });
+
   it("uses vector similarity for embedded summaries when an embedder is configured", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary({
