@@ -29,7 +29,7 @@ export function mapHermesTimelineRowToHostEvent(row: HermesTimelineRow): Convers
     createdAt: row.created_at,
     metadata: {
       channel: row.channel,
-      ...parseMetadata(row.metadata_json)
+      sourceMetadata: parseMetadata(row.metadata_json)
     }
   });
 }

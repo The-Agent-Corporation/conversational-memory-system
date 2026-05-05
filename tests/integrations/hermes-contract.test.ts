@@ -20,6 +20,28 @@ describe("Roscoe-Hermes contract", () => {
     expect(event.hostSessionId).toBe("hermes-session");
     expect(event.role).toBe("user");
     expect(event.metadata.channel).toBe("telegram");
+    expect(event.metadata.sourceMetadata).toEqual({ platform: "telegram" });
+    expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
+  });
+
+  it("preserves canonical row channel when source metadata conflicts", () => {
+    const event = mapHermesTimelineRowToHostEvent({
+      id: "45",
+      profile_id: "default",
+      session_id: "hermes-session",
+      sequence: 10,
+      role: "user",
+      content: "This came from the Telegram gateway.",
+      created_at: "2026-05-04T10:03:00.000Z",
+      channel: "telegram",
+      metadata_json: "{\"channel\":\"web\",\"platform\":\"telegram\"}"
+    });
+
+    expect(event.metadata.channel).toBe("telegram");
+    expect(event.metadata.sourceMetadata).toEqual({
+      channel: "web",
+      platform: "telegram"
+    });
     expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
   });
 
@@ -38,7 +60,9 @@ describe("Roscoe-Hermes contract", () => {
 
     expect(event.metadata).toEqual({
       channel: null,
-      rawMetadata: "{not valid JSON"
+      sourceMetadata: {
+        rawMetadata: "{not valid JSON"
+      }
     });
     expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
   });
@@ -58,7 +82,9 @@ describe("Roscoe-Hermes contract", () => {
 
     expect(event.metadata).toEqual({
       channel: "telegram",
-      rawMetadata: "raw string metadata"
+      sourceMetadata: {
+        rawMetadata: "raw string metadata"
+      }
     });
     expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
   });
