@@ -185,4 +185,91 @@ describe("SleepReviewer", () => {
       halfLifeHours: 24
     })]);
   });
+
+  it("marks boxes stale when every linked summary is stale", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_1",
+      state: "stale"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_2",
+      state: "stale"
+    }));
+    await store.saveBox(makeBox({
+      summaryIds: ["summary_1", "summary_2"],
+      state: "approved"
+    }));
+
+    const reviewer = new SleepReviewer(store);
+    const result = await reviewer.refreshBoxStates({
+      reviewedAt: "2026-05-05T06:00:00.000Z"
+    });
+
+    expect(result.updatedBoxes).toEqual([
+      expect.objectContaining({
+        id: "box_topic_smith_pip",
+        state: "stale",
+        updatedAt: "2026-05-05T06:00:00.000Z"
+      })
+    ]);
+    await expect(store.listBoxes()).resolves.toEqual(result.updatedBoxes);
+  });
+
+  it("revives stale boxes when any linked summary is revived", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_1",
+      state: "stale"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_2",
+      state: "revived"
+    }));
+    await store.saveBox(makeBox({
+      summaryIds: ["summary_1", "summary_2"],
+      state: "stale"
+    }));
+
+    const reviewer = new SleepReviewer(store);
+    const result = await reviewer.refreshBoxStates({
+      reviewedAt: "2026-05-05T06:00:00.000Z"
+    });
+
+    expect(result.updatedBoxes).toEqual([
+      expect.objectContaining({
+        id: "box_topic_smith_pip",
+        state: "revived",
+        updatedAt: "2026-05-05T06:00:00.000Z",
+        lastActivityAt: "2026-05-05T06:00:00.000Z"
+      })
+    ]);
+  });
+
+  it("does not refresh proposed or rejected box states", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_1",
+      state: "stale"
+    }));
+    await store.saveBox(makeBox({
+      id: "box_proposed",
+      state: "proposed"
+    }));
+    await store.saveBox(makeBox({
+      id: "box_rejected",
+      state: "rejected"
+    }));
+
+    const reviewer = new SleepReviewer(store);
+    const result = await reviewer.refreshBoxStates({
+      reviewedAt: "2026-05-05T06:00:00.000Z"
+    });
+
+    expect(result.updatedBoxes).toEqual([]);
+    await expect(store.listBoxes()).resolves.toEqual([
+      makeBox({ id: "box_proposed", state: "proposed" }),
+      makeBox({ id: "box_rejected", state: "rejected" })
+    ]);
+  });
 });
