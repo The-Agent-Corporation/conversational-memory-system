@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AnchorSchema,
   BoxSchema,
+  EmbeddingSchema,
   InjectionPacketSchema,
   SummarySchema,
   TurnSchema
@@ -103,5 +104,34 @@ describe("domain schemas", () => {
       disclosureText: "This came from the Smith PIP discussion on May 4.",
       createdAt: "2026-05-04T10:06:00.000Z"
     }).confidence).toBe(0.86);
+  });
+
+  it("rejects non-finite embedding vector values", () => {
+    const parsed = EmbeddingSchema.safeParse({
+      provider: "test",
+      model: "test-embedding",
+      dimensions: 3,
+      vector: [0.1, Infinity, 0.3],
+      createdAt: "2026-05-04T10:05:00.000Z"
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects non-JSON turn metadata values", () => {
+    const parsed = TurnSchema.safeParse({
+      id: "turn_1",
+      threadId: "thread_1",
+      sequence: 1,
+      role: "user",
+      content: "Let's discuss the Smith PIP claim.",
+      createdAt: "2026-05-04T10:00:00.000Z",
+      provenance: "direct_user_input",
+      trustLevel: "high",
+      metadata: { transform: () => "not persisted JSON" },
+      contentHash: "hash_1"
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });

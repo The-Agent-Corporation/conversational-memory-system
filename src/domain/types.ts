@@ -1,6 +1,24 @@
 import { z } from "zod";
 
 export const IsoDateTimeSchema = z.string().datetime();
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(JsonValueSchema)
+  ])
+);
 
 export const RoleSchema = z.enum(["user", "assistant", "system", "tool"]);
 export const ProvenanceSchema = z.enum([
@@ -35,7 +53,7 @@ export const EmbeddingSchema = z.object({
   provider: z.string().min(1),
   model: z.string().min(1),
   dimensions: z.number().int().positive(),
-  vector: z.array(z.number()),
+  vector: z.array(z.number().finite()),
   createdAt: IsoDateTimeSchema
 }).refine((embedding) => embedding.vector.length === embedding.dimensions, {
   message: "vector length must match dimensions"
@@ -50,7 +68,7 @@ export const TurnSchema = z.object({
   createdAt: IsoDateTimeSchema,
   provenance: ProvenanceSchema,
   trustLevel: TrustLevelSchema,
-  metadata: z.record(z.unknown()),
+  metadata: z.record(JsonValueSchema),
   contentHash: z.string().min(1)
 });
 
