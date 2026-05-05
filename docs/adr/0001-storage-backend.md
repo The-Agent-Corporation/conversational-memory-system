@@ -79,3 +79,17 @@ For the first implementation plan, defer persistence behind `MemoryStore` and us
 - All persistence operations go through `MemoryStore`.
 - Embedding metadata must include provider, model, dimension, and created time.
 - Raw turns remain immutable regardless of backend.
+
+## First Adapter Target: Roscoe-Hermes
+
+Roscoe-Hermes already has a unified per-profile timeline with SQLite and FTS5. The first adapter should ingest from that timeline or from the same write path used by the gateway. The memory system should not replace Hermes memory on day one; it should run alongside it, producing injection packets and search/resume tools.
+
+The first adapter must preserve:
+
+- `profile_id`
+- host session id
+- monotonic sequence
+- platform/channel metadata
+- inbound and outbound role
+- raw content
+- created timestamp
