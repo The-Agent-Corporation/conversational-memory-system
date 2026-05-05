@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
+import type { Summary } from "../../src/domain/types.js";
 import type { Embedder } from "../../src/embeddings/embedder.js";
 import type { HermesTimelineRow } from "../../src/integrations/hermes/contract.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
@@ -15,6 +16,30 @@ const row = (overrides: Partial<HermesTimelineRow> = {}): HermesTimelineRow => (
   created_at: "2026-05-04T10:00:00.000Z",
   channel: "telegram",
   metadata_json: "{\"platform\":\"telegram\"}",
+  ...overrides
+});
+
+const summary = (overrides: Partial<Summary> = {}): Summary => ({
+  id: "summary_seeded",
+  summaryText: "Smith PIP demand strategy coverage timing provider bill review wage loss benefits and deadline planning.",
+  sourceTurnRanges: [{ threadId: "hermes-session", startSequence: 1, endSequence: 2 }],
+  sourceSummaryIds: [],
+  boxIds: ["box_1"],
+  embedding: null,
+  createdAt: "2026-05-04T10:05:00.000Z",
+  model: "test-summarizer",
+  promptVersion: "v1",
+  confidence: 0.91,
+  state: "compacted",
+  detailLevel: "medium",
+  tokenCount: 14,
+  lastAccessedAt: null,
+  version: 1,
+  strength: 0.8,
+  retrievalCount: 0,
+  retrievedAt: null,
+  halfLifeHours: 168,
+  outcomeScore: null,
   ...overrides
 });
 
@@ -99,6 +124,27 @@ describe("HermesMemoryAdapter", () => {
     expect(packet?.currentTopicSummary).toBe("Smith PIP (1 turn, seq 4-4)");
     expect(packet?.selectedMemory).toContain("Smith PIP");
     await expect(store.listInjections("hermes-session")).resolves.toEqual([packet]);
+  });
+
+  it("passes an explicit memory token budget into current-topic injection", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(summary());
+    const adapter = new HermesMemoryAdapter(store);
+
+    await adapter.processTimelineRow(row({
+      id: "1",
+      sequence: 1,
+      content: "Let's talk about Smith matter.",
+      created_at: "2026-05-04T10:10:00.000Z"
+    }));
+
+    const packet = await adapter.prepareCurrentTopicInjection("hermes-session", {
+      requestedAt: "2026-05-04T10:10:05.000Z",
+      maxMemoryTokens: 5
+    });
+
+    expect(packet?.selectedMemory).toBe("Smith PIP demand strategy...");
+    expect(packet?.disclosureText).toContain("using 5/5 memory tokens");
   });
 
   it("uses an injected summarizer for completed topic compaction", async () => {

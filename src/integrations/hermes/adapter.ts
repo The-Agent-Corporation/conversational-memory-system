@@ -35,6 +35,11 @@ export interface HermesMemoryAdapterOptions {
   summarizerOptions?: SummarizerFactoryOptions;
 }
 
+export interface HermesInjectionOptions {
+  requestedAt?: string;
+  maxMemoryTokens?: number;
+}
+
 export class HermesMemoryAdapter {
   private readonly service: MemoryService;
   private readonly monitor = new TopicMonitor();
@@ -69,8 +74,14 @@ export class HermesMemoryAdapter {
     };
   }
 
-  async prepareCurrentTopicInjection(hostSessionId: string, requestedAt?: string): Promise<InjectionPacket | null> {
+  async prepareCurrentTopicInjection(
+    hostSessionId: string,
+    options: string | HermesInjectionOptions = {}
+  ): Promise<InjectionPacket | null> {
     const currentTopic = this.monitor.current(hostSessionId);
+    const injectionOptions = typeof options === "string"
+      ? { requestedAt: options }
+      : options;
 
     if (!currentTopic) {
       return null;
@@ -81,7 +92,8 @@ export class HermesMemoryAdapter {
       profileId: currentTopic.profileId,
       hostSessionId,
       currentTopicSummary: currentTopic.currentTopicSummary,
-      requestedAt
+      requestedAt: injectionOptions.requestedAt,
+      maxMemoryTokens: injectionOptions.maxMemoryTokens
     });
   }
 }
