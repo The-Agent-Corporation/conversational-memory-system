@@ -115,6 +115,63 @@ describe("MemoryRetriever", () => {
     await expect(store.listInjections("session_1")).resolves.toEqual([first, second]);
   });
 
+  it("packs selected memory within an explicit token budget", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_short",
+      summaryText: "Smith PIP demand.",
+      tokenCount: 3
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_medium",
+      summaryText: "Smith PIP demand timing and provider bill review.",
+      tokenCount: 8
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_long",
+      summaryText: "Smith PIP demand strategy coverage timing provider bill review and wage loss benefits.",
+      tokenCount: 12
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 11
+    });
+
+    expect(packet?.sourceSummaryIds).toEqual(["summary_medium", "summary_short"]);
+    expect(packet?.selectedMemory).toContain("Smith PIP demand.");
+    expect(packet?.selectedMemory).toContain("provider bill review");
+    expect(packet?.selectedMemory).not.toContain("wage loss benefits");
+    expect(packet?.disclosureText).toContain("using 11/11 memory tokens");
+  });
+
+  it("returns null when no ranked memory fits the explicit token budget", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_large",
+      summaryText: "Smith PIP demand strategy and coverage timing.",
+      tokenCount: 10
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 5
+    });
+
+    expect(packet).toBeNull();
+    await expect(store.listInjections("session_1")).resolves.toEqual([]);
+  });
+
   it("updates selected summary access metadata when memory is retrieved", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary({
