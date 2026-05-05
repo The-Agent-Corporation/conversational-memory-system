@@ -181,6 +181,39 @@ describe("MemoryRetriever", () => {
     ]);
   });
 
+  it("revives stale summaries when retrieval selects them", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_stale",
+      state: "stale",
+      strength: 0.2,
+      retrievalCount: 4,
+      lastAccessedAt: "2026-05-01T10:00:00.000Z",
+      retrievedAt: "2026-05-01T10:00:00.000Z"
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    expect(packet?.sourceSummaryIds).toEqual(["summary_stale"]);
+    await expect(store.listSummaries()).resolves.toEqual([
+      expect.objectContaining({
+        id: "summary_stale",
+        state: "revived",
+        strength: 0.25,
+        retrievalCount: 5,
+        lastAccessedAt: "2026-05-04T10:10:00.000Z",
+        retrievedAt: "2026-05-04T10:10:00.000Z"
+      })
+    ]);
+  });
+
   it("uses vector similarity for embedded summaries when an embedder is configured", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary({
