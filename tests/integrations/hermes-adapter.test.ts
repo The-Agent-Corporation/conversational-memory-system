@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import type { HermesTimelineRow } from "../../src/integrations/hermes/contract.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
+import type { Summarizer } from "../../src/summarization/summarizer.js";
 
 const row = (overrides: Partial<HermesTimelineRow> = {}): HermesTimelineRow => ({
   id: "1",
@@ -97,5 +98,45 @@ describe("HermesMemoryAdapter", () => {
     expect(packet?.currentTopicSummary).toBe("Smith PIP (1 turn, seq 4-4)");
     expect(packet?.selectedMemory).toContain("Smith PIP");
     await expect(store.listInjections("hermes-session")).resolves.toEqual([packet]);
+  });
+
+  it("uses an injected summarizer for completed topic compaction", async () => {
+    const store = new InMemoryStore();
+    const summarizer: Summarizer = {
+      async summarize({ span, sourceTurns }) {
+        return {
+          summaryText: `runtime ${span.topicLabel} from ${sourceTurns.length} turns`,
+          model: "runtime-test-summarizer",
+          promptVersion: "runtime-test-v1",
+          confidence: 0.91,
+          detailLevel: "medium",
+          tokenCount: 7
+        };
+      }
+    };
+    const adapter = new HermesMemoryAdapter(store, { summarizer });
+
+    await adapter.processTimelineRow(row());
+    await adapter.processTimelineRow(row({
+      id: "2",
+      sequence: 2,
+      role: "assistant",
+      content: "The Smith PIP demand deadline is June 1.",
+      created_at: "2026-05-04T10:00:10.000Z"
+    }));
+    const result = await adapter.processTimelineRow(row({
+      id: "3",
+      sequence: 3,
+      content: "Switch to Jones BI coverage.",
+      created_at: "2026-05-04T10:05:00.000Z"
+    }));
+
+    expect(result.compaction?.summary).toMatchObject({
+      summaryText: "runtime Smith PIP from 2 turns",
+      model: "runtime-test-summarizer",
+      promptVersion: "runtime-test-v1",
+      confidence: 0.91,
+      detailLevel: "medium"
+    });
   });
 });
