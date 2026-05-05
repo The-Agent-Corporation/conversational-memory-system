@@ -15,6 +15,10 @@ export interface SummaryDecayResult {
   updatedSummaries: Summary[];
 }
 
+export interface BoxStateRefreshResult {
+  updatedBoxes: Box[];
+}
+
 export class SleepReviewer {
   constructor(private readonly store: MemoryStore) {}
 
@@ -58,6 +62,28 @@ export class SleepReviewer {
     }
 
     return { updatedSummaries };
+  }
+
+  async refreshBoxStates(request: SleepReviewRequest): Promise<BoxStateRefreshResult> {
+    const [boxes, summaries] = await Promise.all([
+      this.store.listBoxes(),
+      this.store.listSummaries()
+    ]);
+    const summariesById = new Map(summaries.map((summary) => [summary.id, summary]));
+    const updatedBoxes: Box[] = [];
+
+    for (const box of boxes) {
+      const refreshed = refreshBoxState(box, summariesById, request.reviewedAt);
+
+      if (!refreshed) {
+        continue;
+      }
+
+      await this.store.saveBox(refreshed);
+      updatedBoxes.push(refreshed);
+    }
+
+    return { updatedBoxes };
   }
 }
 
@@ -174,6 +200,47 @@ function hoursBetween(start: string, end: string): number {
 
 function roundStrength(value: number): number {
   return Number(Math.max(0, Math.min(1, value)).toFixed(2));
+}
+
+function refreshBoxState(
+  box: Box,
+  summariesById: Map<string, Summary>,
+  reviewedAt: string
+): Box | null {
+  if (!isBoxRefreshEligible(box) || box.summaryIds.length === 0) {
+    return null;
+  }
+
+  const linkedSummaries = box.summaryIds
+    .map((summaryId) => summariesById.get(summaryId))
+    .filter((summary): summary is Summary => summary !== undefined);
+
+  if (linkedSummaries.length === 0) {
+    return null;
+  }
+
+  if (box.state === "stale" && linkedSummaries.some((summary) => summary.state === "revived")) {
+    return {
+      ...box,
+      state: "revived",
+      updatedAt: reviewedAt,
+      lastActivityAt: reviewedAt
+    };
+  }
+
+  if (box.state !== "stale" && linkedSummaries.every((summary) => summary.state === "stale")) {
+    return {
+      ...box,
+      state: "stale",
+      updatedAt: reviewedAt
+    };
+  }
+
+  return null;
+}
+
+function isBoxRefreshEligible(box: Box): boolean {
+  return box.state === "approved" || box.state === "active" || box.state === "revived" || box.state === "stale";
 }
 
 function normalizeTitle(title: string): string {
