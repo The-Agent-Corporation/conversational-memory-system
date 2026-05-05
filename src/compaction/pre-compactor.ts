@@ -1,4 +1,8 @@
 import type { Summary } from "../domain/types.js";
+import {
+  DeterministicSummarizer,
+  type Summarizer
+} from "../summarization/summarizer.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import type { CompletedTopicSpan } from "../topic/topic-monitor.js";
 
@@ -8,7 +12,10 @@ export interface PreCompactionResult {
 }
 
 export class PreCompactor {
-  constructor(private readonly store: MemoryStore) {}
+  constructor(
+    private readonly store: MemoryStore,
+    private readonly summarizer: Summarizer = new DeterministicSummarizer()
+  ) {}
 
   async compactCompletedTopic(span: CompletedTopicSpan): Promise<PreCompactionResult> {
     const sourceTurns = await this.store.listTurns(span.hostSessionId);
@@ -17,21 +24,22 @@ export class PreCompactor {
         turn.sequence >= span.sourceTurnRange.startSequence &&
         turn.sequence <= span.sourceTurnRange.endSequence
     );
+    const draft = await this.summarizer.summarize({ span, sourceTurns: turnsInSpan });
 
     const summary: Summary = {
       id: summaryIdForSpan(span),
-      summaryText: buildSummaryText(span, turnsInSpan.map((turn) => turn.content)),
+      summaryText: draft.summaryText,
       sourceTurnRanges: [span.sourceTurnRange],
       sourceSummaryIds: [],
       boxIds: [],
       embedding: null,
       createdAt: span.completedAt,
-      model: "deterministic-pre-compactor",
-      promptVersion: "pre-compaction-v1",
-      confidence: 0.7,
+      model: draft.model,
+      promptVersion: draft.promptVersion,
+      confidence: draft.confidence,
       state: "compacted",
-      detailLevel: "brief",
-      tokenCount: estimateTokenCount(span.currentTopicSummary),
+      detailLevel: draft.detailLevel,
+      tokenCount: draft.tokenCount,
       lastAccessedAt: null,
       version: 1,
       strength: 0.5,
@@ -57,22 +65,4 @@ function summaryIdForSpan(span: CompletedTopicSpan): string {
     span.sourceTurnRange.startSequence,
     span.sourceTurnRange.endSequence
   ].join("_");
-}
-
-function buildSummaryText(span: CompletedTopicSpan, sourceContents: string[]): string {
-  const sourcePreview = sourceContents
-    .map((content) => content.trim())
-    .filter(Boolean)
-    .slice(0, 3)
-    .join(" ");
-
-  if (!sourcePreview) {
-    return span.currentTopicSummary;
-  }
-
-  return `${span.currentTopicSummary}: ${sourcePreview}`;
-}
-
-function estimateTokenCount(value: string): number {
-  return Math.max(1, Math.ceil(value.split(/\s+/).filter(Boolean).length * 1.3));
 }

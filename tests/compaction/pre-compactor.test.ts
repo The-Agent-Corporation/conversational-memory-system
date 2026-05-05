@@ -3,6 +3,7 @@ import type { CompletedTopicSpan } from "../../src/topic/topic-monitor.js";
 import { PreCompactor } from "../../src/compaction/pre-compactor.js";
 import type { Turn } from "../../src/domain/types.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
+import type { Summarizer } from "../../src/summarization/summarizer.js";
 
 const makeTurn = (overrides: Partial<Turn> = {}): Turn => ({
   id: "turn_1",
@@ -66,8 +67,8 @@ describe("PreCompactor", () => {
       sourceSummaryIds: [],
       boxIds: [],
       embedding: null,
-      model: "deterministic-pre-compactor",
-      promptVersion: "pre-compaction-v1",
+      model: "deterministic-summarizer",
+      promptVersion: "deterministic-v1",
       state: "compacted",
       detailLevel: "brief"
     });
@@ -91,5 +92,37 @@ describe("PreCompactor", () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0].id).toBe("summary_session_1_1_2");
     expect(summaries[0].createdAt).toBe("2026-05-04T10:06:00.000Z");
+  });
+
+  it("uses an injected summarizer to build the summary draft", async () => {
+    const store = new InMemoryStore();
+    await store.saveTurn(makeTurn({ id: "turn_1", sequence: 1 }));
+    const summarizer: Summarizer = {
+      async summarize({ span, sourceTurns }) {
+        return {
+          summaryText: `custom ${span.topicLabel} from ${sourceTurns.length} turns`,
+          model: "custom-test-summarizer",
+          promptVersion: "custom-v1",
+          confidence: 0.95,
+          detailLevel: "medium",
+          tokenCount: 6
+        };
+      }
+    };
+    const compactor = new PreCompactor(store, summarizer);
+
+    const result = await compactor.compactCompletedTopic(completedSpan({
+      sourceTurnRange: { threadId: "session_1", startSequence: 1, endSequence: 1 },
+      turnCount: 1
+    }));
+
+    expect(result.summary).toMatchObject({
+      summaryText: "custom Smith PIP from 1 turns",
+      model: "custom-test-summarizer",
+      promptVersion: "custom-v1",
+      confidence: 0.95,
+      detailLevel: "medium",
+      tokenCount: 6
+    });
   });
 });
