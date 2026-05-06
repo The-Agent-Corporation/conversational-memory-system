@@ -41,6 +41,14 @@ export interface HermesInjectionOptions {
   maxMemoryTokens?: number;
 }
 
+export interface HermesMemorySearchRequest {
+  profileId: string;
+  hostSessionId: string;
+  query: string;
+  requestedAt?: string;
+  maxMemoryTokens?: number;
+}
+
 export class HermesMemoryAdapter {
   private readonly service: MemoryService;
   private readonly monitor = new TopicMonitor();
@@ -98,6 +106,26 @@ export class HermesMemoryAdapter {
       requestedAt: injectionOptions.requestedAt,
       maxMemoryTokens: injectionOptions.maxMemoryTokens
     });
+  }
+
+  async searchMemory(request: HermesMemorySearchRequest): Promise<InjectionPacket | null> {
+    const packet = await this.service.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: request.profileId,
+      hostSessionId: request.hostSessionId,
+      currentTopicSummary: request.query,
+      requestedAt: request.requestedAt,
+      maxMemoryTokens: request.maxMemoryTokens
+    });
+
+    if (!packet) {
+      return null;
+    }
+
+    return {
+      ...packet,
+      disclosureText: `Searched memory for "${request.query}". ${packet.disclosureText}`
+    };
   }
 
   async resumeSummary(summaryId: string): Promise<ResumeResult> {

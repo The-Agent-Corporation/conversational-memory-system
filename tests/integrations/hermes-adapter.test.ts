@@ -174,6 +174,25 @@ describe("HermesMemoryAdapter", () => {
     expect(packet?.disclosureText).toContain("using 5/5 memory tokens");
   });
 
+  it("searches memory explicitly without relying on the current topic monitor", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(summary());
+    const adapter = new HermesMemoryAdapter(store);
+
+    const packet = await adapter.searchMemory({
+      profileId: "default",
+      hostSessionId: "hermes-session",
+      query: "Smith PIP demand deadline",
+      requestedAt: "2026-05-04T10:15:00.000Z"
+    });
+
+    expect(packet).not.toBeNull();
+    expect(packet?.currentTopicSummary).toBe("Smith PIP demand deadline");
+    expect(packet?.selectedMemory).toContain("Smith PIP demand strategy");
+    expect(packet?.sourceSummaryIds).toEqual(["summary_seeded"]);
+    expect(packet?.disclosureText).toContain("Searched memory for");
+  });
+
   it("uses an injected summarizer for completed topic compaction", async () => {
     const store = new InMemoryStore();
     const summarizer: Summarizer = {
