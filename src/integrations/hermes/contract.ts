@@ -4,19 +4,22 @@ import {
   type ControlSignalEvent,
   type HostEvent
 } from "../../domain/events.js";
+import { z } from "zod";
 import type { JsonObject, JsonValue } from "../../domain/types.js";
 
-export interface HermesTimelineRow {
-  id: string;
-  profile_id: string;
-  session_id: string;
-  sequence: number;
-  role: "user" | "assistant" | "system" | "tool";
-  content: string;
-  created_at: string;
-  channel: string | null;
-  metadata_json: string | null;
-}
+export const HermesTimelineRowSchema = z.object({
+  id: z.string().min(1),
+  profile_id: z.string().min(1),
+  session_id: z.string().min(1),
+  sequence: z.number().int().nonnegative(),
+  role: z.enum(["user", "assistant", "system", "tool"]),
+  content: z.string(),
+  created_at: z.string().datetime(),
+  channel: z.string().nullable(),
+  metadata_json: z.string().nullable()
+});
+
+export type HermesTimelineRow = z.infer<typeof HermesTimelineRowSchema>;
 
 export function mapHermesTimelineRowToHostEvent(row: HermesTimelineRow): HostEvent {
   const signal = controlSignalForContent(row.content);

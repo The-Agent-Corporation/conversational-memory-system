@@ -6,7 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "hermes:ingest": "tsx src/integrations/hermes/ingest-command.ts"
   },
   "dependencies": {
     "zod": "^3.23.8"

@@ -1,0 +1,79 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { ingestHermesTimelineRow } from "../../src/integrations/hermes/ingest-command.js";
+import { SqliteStore } from "../../src/storage/sqlite-store.js";
+
+let tempDir: string | null = null;
+
+const makeTempDir = async (): Promise<string> => {
+  tempDir = await mkdtemp(join(tmpdir(), "cms-hermes-ingest-"));
+  return tempDir;
+};
+
+afterEach(async () => {
+  if (tempDir) {
+    await rm(tempDir, { recursive: true, force: true });
+    tempDir = null;
+  }
+});
+
+describe("Hermes ingest command", () => {
+  it("ingests a bridged Hermes timeline row into the SQLite memory store", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "memory.sqlite");
+
+    const result = await ingestHermesTimelineRow({
+      databasePath,
+      input: JSON.stringify({
+        id: "default:1",
+        profile_id: "default",
+        session_id: "profile:default",
+        sequence: 1,
+        role: "user",
+        content: "Let's talk about Smith PIP.",
+        created_at: "2024-05-04T12:40:00.000Z",
+        channel: "telegram",
+        metadata_json: JSON.stringify({
+          direction: "inbound",
+          platform: "telegram",
+          source_chat_id: "chat-1",
+          source_thread_id: "thread-1",
+          author: "Alice",
+          message_id: "m1"
+        })
+      })
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      turnId: "turn_hermes_default:1",
+      completedTopic: null,
+      summaryId: null
+    });
+
+    const store = new SqliteStore(databasePath);
+    const turns = await store.listTurns("profile:default");
+    expect(turns).toHaveLength(1);
+    expect(turns[0]).toMatchObject({
+      id: "turn_hermes_default:1",
+      threadId: "profile:default",
+      sequence: 1,
+      role: "user",
+      content: "Let's talk about Smith PIP."
+    });
+    expect(turns[0].metadata).toMatchObject({
+      host: "roscoe-hermes",
+      profileId: "default",
+      sourceMetadata: {
+        channel: "telegram",
+        sourceMetadata: {
+          author: "Alice",
+          direction: "inbound"
+        }
+      }
+    });
+    store.close();
+  });
+});
