@@ -2,6 +2,7 @@ import { AnchorDetector } from "../../anchors/anchor-detector.js";
 import { PreCompactor, type PreCompactionResult } from "../../compaction/pre-compactor.js";
 import type { Anchor, InjectionPacket, Turn } from "../../domain/types.js";
 import type { Embedder } from "../../embeddings/embedder.js";
+import { ConversationResumer, type ResumeResult } from "../../resume/conversation-resumer.js";
 import { MemoryService } from "../../service/memory-service.js";
 import type { MemoryStore } from "../../storage/memory-store.js";
 import {
@@ -45,6 +46,7 @@ export class HermesMemoryAdapter {
   private readonly monitor = new TopicMonitor();
   private readonly anchorDetector: AnchorDetector;
   private readonly preCompactor: PreCompactor;
+  private readonly resumer: ConversationResumer;
 
   constructor(store: MemoryStore, options: HermesMemoryAdapterOptions = {}) {
     this.service = new MemoryService(store, { embedder: options.embedder });
@@ -54,6 +56,7 @@ export class HermesMemoryAdapter {
       options.summarizer ?? createSummarizerFromEnv(options.env, options.summarizerOptions),
       options.embedder
     );
+    this.resumer = new ConversationResumer(store);
   }
 
   async processTimelineRow(row: HermesTimelineRow): Promise<HermesAdapterResult> {
@@ -95,5 +98,13 @@ export class HermesMemoryAdapter {
       requestedAt: injectionOptions.requestedAt,
       maxMemoryTokens: injectionOptions.maxMemoryTokens
     });
+  }
+
+  async resumeSummary(summaryId: string): Promise<ResumeResult> {
+    return this.resumer.resumeSummary(summaryId);
+  }
+
+  async resumeInjection(packet: InjectionPacket): Promise<ResumeResult> {
+    return this.resumer.resumeInjection(packet);
   }
 }

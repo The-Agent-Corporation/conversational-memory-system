@@ -126,6 +126,33 @@ describe("HermesMemoryAdapter", () => {
     await expect(store.listInjections("hermes-session")).resolves.toEqual([packet]);
   });
 
+  it("expands a summary into source Hermes timeline turns on request", async () => {
+    const store = new InMemoryStore();
+    const adapter = new HermesMemoryAdapter(store);
+
+    await adapter.processTimelineRow(row());
+    await adapter.processTimelineRow(row({
+      id: "2",
+      sequence: 2,
+      role: "assistant",
+      content: "The Smith PIP demand deadline is June 1.",
+      created_at: "2026-05-04T10:00:10.000Z"
+    }));
+    await store.saveSummary(summary());
+
+    const result = await adapter.resumeSummary("summary_seeded");
+
+    expect(result.sourceSummaryIds).toEqual(["summary_seeded"]);
+    expect(result.sourceTurnRanges).toEqual([
+      { threadId: "hermes-session", startSequence: 1, endSequence: 2 }
+    ]);
+    expect(result.turns.map((turn) => turn.content)).toEqual([
+      "Let's talk about Smith PIP.",
+      "The Smith PIP demand deadline is June 1."
+    ]);
+    expect(result.disclosureText).toBe("Expanded 1 summary into 2 verbatim turns.");
+  });
+
   it("passes an explicit memory token budget into current-topic injection", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(summary());
