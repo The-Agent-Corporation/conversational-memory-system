@@ -16,7 +16,9 @@ export interface HermesSmokeHarnessOptions {
 
 export interface RoscoeMemoryEnvironment {
   HERMES_CONVERSATIONAL_MEMORY_DB: string;
+  HERMES_CONVERSATIONAL_MEMORY_ENABLED: string;
   HERMES_CONVERSATIONAL_MEMORY_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED: string;
   HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: string;
   HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: string;
 }
@@ -105,7 +107,9 @@ export function buildRoscoeMemoryEnvironment(options: {
 
   return {
     HERMES_CONVERSATIONAL_MEMORY_DB: options.databasePath,
+    HERMES_CONVERSATIONAL_MEMORY_ENABLED: "1",
     HERMES_CONVERSATIONAL_MEMORY_COMMAND: npmCommand(projectRoot, "hermes:ingest", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED: "1",
     HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: npmCommand(projectRoot, "hermes:inject", options.databasePath),
     HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: npmCommand(projectRoot, "hermes:resume", options.databasePath)
   };
