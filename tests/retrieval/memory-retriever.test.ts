@@ -150,6 +150,36 @@ describe("MemoryRetriever", () => {
     expect(packet?.disclosureText).toContain("using 11/11 memory tokens");
   });
 
+  it("deduplicates selected memory that points at the same source turn span", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_smith_pip",
+      summaryText: "Smith PIP demand deadline is June 1.",
+      tokenCount: 8
+    }));
+    await store.saveAnchor(makeAnchor({
+      id: "anchor_smith_pip_deadline",
+      content: "Smith PIP demand deadline is June 1."
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand deadline",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.selectedMemory).toBe("Smith PIP demand deadline is June 1.");
+    expect(packet?.sourceSummaryIds).toEqual(["summary_smith_pip"]);
+    expect(packet?.sourceTurnRanges).toEqual([
+      { threadId: "session_1", startSequence: 1, endSequence: 2 }
+    ]);
+    expect(packet?.disclosureText).toContain("Retrieved 1 memory item");
+  });
+
   it("returns null when no ranked memory fits the explicit token budget", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary({
