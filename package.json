@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "hermes:ingest": "tsx src/integrations/hermes/ingest-command.ts",
     "hermes:inject": "tsx src/integrations/hermes/inject-command.ts",
-    "hermes:resume": "tsx src/integrations/hermes/resume-command.ts"
+    "hermes:resume": "tsx src/integrations/hermes/resume-command.ts",
+    "hermes:smoke": "tsx src/integrations/hermes/smoke-harness.ts"
   },
   "dependencies": {
     "zod": "^3.23.8"
