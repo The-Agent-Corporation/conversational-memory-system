@@ -72,7 +72,7 @@ describe("TopicMonitor", () => {
     });
   });
 
-  it("ignores control signals without clearing the current topic", () => {
+  it("closes the current topic when a compaction control signal arrives", () => {
     const monitor = new TopicMonitor();
 
     monitor.observe(event());
@@ -81,6 +81,25 @@ describe("TopicMonitor", () => {
       sequence: 2,
       type: "control_signal",
       signal: "compress",
+      createdAt: "2026-05-04T10:01:00.000Z"
+    }));
+
+    expect(result.topicChanged).toBe(true);
+    expect(result.current).toBeNull();
+    expect(result.completed?.topicLabel).toBe("Smith PIP");
+    expect(result.completed?.completedAt).toBe("2026-05-04T10:01:00.000Z");
+    expect(monitor.current("session_1")).toBeNull();
+  });
+
+  it("keeps the current topic when a resume control signal arrives", () => {
+    const monitor = new TopicMonitor();
+
+    monitor.observe(event());
+    const result = monitor.observe(event({
+      id: "event_2",
+      sequence: 2,
+      type: "control_signal",
+      signal: "resume_requested",
       createdAt: "2026-05-04T10:01:00.000Z"
     }));
 

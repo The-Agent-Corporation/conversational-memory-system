@@ -1,4 +1,4 @@
-import type { HostEvent, ConversationTurnEvent } from "../domain/events.js";
+import type { HostEvent, ConversationTurnEvent, ControlSignalEvent } from "../domain/events.js";
 import type { TurnRange } from "../domain/types.js";
 
 export interface RollingTopicState {
@@ -28,8 +28,21 @@ export class TopicMonitor {
 
   observe(event: HostEvent): TopicMonitorResult {
     if (event.type === "control_signal") {
+      const existing = this.states.get(event.hostSessionId) ?? null;
+      if (existing && closesCurrentTopic(event.signal)) {
+        this.states.delete(event.hostSessionId);
+        return {
+          current: null,
+          topicChanged: true,
+          completed: {
+            ...existing,
+            completedAt: event.createdAt
+          }
+        };
+      }
+
       return {
-        current: this.states.get(event.hostSessionId) ?? null,
+        current: existing,
         topicChanged: false,
         completed: null
       };
@@ -65,6 +78,10 @@ export class TopicMonitor {
   current(hostSessionId: string): RollingTopicState | null {
     return this.states.get(hostSessionId) ?? null;
   }
+}
+
+function closesCurrentTopic(signal: ControlSignalEvent["signal"]): boolean {
+  return signal === "new_conversation" || signal === "reset" || signal === "compress";
 }
 
 function createTopicState(event: ConversationTurnEvent, topicLabel: string): RollingTopicState {
