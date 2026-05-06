@@ -1,8 +1,16 @@
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
+import { PreCompactor, type PreCompactionResult } from "../../compaction/pre-compactor.js";
+import type { ConversationTurnEvent } from "../../domain/events.js";
+import type { Turn } from "../../domain/types.js";
 import { SqliteStore } from "../../storage/sqlite-store.js";
+import { TopicMonitor } from "../../topic/topic-monitor.js";
 import { HermesMemoryAdapter } from "./adapter.js";
-import { HermesTimelineRowSchema } from "./contract.js";
+import {
+  HermesTimelineRowSchema,
+  mapHermesTimelineRowToHostEvent,
+  type HermesTimelineRow
+} from "./contract.js";
 
 const IngestOptionsSchema = z.object({
   databasePath: z.string().min(1),
@@ -25,9 +33,18 @@ export async function ingestHermesTimelineRow(options: {
   const store = new SqliteStore(parsedOptions.databasePath);
 
   try {
+    const controlCompaction = await compactStoredTopicForControlSignal(store, row);
+    if (controlCompaction) {
+      return {
+        ok: true,
+        turnId: null,
+        completedTopic: controlCompaction.completedTopic,
+        summaryId: controlCompaction.compaction.summary.id
+      };
+    }
+
     const adapter = new HermesMemoryAdapter(store);
     const result = await adapter.processTimelineRow(row);
-
     return {
       ok: true,
       turnId: result.turn?.id ?? null,
@@ -37,6 +54,52 @@ export async function ingestHermesTimelineRow(options: {
   } finally {
     store.close();
   }
+}
+
+async function compactStoredTopicForControlSignal(
+  store: SqliteStore,
+  row: HermesTimelineRow
+): Promise<{ completedTopic: string; compaction: PreCompactionResult } | null> {
+  const event = mapHermesTimelineRowToHostEvent(row);
+  if (event.type !== "control_signal") {
+    return null;
+  }
+
+  const turns = await store.listTurns(row.session_id);
+  if (turns.length === 0) {
+    return null;
+  }
+
+  const monitor = new TopicMonitor();
+  for (const turn of turns) {
+    monitor.observe(turnToConversationEvent(turn, row));
+  }
+
+  const topicResult = monitor.observe(event);
+  if (!topicResult.completed) {
+    return null;
+  }
+
+  const compactor = new PreCompactor(store);
+  return {
+    completedTopic: topicResult.completed.topicLabel,
+    compaction: await compactor.compactCompletedTopic(topicResult.completed)
+  };
+}
+
+function turnToConversationEvent(turn: Turn, row: HermesTimelineRow): ConversationTurnEvent {
+  return {
+    id: turn.id,
+    host: "roscoe-hermes",
+    profileId: row.profile_id,
+    hostSessionId: row.session_id,
+    sequence: turn.sequence,
+    type: "conversation_turn",
+    role: turn.role,
+    content: turn.content,
+    createdAt: turn.createdAt,
+    metadata: turn.metadata
+  };
 }
 
 async function main(): Promise<void> {
