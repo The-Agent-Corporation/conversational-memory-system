@@ -40,7 +40,9 @@ For a local memory database at `/path/to/memory.sqlite`, configure Roscoe with:
 
 ```sh
 export HERMES_CONVERSATIONAL_MEMORY_DB=/path/to/memory.sqlite
+export HERMES_CONVERSATIONAL_MEMORY_ENABLED=1
 export HERMES_CONVERSATIONAL_MEMORY_COMMAND="npm --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:ingest -- --db /path/to/memory.sqlite"
+export HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED=1
 export HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND="npm --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:inject -- --db /path/to/memory.sqlite"
 export HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND="npm --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:resume -- --db /path/to/memory.sqlite"
 ```

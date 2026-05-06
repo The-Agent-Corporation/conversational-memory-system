@@ -50,6 +50,8 @@ describe("Hermes memory smoke harness", () => {
     });
 
     expect(env.HERMES_CONVERSATIONAL_MEMORY_DB).toBe("/tmp/memory.sqlite");
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_ENABLED).toBe("1");
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED).toBe("1");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toBe(
       "npm --prefix /repo/conversational-memory-system run hermes:ingest -- --db /tmp/memory.sqlite"
     );
