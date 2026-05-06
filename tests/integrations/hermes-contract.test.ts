@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConversationTurnEventSchema } from "../../src/domain/events.js";
+import { ConversationTurnEventSchema, ControlSignalEventSchema } from "../../src/domain/events.js";
 import { mapHermesTimelineRowToHostEvent } from "../../src/integrations/hermes/contract.js";
 
 describe("Roscoe-Hermes contract", () => {
@@ -16,12 +16,13 @@ describe("Roscoe-Hermes contract", () => {
       metadata_json: "{\"platform\":\"telegram\"}"
     });
 
-    expect(event.host).toBe("roscoe-hermes");
-    expect(event.hostSessionId).toBe("hermes-session");
-    expect(event.role).toBe("user");
-    expect(event.metadata.channel).toBe("telegram");
-    expect(event.metadata.sourceMetadata).toEqual({ platform: "telegram" });
-    expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
+    const parsed = ConversationTurnEventSchema.parse(event);
+    expect(parsed.host).toBe("roscoe-hermes");
+    expect(parsed.hostSessionId).toBe("hermes-session");
+    expect(parsed.role).toBe("user");
+    expect(parsed.metadata.channel).toBe("telegram");
+    expect(parsed.metadata.sourceMetadata).toEqual({ platform: "telegram" });
+    expect(parsed).toEqual(event);
   });
 
   it("preserves canonical row channel when source metadata conflicts", () => {
@@ -37,12 +38,13 @@ describe("Roscoe-Hermes contract", () => {
       metadata_json: "{\"channel\":\"web\",\"platform\":\"telegram\"}"
     });
 
-    expect(event.metadata.channel).toBe("telegram");
-    expect(event.metadata.sourceMetadata).toEqual({
+    const parsed = ConversationTurnEventSchema.parse(event);
+    expect(parsed.metadata.channel).toBe("telegram");
+    expect(parsed.metadata.sourceMetadata).toEqual({
       channel: "web",
       platform: "telegram"
     });
-    expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
+    expect(parsed).toEqual(event);
   });
 
   it("keeps invalid metadata JSON from leaking non-JSON values", () => {
@@ -58,13 +60,14 @@ describe("Roscoe-Hermes contract", () => {
       metadata_json: "{not valid JSON"
     });
 
-    expect(event.metadata).toEqual({
+    const parsed = ConversationTurnEventSchema.parse(event);
+    expect(parsed.metadata).toEqual({
       channel: null,
       sourceMetadata: {
         rawMetadata: "{not valid JSON"
       }
     });
-    expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
+    expect(parsed).toEqual(event);
   });
 
   it("wraps non-object metadata JSON in JSON-safe metadata", () => {
@@ -80,12 +83,38 @@ describe("Roscoe-Hermes contract", () => {
       metadata_json: "\"raw string metadata\""
     });
 
-    expect(event.metadata).toEqual({
+    const parsed = ConversationTurnEventSchema.parse(event);
+    expect(parsed.metadata).toEqual({
       channel: "telegram",
       sourceMetadata: {
         rawMetadata: "raw string metadata"
       }
     });
-    expect(ConversationTurnEventSchema.parse(event)).toEqual(event);
+    expect(parsed).toEqual(event);
+  });
+
+  it("maps explicit Hermes slash commands to control signals", () => {
+    const event = mapHermesTimelineRowToHostEvent({
+      id: "46",
+      profile_id: "default",
+      session_id: "hermes-session",
+      sequence: 11,
+      role: "user",
+      content: "/new",
+      created_at: "2026-05-04T10:04:00.000Z",
+      channel: "telegram",
+      metadata_json: "{\"platform\":\"telegram\"}"
+    });
+
+    expect(event).toMatchObject({
+      id: "hermes_46",
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "hermes-session",
+      sequence: 11,
+      type: "control_signal",
+      signal: "new_conversation"
+    });
+    expect(ControlSignalEventSchema.parse(event)).toEqual(event);
   });
 });

@@ -90,6 +90,34 @@ describe("HermesMemoryAdapter", () => {
     expect(summaries[0].summaryText).toContain("Smith PIP");
   });
 
+  it("compacts the active topic when Hermes sends a new-conversation command", async () => {
+    const store = new InMemoryStore();
+    const adapter = new HermesMemoryAdapter(store);
+
+    await adapter.processTimelineRow(row());
+    await adapter.processTimelineRow(row({
+      id: "2",
+      sequence: 2,
+      role: "assistant",
+      content: "The Smith PIP demand deadline is June 1.",
+      created_at: "2026-05-04T10:00:10.000Z"
+    }));
+
+    const result = await adapter.processTimelineRow(row({
+      id: "3",
+      sequence: 3,
+      content: "/new",
+      created_at: "2026-05-04T10:05:00.000Z"
+    }));
+
+    expect(result.turn).toBeNull();
+    expect(result.completedTopic?.topicLabel).toBe("Smith PIP");
+    expect(result.compaction?.summary.sourceTurnRanges).toEqual([
+      { threadId: "hermes-session", startSequence: 1, endSequence: 2 }
+    ]);
+    await expect(store.listTurns("hermes-session")).resolves.toHaveLength(2);
+  });
+
   it("prepares injection from the current Hermes topic", async () => {
     const store = new InMemoryStore();
     const adapter = new HermesMemoryAdapter(store);
