@@ -32,6 +32,9 @@ describe("Hermes memory smoke harness", () => {
     expect(result.databasePath).toBe(databasePath);
     expect(result.compaction.summaryId).toBe("summary_profile:default_1_2");
     expect(result.injection.packet?.sourceSummaryIds).toEqual(["summary_profile:default_1_2"]);
+    expect(result.injection.packet?.selectedMemory).toBe(
+      "Smith PIP (2 turns, seq 1-2): Let's talk about Smith PIP. The Smith PIP demand deadline is June 1."
+    );
     expect(result.injection.contextBlock).toContain("<memory-context>");
     expect(result.injection.contextBlock).toContain("Smith PIP");
     expect(result.resume.turnCount).toBe(2);

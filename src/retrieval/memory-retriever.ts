@@ -97,14 +97,16 @@ export class MemoryRetriever {
 }
 
 function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): RankedMemory[] {
+  const deduped = dedupeRankedMemory(ranked);
+
   if (maxMemoryTokens === undefined) {
-    return ranked.slice(0, 3);
+    return deduped.slice(0, 3);
   }
 
   const selected: RankedMemory[] = [];
   let usedTokens = 0;
 
-  for (const memory of ranked) {
+  for (const memory of deduped) {
     if (selected.length >= 3) {
       break;
     }
@@ -117,13 +119,62 @@ function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): Ranke
   }
 
   if (selected.length === 0) {
-    const stub = buildMemoryStub(ranked[0], maxMemoryTokens);
+    const stub = buildMemoryStub(deduped[0], maxMemoryTokens);
     if (stub) {
       return [stub];
     }
   }
 
   return selected;
+}
+
+function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
+  const summaries = ranked.filter((memory) => memory.kind === "summary");
+  const seenAnchorTexts = new Set<string>();
+
+  return ranked.filter((memory) => {
+    if (memory.kind !== "anchor") {
+      return true;
+    }
+
+    const textKey = normalizedMemoryText(memory.text);
+    if (seenAnchorTexts.has(textKey) || isAnchorCoveredBySummary(memory, summaries)) {
+      return false;
+    }
+
+    seenAnchorTexts.add(textKey);
+    return true;
+  });
+}
+
+function isAnchorCoveredBySummary(anchor: RankedMemory, summaries: RankedMemory[]): boolean {
+  const anchorText = normalizedMemoryText(anchor.text);
+
+  return summaries.some((summary) => {
+    const summaryText = normalizedMemoryText(summary.text);
+    return (
+      summaryText.includes(anchorText) &&
+      sharesBox(anchor, summary) &&
+      sharesThread(anchor, summary)
+    );
+  });
+}
+
+function sharesBox(left: RankedMemory, right: RankedMemory): boolean {
+  if (left.boxIds.length === 0 || right.boxIds.length === 0) {
+    return true;
+  }
+
+  return left.boxIds.some((boxId) => right.boxIds.includes(boxId));
+}
+
+function sharesThread(left: RankedMemory, right: RankedMemory): boolean {
+  const leftThreads = new Set(left.sourceTurnRanges.map((range) => range.threadId));
+  if (leftThreads.size === 0) {
+    return right.sourceTurnRanges.length > 0;
+  }
+
+  return right.sourceTurnRanges.some((range) => leftThreads.has(range.threadId));
 }
 
 function buildMemoryStub(memory: RankedMemory, maxTokens: number): RankedMemory | null {
@@ -317,6 +368,10 @@ function dedupeTurnRanges(ranges: TurnRange[]): TurnRange[] {
   }
 
   return deduped;
+}
+
+function normalizedMemoryText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 function buildRelevanceReason(selected: RankedMemory[]): string {
