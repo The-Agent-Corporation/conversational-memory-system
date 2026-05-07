@@ -13,6 +13,7 @@ interface RankedMemory {
   canUseStub: boolean;
   scoringMethod: "keyword overlap" | "vector similarity";
   summaryId: string | null;
+  traceId: string | null;
   sourceTurnRanges: TurnRange[];
   boxIds: string[];
 }
@@ -55,6 +56,9 @@ export class MemoryRetriever {
       sourceSummaryIds: selected
         .map((memory) => memory.summaryId)
         .filter((summaryId): summaryId is string => summaryId !== null),
+      sourceTraceIds: selected
+        .map((memory) => memory.traceId)
+        .filter((traceId): traceId is string => traceId !== null),
       sourceTurnRanges: dedupeTurnRanges(selected.flatMap((memory) => memory.sourceTurnRanges)),
       boxIds: [...new Set(selected.flatMap((memory) => memory.boxIds))],
       relevanceReason: buildRelevanceReason(selected),
@@ -236,6 +240,7 @@ function rankSummary(
       canUseStub: true,
       scoringMethod: "vector similarity",
       summaryId: summary.id,
+      traceId: null,
       sourceTurnRanges: summary.sourceTurnRanges,
       boxIds: summary.boxIds
     };
@@ -250,6 +255,7 @@ function rankSummary(
     canUseStub: true,
     scoringMethod: "keyword overlap",
     summaryId: summary.id,
+    traceId: null,
     sourceTurnRanges: summary.sourceTurnRanges,
     boxIds: summary.boxIds
   };
@@ -275,6 +281,7 @@ function rankAnchor(
       canUseStub: false,
       scoringMethod: "vector similarity",
       summaryId: null,
+      traceId: null,
       sourceTurnRanges: [],
       boxIds: anchor.boxId ? [anchor.boxId] : []
     };
@@ -289,6 +296,7 @@ function rankAnchor(
     canUseStub: false,
     scoringMethod: "keyword overlap",
     summaryId: null,
+    traceId: null,
     sourceTurnRanges: [],
     boxIds: anchor.boxId ? [anchor.boxId] : []
   };

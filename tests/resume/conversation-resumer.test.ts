@@ -47,6 +47,7 @@ const makeInjection = (overrides: Partial<InjectionPacket> = {}): InjectionPacke
   currentTopicSummary: "Smith PIP demand",
   selectedMemory: "Smith PIP demand strategy.",
   sourceSummaryIds: ["summary_1"],
+  sourceTraceIds: [],
   sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }],
   boxIds: ["box_1"],
   relevanceReason: "Top summary match summary_1.",

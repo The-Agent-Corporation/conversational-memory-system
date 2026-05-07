@@ -97,6 +97,7 @@ describe("domain schemas", () => {
       currentTopicSummary: "User is discussing Smith PIP coverage.",
       selectedMemory: "Prior Smith PIP demand strategy exists.",
       sourceSummaryIds: ["summary_1"],
+      sourceTraceIds: [],
       sourceTurnRanges: [{ threadId: "thread_1", startSequence: 1, endSequence: 30 }],
       boxIds: ["box_1"],
       relevanceReason: "Current topic matches Smith PIP summary.",

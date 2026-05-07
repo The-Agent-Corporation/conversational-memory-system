@@ -62,6 +62,7 @@ describe("MemoryRetriever", () => {
       hostSessionId: "session_1",
       currentTopicSummary: "Smith PIP demand",
       sourceSummaryIds: ["summary_1"],
+      sourceTraceIds: [],
       sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }],
       boxIds: ["box_1"],
       createdAt: "2026-05-04T10:10:00.000Z"

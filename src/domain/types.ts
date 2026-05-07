@@ -160,6 +160,7 @@ export const InjectionPacketSchema = z.object({
   currentTopicSummary: z.string().min(1),
   selectedMemory: z.string().min(1),
   sourceSummaryIds: z.array(z.string().min(1)),
+  sourceTraceIds: z.array(z.string().min(1)),
   sourceTurnRanges: z.array(TurnRangeSchema),
   boxIds: z.array(z.string().min(1)),
   relevanceReason: z.string().min(1),
