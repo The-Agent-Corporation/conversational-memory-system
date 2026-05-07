@@ -99,6 +99,9 @@ const makeProposal = (overrides: Partial<MemoryProposal> = {}): MemoryProposal =
   confidence: 0.78,
   createdAt: "2026-05-07T12:00:00.000Z",
   reviewedAt: "2026-05-07T12:00:00.000Z",
+  decidedAt: null,
+  decidedBy: null,
+  decisionNote: null,
   sourceSummaryIds: ["summary_1", "summary_3"],
   sourceTurnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 3 }],
   targetBoxIds: ["box_topic_smith_pip"],
@@ -193,6 +196,8 @@ describe("SqliteStore", () => {
 
     await expect(store.listSummaries()).resolves.toEqual([makeSummary()]);
     await expect(store.listBoxes()).resolves.toEqual([makeBox()]);
+    await expect(store.getBox("box_1")).resolves.toEqual(makeBox());
+    await expect(store.getBox("missing")).resolves.toBeNull();
     await expect(store.listAnchors()).resolves.toEqual([makeAnchor()]);
     await expect(store.listInjections("session_1")).resolves.toEqual([makeInjection()]);
   });
@@ -205,9 +210,13 @@ describe("SqliteStore", () => {
     await store.saveTrace(trace);
 
     await expect(store.listProposals()).resolves.toEqual([proposal]);
+    await expect(store.getProposal("proposal_trace_smith_pip_bills")).resolves.toEqual(proposal);
+    await expect(store.getProposal("missing")).resolves.toBeNull();
     await expect(store.listProposals({ state: "proposed", proposalType: "trace" })).resolves.toEqual([proposal]);
     await expect(store.listProposals({ state: "approved" })).resolves.toEqual([]);
     await expect(store.listTraces()).resolves.toEqual([trace]);
+    await expect(store.getTrace("trace_smith_pip_bills")).resolves.toEqual(trace);
+    await expect(store.getTrace("missing")).resolves.toBeNull();
     await expect(store.listTraces({ state: "proposed" })).resolves.toEqual([trace]);
   });
 });

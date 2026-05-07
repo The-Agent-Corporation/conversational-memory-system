@@ -33,6 +33,7 @@ interface DatabaseSync {
 
 interface StatementSync {
   all(...anonymousParameters: unknown[]): unknown[];
+  get(...anonymousParameters: unknown[]): unknown;
   run(...anonymousParameters: unknown[]): void;
 }
 
@@ -87,6 +88,10 @@ export class SqliteStore implements MemoryStore {
     this.upsertPayload("boxes", BoxSchema.parse(box));
   }
 
+  async getBox(id: string): Promise<Box | null> {
+    return this.getPayload("boxes", id, BoxSchema);
+  }
+
   async listBoxes(): Promise<Box[]> {
     return this.listPayloads("boxes", BoxSchema);
   }
@@ -134,6 +139,11 @@ export class SqliteStore implements MemoryStore {
       .run(parsed.id, parsed.state, parsed.proposalType, JSON.stringify(parsed));
   }
 
+  async getProposal(id: string): Promise<MemoryProposal | null> {
+    const row = this.database.prepare("select payload from proposals where id = ?").get(id) as PayloadRow | undefined;
+    return row ? MemoryProposalSchema.parse(JSON.parse(row.payload)) : null;
+  }
+
   async listProposals(filter: ProposalFilter = {}): Promise<MemoryProposal[]> {
     const clauses: string[] = [];
     const values: string[] = [];
@@ -164,6 +174,11 @@ export class SqliteStore implements MemoryStore {
            payload = excluded.payload`
       )
       .run(parsed.id, parsed.state, JSON.stringify(parsed));
+  }
+
+  async getTrace(id: string): Promise<MemoryTrace | null> {
+    const row = this.database.prepare("select payload from traces where id = ?").get(id) as PayloadRow | undefined;
+    return row ? MemoryTraceSchema.parse(JSON.parse(row.payload)) : null;
   }
 
   async listTraces(filter: TraceFilter = {}): Promise<MemoryTrace[]> {
@@ -250,5 +265,17 @@ export class SqliteStore implements MemoryStore {
       .all() as PayloadRow[];
 
     return rows.map((row) => schema.parse(JSON.parse(row.payload)));
+  }
+
+  private getPayload<T>(
+    tableName: "summaries" | "boxes" | "anchors",
+    id: string,
+    schema: { parse(value: unknown): T }
+  ): T | null {
+    const row = this.database
+      .prepare(`select payload from ${tableName} where id = ?`)
+      .get(id) as PayloadRow | undefined;
+
+    return row ? schema.parse(JSON.parse(row.payload)) : null;
   }
 }

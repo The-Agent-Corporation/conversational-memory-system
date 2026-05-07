@@ -25,13 +25,16 @@ export interface MemoryStore {
   saveSummary(summary: Summary): Promise<void>;
   listSummaries(): Promise<Summary[]>;
   saveBox(box: Box): Promise<void>;
+  getBox(id: string): Promise<Box | null>;
   listBoxes(): Promise<Box[]>;
   saveAnchor(anchor: Anchor): Promise<void>;
   listAnchors(): Promise<Anchor[]>;
   saveInjection(packet: InjectionPacket): Promise<void>;
   listInjections(hostSessionId: string): Promise<InjectionPacket[]>;
   saveProposal(proposal: MemoryProposal): Promise<void>;
+  getProposal(id: string): Promise<MemoryProposal | null>;
   listProposals(filter?: ProposalFilter): Promise<MemoryProposal[]>;
   saveTrace(trace: MemoryTrace): Promise<void>;
+  getTrace(id: string): Promise<MemoryTrace | null>;
   listTraces(filter?: TraceFilter): Promise<MemoryTrace[]>;
 }
