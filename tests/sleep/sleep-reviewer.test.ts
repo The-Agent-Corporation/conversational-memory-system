@@ -90,7 +90,9 @@ describe("SleepReviewer", () => {
       lastActivityAt: "2026-05-04T11:05:00.000Z"
     });
     expect(result.proposedBoxes[0].summary).toContain("Smith PIP demand strategy");
+    expect(result.proposals.map((proposal) => proposal.id)).toEqual(["proposal_box_box_topic_smith_pip"]);
     await expect(store.listBoxes()).resolves.toEqual(result.proposedBoxes);
+    await expect(store.listProposals({ proposalType: "box", state: "proposed" })).resolves.toHaveLength(1);
   });
 
   it("does not propose a box when a matching title already exists", async () => {

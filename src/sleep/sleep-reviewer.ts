@@ -1,14 +1,17 @@
-import type { Box, Summary, TurnRange } from "../domain/types.js";
+import { BoxProposalPayloadSchema, type Box, type MemoryProposal, type Summary, type TurnRange } from "../domain/types.js";
+import { DeterministicBoxProposalPlanner } from "../boxes/box-proposal-planner.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
 export interface SleepReviewRequest {
   reviewedAt: string;
   minimumSummariesPerBox?: number;
   staleStrengthThreshold?: number;
+  minimumBoxConfidence?: number;
 }
 
 export interface SleepReviewResult {
   proposedBoxes: Box[];
+  proposals: MemoryProposal[];
 }
 
 export interface SummaryDecayResult {
@@ -23,26 +26,36 @@ export class SleepReviewer {
   constructor(private readonly store: MemoryStore) {}
 
   async proposeBoxes(request: SleepReviewRequest): Promise<SleepReviewResult> {
-    const [summaries, boxes] = await Promise.all([
+    const [summaries, boxes, anchors, proposals] = await Promise.all([
       this.store.listSummaries(),
-      this.store.listBoxes()
+      this.store.listBoxes(),
+      this.store.listAnchors(),
+      this.store.listProposals({ state: "proposed" })
     ]);
-    const existingTitles = new Set(boxes.map((box) => normalizeTitle(box.title)));
-    const groups = groupSummaries(summaries);
-    const minimumSummaries = request.minimumSummariesPerBox ?? 2;
+    const planner = new DeterministicBoxProposalPlanner();
+    const result = await planner.proposeBoxes({
+      reviewedAt: request.reviewedAt,
+      summaries,
+      boxes,
+      anchors,
+      proposals,
+      minimumSummariesPerBox: request.minimumSummariesPerBox,
+      minimumConfidence: request.minimumBoxConfidence
+    });
     const proposedBoxes: Box[] = [];
 
-    for (const group of groups.values()) {
-      if (group.summaries.length < minimumSummaries || existingTitles.has(normalizeTitle(group.title))) {
+    for (const proposal of result.proposals) {
+      await this.store.saveProposal(proposal);
+      if (proposal.proposalType !== "box") {
         continue;
       }
 
-      const box = buildProposedBox(group.title, group.summaries, request.reviewedAt);
+      const box = buildProposedBoxFromProposal(proposal, request.reviewedAt, summaries);
       await this.store.saveBox(box);
       proposedBoxes.push(box);
     }
 
-    return { proposedBoxes };
+    return { proposedBoxes, proposals: result.proposals };
   }
 
   async decaySummaries(request: SleepReviewRequest): Promise<SummaryDecayResult> {
@@ -87,55 +100,28 @@ export class SleepReviewer {
   }
 }
 
-interface SummaryGroup {
-  title: string;
-  summaries: Summary[];
-}
+function buildProposedBoxFromProposal(proposal: MemoryProposal, reviewedAt: string, summaries: Summary[]): Box {
+  const payload = BoxProposalPayloadSchema.parse(proposal.payload);
+  const summariesById = new Map(summaries.map((summary) => [summary.id, summary]));
+  const sourceSummaries = payload.sourceSummaryIds
+    .map((summaryId) => summariesById.get(summaryId))
+    .filter((summary): summary is Summary => summary !== undefined);
 
-function groupSummaries(summaries: Summary[]): Map<string, SummaryGroup> {
-  const groups = new Map<string, SummaryGroup>();
-
-  for (const summary of summaries) {
-    const title = proposedTitle(summary);
-    const key = normalizeTitle(title);
-    const group = groups.get(key) ?? { title, summaries: [] };
-    group.summaries.push(summary);
-    groups.set(key, group);
-  }
-
-  return groups;
-}
-
-function proposedTitle(summary: Summary): string {
-  const words = summary.summaryText
-    .split(/[^A-Za-z0-9]+/)
-    .filter((word) => word.length > 2)
-    .filter((word) => !STOP_WORDS.has(word.toLowerCase()))
-    .slice(0, 2);
-
-  if (words.length === 0) {
-    return "General Topic";
-  }
-
-  return titleCase(words.join(" "));
-}
-
-function buildProposedBox(title: string, summaries: Summary[], reviewedAt: string): Box {
   return {
-    id: `box_topic_${slugify(title)}`,
-    title,
-    description: `Proposed topic box from ${summaries.length} related summaries.`,
+    id: payload.boxId,
+    title: payload.title,
+    description: `Proposed topic box from ${payload.sourceSummaryIds.length} related summaries.`,
     parentBoxId: null,
     childBoxIds: [],
-    summaryIds: summaries.map((summary) => summary.id),
-    turnRanges: dedupeTurnRanges(summaries.flatMap((summary) => summary.sourceTurnRanges)),
+    summaryIds: payload.sourceSummaryIds,
+    turnRanges: payload.sourceTurnRanges,
     state: "proposed",
     createdAt: reviewedAt,
     updatedAt: reviewedAt,
     caseId: null,
-    boxType: "topic",
-    summary: summaries.map((summary) => summary.summaryText).join("\n\n"),
-    lastActivityAt: latestTimestamp(summaries.map((summary) => summary.createdAt)) ?? reviewedAt
+    boxType: payload.boxType,
+    summary: payload.summary,
+    lastActivityAt: latestTimestamp(sourceSummaries.map((summary) => summary.createdAt)) ?? reviewedAt
   };
 }
 
@@ -242,37 +228,3 @@ function refreshBoxState(
 function isBoxRefreshEligible(box: Box): boolean {
   return box.state === "approved" || box.state === "active" || box.state === "revived" || box.state === "stale";
 }
-
-function normalizeTitle(title: string): string {
-  return title.trim().toLowerCase();
-}
-
-function titleCase(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-const STOP_WORDS = new Set([
-  "about",
-  "and",
-  "coverage",
-  "demand",
-  "discussed",
-  "for",
-  "from",
-  "issue",
-  "strategy",
-  "the",
-  "timing",
-  "with"
-]);
