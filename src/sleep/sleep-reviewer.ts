@@ -1,6 +1,6 @@
 import { BoxProposalPayloadSchema, type Box, type MemoryProposal, type Summary, type TurnRange } from "../domain/types.js";
-import { DeterministicBoxProposalPlanner } from "../boxes/box-proposal-planner.js";
-import { DeterministicTraceProposalPlanner } from "../traces/trace-proposal-planner.js";
+import { DeterministicBoxProposalPlanner, type BoxProposalPlanner } from "../boxes/box-proposal-planner.js";
+import { DeterministicTraceProposalPlanner, type TraceProposalPlanner } from "../traces/trace-proposal-planner.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
 export interface SleepReviewRequest {
@@ -29,8 +29,22 @@ export interface TraceProposalReviewResult {
   proposals: MemoryProposal[];
 }
 
+export interface SleepReviewerOptions {
+  boxPlanner?: BoxProposalPlanner;
+  tracePlanner?: TraceProposalPlanner;
+}
+
 export class SleepReviewer {
-  constructor(private readonly store: MemoryStore) {}
+  private readonly boxPlanner: BoxProposalPlanner;
+  private readonly tracePlanner: TraceProposalPlanner;
+
+  constructor(
+    private readonly store: MemoryStore,
+    options: SleepReviewerOptions = {}
+  ) {
+    this.boxPlanner = options.boxPlanner ?? new DeterministicBoxProposalPlanner();
+    this.tracePlanner = options.tracePlanner ?? new DeterministicTraceProposalPlanner();
+  }
 
   async proposeBoxes(request: SleepReviewRequest): Promise<SleepReviewResult> {
     const [summaries, boxes, anchors, proposals] = await Promise.all([
@@ -39,8 +53,7 @@ export class SleepReviewer {
       this.store.listAnchors(),
       this.store.listProposals({ state: "proposed" })
     ]);
-    const planner = new DeterministicBoxProposalPlanner();
-    const result = await planner.proposeBoxes({
+    const result = await this.boxPlanner.proposeBoxes({
       reviewedAt: request.reviewedAt,
       summaries,
       boxes,
@@ -73,8 +86,7 @@ export class SleepReviewer {
       this.store.listProposals({ state: "proposed" }),
       this.store.listTraces()
     ]);
-    const planner = new DeterministicTraceProposalPlanner();
-    const result = await planner.proposeTraces({
+    const result = await this.tracePlanner.proposeTraces({
       reviewedAt: request.reviewedAt,
       summaries,
       boxes,

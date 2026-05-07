@@ -24,6 +24,10 @@ export interface TraceProposalPlanningResult {
   skippedCandidates: { title: string; summaryIds: string[]; reason: string }[];
 }
 
+export interface TraceProposalPlanner {
+  proposeTraces(request: TraceProposalPlanningRequest): Promise<TraceProposalPlanningResult>;
+}
+
 interface TraceCandidate {
   title: string;
   traceId: string;
@@ -35,7 +39,7 @@ interface TraceCandidate {
 
 const BROAD_TRACE_TERMS = new Set(["smith", "jones", "case", "matter", "claim", "coverage"]);
 
-export class DeterministicTraceProposalPlanner {
+export class DeterministicTraceProposalPlanner implements TraceProposalPlanner {
   async proposeTraces(request: TraceProposalPlanningRequest): Promise<TraceProposalPlanningResult> {
     const minimumTraceSummaries = request.minimumTraceSummaries ?? 2;
     const minimumConfidence = request.minimumConfidence ?? 0.5;

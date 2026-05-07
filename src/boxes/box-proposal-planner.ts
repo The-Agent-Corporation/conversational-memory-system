@@ -24,6 +24,10 @@ export interface BoxProposalPlanningResult {
   skippedCandidates: { title: string; summaryIds: string[]; reason: string }[];
 }
 
+export interface BoxProposalPlanner {
+  proposeBoxes(request: BoxProposalPlanningRequest): Promise<BoxProposalPlanningResult>;
+}
+
 interface CandidateGroup {
   title: string;
   titleTerms: string[];
@@ -32,7 +36,7 @@ interface CandidateGroup {
   summaries: Summary[];
 }
 
-export class DeterministicBoxProposalPlanner {
+export class DeterministicBoxProposalPlanner implements BoxProposalPlanner {
   async proposeBoxes(request: BoxProposalPlanningRequest): Promise<BoxProposalPlanningResult> {
     const minimumSummaries = request.minimumSummariesPerBox ?? 2;
     const minimumConfidence = request.minimumConfidence ?? 0.5;

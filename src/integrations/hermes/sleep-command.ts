@@ -1,6 +1,12 @@
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { TraceProposalPayloadSchema } from "../../domain/types.js";
+import type { BoxProposalPlanner } from "../../boxes/box-proposal-planner.js";
+import type { TraceProposalPlanner } from "../../traces/trace-proposal-planner.js";
+import {
+  createProposalPlannersFromEnv,
+  type OpenRouterProposalPlannerEnvironment
+} from "../../proposals/openrouter-proposal-planner.js";
 import { SleepReviewer } from "../../sleep/sleep-reviewer.js";
 import { SqliteStore } from "../../storage/sqlite-store.js";
 
@@ -14,7 +20,7 @@ const HermesSleepRequestSchema = z.object({
   minimum_summaries_per_box: z.number().int().positive().optional(),
   stale_strength_threshold: z.number().min(0).max(1).optional(),
   include_proposals: z.boolean().optional(),
-  proposal_mode: z.enum(["deterministic"]).optional(),
+  proposal_mode: z.enum(["deterministic", "openrouter", "hybrid"]).optional(),
   minimum_trace_summaries: z.number().int().positive().optional(),
   minimum_box_confidence: z.number().min(0).max(1).optional(),
   minimum_trace_confidence: z.number().min(0).max(1).optional()
@@ -31,17 +37,32 @@ export interface HermesSleepResult {
   noopReason: string | null;
 }
 
+export interface ProposalPlannerBundle {
+  boxPlanner: BoxProposalPlanner;
+  tracePlanner: TraceProposalPlanner;
+}
+
+export type ProposalPlannerFactory = (env: OpenRouterProposalPlannerEnvironment) => ProposalPlannerBundle | null;
+
 export async function sleepHermesMemory(options: {
   databasePath: string;
   input: string;
+  env?: OpenRouterProposalPlannerEnvironment;
+  proposalPlannerFactory?: ProposalPlannerFactory;
 }): Promise<HermesSleepResult> {
   const parsedOptions = SleepOptionsSchema.parse(options);
   const request = HermesSleepRequestSchema.parse(JSON.parse(parsedOptions.input));
   const reviewedAt = request.reviewed_at ?? new Date().toISOString();
   const store = new SqliteStore(parsedOptions.databasePath);
+  const proposalMode = request.proposal_mode ?? "deterministic";
+  const plannerBundle = selectProposalPlanners(
+    proposalMode,
+    options.env ?? process.env,
+    options.proposalPlannerFactory ?? createProposalPlannersFromEnv
+  );
 
   try {
-    const reviewer = new SleepReviewer(store);
+    const reviewer = new SleepReviewer(store, plannerBundle ?? {});
     const decay = await reviewer.decaySummaries({
       reviewedAt,
       staleStrengthThreshold: request.stale_strength_threshold
@@ -84,6 +105,27 @@ export async function sleepHermesMemory(options: {
   } finally {
     store.close();
   }
+}
+
+function selectProposalPlanners(
+  proposalMode: "deterministic" | "openrouter" | "hybrid",
+  env: OpenRouterProposalPlannerEnvironment,
+  factory: ProposalPlannerFactory
+): ProposalPlannerBundle | null {
+  if (proposalMode === "deterministic") {
+    return null;
+  }
+
+  const planners = factory(env);
+  if (planners) {
+    return planners;
+  }
+
+  if (proposalMode === "openrouter") {
+    throw new Error("OpenRouter proposal mode requires OPENROUTER_API_KEY and OPENROUTER_MODEL.");
+  }
+
+  return null;
 }
 
 async function main(): Promise<void> {
