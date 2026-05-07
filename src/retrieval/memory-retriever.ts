@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import type { Anchor, InjectionPacket, Summary, TurnRange } from "../domain/types.js";
+import type { Anchor, Box, InjectionPacket, MemoryTrace, Summary, TurnRange } from "../domain/types.js";
 import { cosineSimilarity, type Embedder } from "../embeddings/embedder.js";
 import type { InjectionRequest } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
 interface RankedMemory {
-  kind: "summary" | "anchor";
+  kind: "summary" | "anchor" | "trace" | "box_context";
   id: string;
   text: string;
   score: number;
@@ -13,6 +13,7 @@ interface RankedMemory {
   canUseStub: boolean;
   scoringMethod: "keyword overlap" | "vector similarity";
   summaryId: string | null;
+  summaryIds: string[];
   traceId: string | null;
   sourceTurnRanges: TurnRange[];
   boxIds: string[];
@@ -25,14 +26,16 @@ export class MemoryRetriever {
   ) {}
 
   async prepareInjection(request: InjectionRequest): Promise<InjectionPacket | null> {
-    const [summaries, anchors] = await Promise.all([
+    const [summaries, anchors, traces, boxes] = await Promise.all([
       this.store.listSummaries(),
-      this.store.listAnchors()
+      this.store.listAnchors(),
+      this.store.listTraces({ state: "approved" }),
+      this.store.listBoxes()
     ]);
     const topicEmbedding = this.options.embedder
       ? await this.options.embedder.embed(request.currentTopicSummary)
       : null;
-    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, {
+    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, boxes, {
       embedder: this.options.embedder,
       topicEmbedding
     });
@@ -53,9 +56,7 @@ export class MemoryRetriever {
       hostSessionId: request.hostSessionId,
       currentTopicSummary: request.currentTopicSummary,
       selectedMemory: selected.map((memory) => memory.text).join("\n\n"),
-      sourceSummaryIds: selected
-        .map((memory) => memory.summaryId)
-        .filter((summaryId): summaryId is string => summaryId !== null),
+      sourceSummaryIds: [...new Set(selected.flatMap((memory) => memory.summaryIds))],
       sourceTraceIds: selected
         .map((memory) => memory.traceId)
         .filter((traceId): traceId is string => traceId !== null),
@@ -78,9 +79,7 @@ export class MemoryRetriever {
     accessedAt: string
   ): Promise<void> {
     const selectedSummaryIds = new Set(
-      selected
-        .map((memory) => memory.summaryId)
-        .filter((summaryId): summaryId is string => summaryId !== null)
+      selected.flatMap((memory) => memory.summaryIds)
     );
 
     for (const summary of summaries) {
@@ -207,14 +206,29 @@ function rankMemories(
   topicSummary: string,
   summaries: Summary[],
   anchors: Anchor[],
+  traces: MemoryTrace[],
+  _boxes: Box[],
   options: {
     embedder?: Embedder;
     topicEmbedding: Summary["embedding"];
   } = { topicEmbedding: null }
 ): RankedMemory[] {
   const topicWords = significantWords(topicSummary);
+  const summariesById = new Map(summaries.map((summary) => [summary.id, summary]));
+  const traceCandidates = traces
+    .map((trace) =>
+      rankTrace(
+        topicWords,
+        trace,
+        trace.summaryIds
+          .map((summaryId) => summariesById.get(summaryId))
+          .filter((summary): summary is Summary => summary !== undefined)
+      )
+    )
+    .filter((memory): memory is RankedMemory => memory !== null);
   const ranked: RankedMemory[] = [
     ...summaries.map((summary) => rankSummary(topicWords, summary, options)),
+    ...traceCandidates,
     ...anchors.map((anchor) => rankAnchor(topicWords, anchor, options))
   ].filter((memory) => memory.score > 0);
 
@@ -240,6 +254,7 @@ function rankSummary(
       canUseStub: true,
       scoringMethod: "vector similarity",
       summaryId: summary.id,
+      summaryIds: [summary.id],
       traceId: null,
       sourceTurnRanges: summary.sourceTurnRanges,
       boxIds: summary.boxIds
@@ -255,6 +270,7 @@ function rankSummary(
     canUseStub: true,
     scoringMethod: "keyword overlap",
     summaryId: summary.id,
+    summaryIds: [summary.id],
     traceId: null,
     sourceTurnRanges: summary.sourceTurnRanges,
     boxIds: summary.boxIds
@@ -281,6 +297,7 @@ function rankAnchor(
       canUseStub: false,
       scoringMethod: "vector similarity",
       summaryId: null,
+      summaryIds: [],
       traceId: null,
       sourceTurnRanges: [],
       boxIds: anchor.boxId ? [anchor.boxId] : []
@@ -296,9 +313,54 @@ function rankAnchor(
     canUseStub: false,
     scoringMethod: "keyword overlap",
     summaryId: null,
+    summaryIds: [],
     traceId: null,
     sourceTurnRanges: [],
     boxIds: anchor.boxId ? [anchor.boxId] : []
+  };
+}
+
+function rankTrace(
+  topicWords: Set<string>,
+  trace: MemoryTrace,
+  linkedSummaries: Summary[]
+): RankedMemory | null {
+  const traceText = [
+    trace.title,
+    trace.description,
+    trace.rationale,
+    ...linkedSummaries.map((summary) => summary.summaryText)
+  ].join(" ");
+  const overlap = overlappingWords(topicWords, significantWords(traceText));
+
+  if (overlap.length < 2) {
+    return null;
+  }
+
+  const linkedSummaryText = linkedSummaries
+    .slice(0, 3)
+    .map((summary) => `- ${summary.summaryText}`)
+    .join("\n");
+  const text = [
+    `[Trace: ${trace.title}]`,
+    trace.description,
+    linkedSummaryText ? `Linked summaries:\n${linkedSummaryText}` : "",
+    `Rationale: ${trace.rationale}`
+  ].filter(Boolean).join("\n");
+
+  return {
+    kind: "trace",
+    id: trace.id,
+    text,
+    score: Math.min(0.98, scoreText(topicWords, traceText) * trace.confidence * 1.05),
+    tokenCount: estimateTokenCount(text),
+    canUseStub: true,
+    scoringMethod: "keyword overlap",
+    summaryId: linkedSummaries[0]?.id ?? null,
+    summaryIds: trace.summaryIds,
+    traceId: trace.id,
+    sourceTurnRanges: trace.turnRanges,
+    boxIds: trace.boxIds
   };
 }
 
@@ -339,6 +401,10 @@ function scoreText(topicWords: Set<string>, text: string): number {
   }
 
   return overlap / topicWords.size;
+}
+
+function overlappingWords(left: Set<string>, right: Set<string>): string[] {
+  return [...left].filter((word) => right.has(word));
 }
 
 function significantWords(value: string): Set<string> {
