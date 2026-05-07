@@ -23,7 +23,11 @@ export function slugify(value: string): string {
 }
 
 export function titleCase(value: string): string {
-  return value.split(/\s+/).filter(Boolean).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.length <= 3 ? word.toUpperCase() : word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export function dedupeTurnRanges(ranges: TurnRange[]): TurnRange[] {
