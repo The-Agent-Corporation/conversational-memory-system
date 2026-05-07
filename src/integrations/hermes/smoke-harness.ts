@@ -118,6 +118,7 @@ export function buildRoscoeMemoryEnvironment(options: {
 function npmCommand(projectRoot: string, script: string, databasePath: string): string {
   return [
     "npm",
+    "--silent",
     "--prefix",
     shellArg(projectRoot),
     "run",
