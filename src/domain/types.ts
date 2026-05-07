@@ -168,6 +168,96 @@ export const InjectionPacketSchema = z.object({
   createdAt: IsoDateTimeSchema
 });
 
+export const ProposalStateSchema = z.enum(["proposed", "approved", "rejected", "superseded"]);
+export const ProposalTypeSchema = z.enum(["box", "box_parent_child", "trace"]);
+export const TraceTypeSchema = z.enum([
+  "case_issue",
+  "task_thread",
+  "strategy_thread",
+  "fact_development",
+  "follow_up"
+]);
+
+export const BoxProposalPayloadSchema = z.object({
+  boxId: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string(),
+  summary: z.string().min(1),
+  boxType: z.enum(["case", "topic", "general", "project", "person"]),
+  candidateParentBoxId: z.string().min(1).nullable(),
+  keywords: z.array(z.string().min(1)),
+  evidence: z.array(z.string().min(1)),
+  sourceSummaryIds: z.array(z.string().min(1)).min(1),
+  sourceTurnRanges: z.array(TurnRangeSchema).min(1)
+});
+
+export const ParentChildProposalPayloadSchema = z.object({
+  parentBoxId: z.string().min(1),
+  childBoxId: z.string().min(1),
+  relationshipLabel: z.string().min(1),
+  rationale: z.string().min(1),
+  sourceSummaryIds: z.array(z.string().min(1)).min(1)
+});
+
+export const TraceProposalPayloadSchema = z.object({
+  traceId: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string(),
+  traceType: TraceTypeSchema,
+  summaryIds: z.array(z.string().min(1)).min(2),
+  boxIds: z.array(z.string().min(1)),
+  turnRanges: z.array(TurnRangeSchema).min(1),
+  continuityReason: z.string().min(1),
+  boundaryReason: z.string().min(1),
+  keywords: z.array(z.string().min(1)).min(1)
+});
+
+export const MemoryProposalSchema = z.object({
+  id: z.string().min(1),
+  proposalType: ProposalTypeSchema,
+  state: ProposalStateSchema,
+  title: z.string().min(1),
+  rationale: z.string().min(1),
+  confidence: z.number().min(0).max(1),
+  createdAt: IsoDateTimeSchema,
+  reviewedAt: IsoDateTimeSchema,
+  sourceSummaryIds: z.array(z.string().min(1)).min(1),
+  sourceTurnRanges: z.array(TurnRangeSchema).min(1),
+  targetBoxIds: z.array(z.string().min(1)),
+  targetTraceIds: z.array(z.string().min(1)),
+  payload: JsonObjectSchema
+}).superRefine((proposal, context) => {
+  const result =
+    proposal.proposalType === "box"
+      ? BoxProposalPayloadSchema.safeParse(proposal.payload)
+      : proposal.proposalType === "box_parent_child"
+        ? ParentChildProposalPayloadSchema.safeParse(proposal.payload)
+        : TraceProposalPayloadSchema.safeParse(proposal.payload);
+
+  if (!result.success) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Invalid ${proposal.proposalType} proposal payload`
+    });
+  }
+});
+
+export const MemoryTraceSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string(),
+  traceType: TraceTypeSchema,
+  state: ProposalStateSchema,
+  summaryIds: z.array(z.string().min(1)).min(2),
+  boxIds: z.array(z.string().min(1)),
+  turnRanges: z.array(TurnRangeSchema).min(1),
+  createdAt: IsoDateTimeSchema,
+  updatedAt: IsoDateTimeSchema,
+  lastActivityAt: IsoDateTimeSchema,
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().min(1)
+});
+
 export type Turn = z.infer<typeof TurnSchema>;
 export type Summary = z.infer<typeof SummarySchema>;
 export type Box = z.infer<typeof BoxSchema>;
@@ -175,3 +265,11 @@ export type Anchor = z.infer<typeof AnchorSchema>;
 export type InjectionPacket = z.infer<typeof InjectionPacketSchema>;
 export type TurnRange = z.infer<typeof TurnRangeSchema>;
 export type Embedding = z.infer<typeof EmbeddingSchema>;
+export type MemoryProposal = z.infer<typeof MemoryProposalSchema>;
+export type MemoryTrace = z.infer<typeof MemoryTraceSchema>;
+export type BoxProposalPayload = z.infer<typeof BoxProposalPayloadSchema>;
+export type ParentChildProposalPayload = z.infer<typeof ParentChildProposalPayloadSchema>;
+export type TraceProposalPayload = z.infer<typeof TraceProposalPayloadSchema>;
+export type ProposalType = z.infer<typeof ProposalTypeSchema>;
+export type ProposalState = z.infer<typeof ProposalStateSchema>;
+export type TraceType = z.infer<typeof TraceTypeSchema>;
