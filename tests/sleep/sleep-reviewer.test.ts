@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Box, Summary } from "../../src/domain/types.js";
+import type { Box, MemoryProposal, Summary } from "../../src/domain/types.js";
+import type { BoxProposalPlanner } from "../../src/boxes/box-proposal-planner.js";
+import type { TraceProposalPlanner } from "../../src/traces/trace-proposal-planner.js";
 import { SleepReviewer } from "../../src/sleep/sleep-reviewer.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 
@@ -42,6 +44,74 @@ const makeBox = (overrides: Partial<Box> = {}): Box => ({
   boxType: "topic",
   summary: "Smith PIP",
   lastActivityAt: "2026-05-04T10:00:00.000Z",
+  ...overrides
+});
+
+const makeBoxProposal = (overrides: Partial<MemoryProposal> = {}): MemoryProposal => ({
+  id: "proposal_box_box_topic_injected",
+  proposalType: "box",
+  state: "proposed",
+  title: "Injected",
+  rationale: "Injected planner proposal.",
+  confidence: 0.8,
+  createdAt: "2026-05-05T06:00:00.000Z",
+  reviewedAt: "2026-05-05T06:00:00.000Z",
+  decidedAt: null,
+  decidedBy: null,
+  decisionNote: null,
+  sourceSummaryIds: ["summary_1"],
+  sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }],
+  targetBoxIds: ["box_topic_injected"],
+  targetTraceIds: [],
+  payload: {
+    boxId: "box_topic_injected",
+    title: "Injected",
+    description: "Injected planner box.",
+    summary: "Injected summary.",
+    boxType: "topic",
+    candidateParentBoxId: null,
+    keywords: ["injected"],
+    evidence: ["injected planner"],
+    sourceSummaryIds: ["summary_1"],
+    sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }]
+  },
+  ...overrides
+});
+
+const makeTraceProposal = (overrides: Partial<MemoryProposal> = {}): MemoryProposal => ({
+  id: "proposal_trace_trace_injected",
+  proposalType: "trace",
+  state: "proposed",
+  title: "Injected Trace",
+  rationale: "Injected trace proposal.",
+  confidence: 0.8,
+  createdAt: "2026-05-05T06:00:00.000Z",
+  reviewedAt: "2026-05-05T06:00:00.000Z",
+  decidedAt: null,
+  decidedBy: null,
+  decisionNote: null,
+  sourceSummaryIds: ["summary_1", "summary_2"],
+  sourceTurnRanges: [
+    { threadId: "session_1", startSequence: 1, endSequence: 2 },
+    { threadId: "session_1", startSequence: 10, endSequence: 12 }
+  ],
+  targetBoxIds: [],
+  targetTraceIds: ["trace_injected"],
+  payload: {
+    traceId: "trace_injected",
+    title: "Injected Trace",
+    description: "Injected trace.",
+    traceType: "case_issue",
+    summaryIds: ["summary_1", "summary_2"],
+    boxIds: [],
+    turnRanges: [
+      { threadId: "session_1", startSequence: 1, endSequence: 2 },
+      { threadId: "session_1", startSequence: 10, endSequence: 12 }
+    ],
+    continuityReason: "Injected continuity.",
+    boundaryReason: "Injected boundary.",
+    keywords: ["injected"]
+  },
   ...overrides
 });
 
@@ -133,6 +203,43 @@ describe("SleepReviewer", () => {
     });
 
     expect(result.proposals.map((proposal) => proposal.id)).toEqual(["proposal_trace_trace_smith_pip_provider_bill"]);
+    await expect(store.listProposals({ proposalType: "trace", state: "proposed" })).resolves.toHaveLength(1);
+  });
+
+  it("uses an injected box planner", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({ id: "summary_1" }));
+    const planner: BoxProposalPlanner = {
+      async proposeBoxes() {
+        return {
+          proposals: [makeBoxProposal()],
+          skippedCandidates: []
+        };
+      }
+    };
+
+    const reviewer = new SleepReviewer(store, { boxPlanner: planner });
+    const result = await reviewer.proposeBoxes({ reviewedAt: "2026-05-05T06:00:00.000Z" });
+
+    expect(result.proposals.map((proposal) => proposal.id)).toEqual(["proposal_box_box_topic_injected"]);
+    await expect(store.listProposals({ proposalType: "box", state: "proposed" })).resolves.toHaveLength(1);
+  });
+
+  it("uses an injected trace planner", async () => {
+    const store = new InMemoryStore();
+    const planner: TraceProposalPlanner = {
+      async proposeTraces() {
+        return {
+          proposals: [makeTraceProposal()],
+          skippedCandidates: []
+        };
+      }
+    };
+
+    const reviewer = new SleepReviewer(store, { tracePlanner: planner });
+    const result = await reviewer.proposeTraces({ reviewedAt: "2026-05-05T06:00:00.000Z" });
+
+    expect(result.proposals.map((proposal) => proposal.id)).toEqual(["proposal_trace_trace_injected"]);
     await expect(store.listProposals({ proposalType: "trace", state: "proposed" })).resolves.toHaveLength(1);
   });
 
