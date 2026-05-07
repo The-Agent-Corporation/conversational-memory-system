@@ -20,7 +20,7 @@ The command:
 - accepts JSON on stdin
 - runs summary decay
 - refreshes approved/active/revived/stale box states
-- proposes new topic boxes
+- proposes new topic boxes and trace links
 - returns compact JSON with changed ids and a no-op reason when nothing changed
 
 Input:
@@ -44,6 +44,8 @@ Output:
   "updatedSummaryIds": ["summary_1"],
   "updatedBoxIds": ["box_topic_smith_pip"],
   "proposedBoxIds": ["box_topic_new_case"],
+  "proposalIds": ["proposal_box_box_topic_new_case"],
+  "proposedTraceIds": ["trace_smith_pip_provider_bill"],
   "noopReason": null
 }
 ```
@@ -54,3 +56,4 @@ Output:
 - The first background organization loop stays deterministic and testable.
 - Richer MemBox/Graphiti-inspired proposal planning can be layered behind this command without changing the host contract.
 - Proposed boxes remain unapproved until a review path accepts them.
+- Proposal ids provide a stable review handle without dumping large proposal payloads into foreground context.
