@@ -15,7 +15,7 @@ export function significantTerms(text: string): string[] {
 export function sharedTerms(left: string[] | Set<string>, right: string[] | Set<string>): string[] {
   const leftSet = left instanceof Set ? left : new Set(left);
   const rightSet = right instanceof Set ? right : new Set(right);
-  return [...leftSet].filter((term) => rightSet.has(term)).sort();
+  return [...leftSet].filter((term) => rightSet.has(term));
 }
 
 export function slugify(value: string): string {
