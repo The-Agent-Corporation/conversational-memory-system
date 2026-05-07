@@ -2,15 +2,19 @@ import {
   AnchorSchema,
   BoxSchema,
   InjectionPacketSchema,
+  MemoryProposalSchema,
+  MemoryTraceSchema,
   SummarySchema,
   TurnSchema,
   type Anchor,
   type Box,
   type InjectionPacket,
+  type MemoryProposal,
+  type MemoryTrace,
   type Summary,
   type Turn
 } from "../domain/types.js";
-import type { MemoryStore } from "./memory-store.js";
+import type { MemoryStore, ProposalFilter, TraceFilter } from "./memory-store.js";
 
 export class InMemoryStore implements MemoryStore {
   private readonly turns: Turn[] = [];
@@ -18,6 +22,8 @@ export class InMemoryStore implements MemoryStore {
   private readonly boxes: Box[] = [];
   private readonly anchors: Anchor[] = [];
   private readonly injections: InjectionPacket[] = [];
+  private readonly proposals: MemoryProposal[] = [];
+  private readonly traces: MemoryTrace[] = [];
 
   async saveTurn(turn: Turn): Promise<void> {
     this.upsertById(this.turns, structuredClone(TurnSchema.parse(turn)));
@@ -62,6 +68,27 @@ export class InMemoryStore implements MemoryStore {
     return this.injections
       .filter((packet) => packet.hostSessionId === hostSessionId)
       .map((packet) => structuredClone(packet));
+  }
+
+  async saveProposal(proposal: MemoryProposal): Promise<void> {
+    this.upsertById(this.proposals, structuredClone(MemoryProposalSchema.parse(proposal)));
+  }
+
+  async listProposals(filter: ProposalFilter = {}): Promise<MemoryProposal[]> {
+    return structuredClone(this.proposals.filter((proposal) =>
+      (filter.state === undefined || proposal.state === filter.state) &&
+      (filter.proposalType === undefined || proposal.proposalType === filter.proposalType)
+    ));
+  }
+
+  async saveTrace(trace: MemoryTrace): Promise<void> {
+    this.upsertById(this.traces, structuredClone(MemoryTraceSchema.parse(trace)));
+  }
+
+  async listTraces(filter: TraceFilter = {}): Promise<MemoryTrace[]> {
+    return structuredClone(this.traces.filter((trace) =>
+      filter.state === undefined || trace.state === filter.state
+    ));
   }
 
   private upsertById<T extends { id: string }>(items: T[], item: T): void {

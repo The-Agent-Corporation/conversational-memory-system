@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Anchor, Box, InjectionPacket, Summary, Turn } from "../../src/domain/types.js";
+import type { Anchor, Box, InjectionPacket, MemoryProposal, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 const makeTurn = (overrides: Partial<Turn> = {}): Turn => ({
@@ -90,6 +90,51 @@ const makeInjection = (overrides: Partial<InjectionPacket> = {}): InjectionPacke
   ...overrides
 });
 
+const makeProposal = (overrides: Partial<MemoryProposal> = {}): MemoryProposal => ({
+  id: "proposal_trace_smith_pip_bills",
+  proposalType: "trace",
+  state: "proposed",
+  title: "Smith PIP Provider Bill Review",
+  rationale: "Two summaries continue the same Smith PIP provider bill review issue.",
+  confidence: 0.78,
+  createdAt: "2026-05-07T12:00:00.000Z",
+  reviewedAt: "2026-05-07T12:00:00.000Z",
+  sourceSummaryIds: ["summary_1", "summary_3"],
+  sourceTurnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 3 }],
+  targetBoxIds: ["box_topic_smith_pip"],
+  targetTraceIds: ["trace_smith_pip_bills"],
+  payload: {
+    traceId: "trace_smith_pip_bills",
+    title: "Smith PIP Provider Bill Review",
+    description: "Non-contiguous summaries continue the Smith PIP provider bill review issue.",
+    traceType: "case_issue",
+    summaryIds: ["summary_1", "summary_3"],
+    boxIds: ["box_topic_smith_pip"],
+    turnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 3 }],
+    continuityReason: "Both summaries discuss Smith PIP provider bill review.",
+    boundaryReason: "Smith BI summaries were excluded.",
+    keywords: ["smith", "pip", "provider", "bill"]
+  },
+  ...overrides
+});
+
+const makeTrace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
+  id: "trace_smith_pip_bills",
+  title: "Smith PIP Provider Bill Review",
+  description: "Approved trace for Smith PIP bill review.",
+  traceType: "case_issue",
+  state: "proposed",
+  summaryIds: ["summary_1", "summary_3"],
+  boxIds: ["box_topic_smith_pip"],
+  turnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 3 }],
+  createdAt: "2026-05-07T12:00:00.000Z",
+  updatedAt: "2026-05-07T12:00:00.000Z",
+  lastActivityAt: "2026-05-07T12:00:00.000Z",
+  confidence: 0.78,
+  rationale: "The summaries continue the same provider bill review issue.",
+  ...overrides
+});
+
 describe("SqliteStore", () => {
   let tempDir: string;
   let databasePath: string;
@@ -150,5 +195,19 @@ describe("SqliteStore", () => {
     await expect(store.listBoxes()).resolves.toEqual([makeBox()]);
     await expect(store.listAnchors()).resolves.toEqual([makeAnchor()]);
     await expect(store.listInjections("session_1")).resolves.toEqual([makeInjection()]);
+  });
+
+  it("persists proposals and traces", async () => {
+    const proposal = makeProposal();
+    const trace = makeTrace();
+
+    await store.saveProposal(proposal);
+    await store.saveTrace(trace);
+
+    await expect(store.listProposals()).resolves.toEqual([proposal]);
+    await expect(store.listProposals({ state: "proposed", proposalType: "trace" })).resolves.toEqual([proposal]);
+    await expect(store.listProposals({ state: "approved" })).resolves.toEqual([]);
+    await expect(store.listTraces()).resolves.toEqual([trace]);
+    await expect(store.listTraces({ state: "proposed" })).resolves.toEqual([trace]);
   });
 });

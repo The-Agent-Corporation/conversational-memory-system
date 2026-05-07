@@ -3,15 +3,19 @@ import {
   AnchorSchema,
   BoxSchema,
   InjectionPacketSchema,
+  MemoryProposalSchema,
+  MemoryTraceSchema,
   SummarySchema,
   TurnSchema,
   type Anchor,
   type Box,
   type InjectionPacket,
+  type MemoryProposal,
+  type MemoryTrace,
   type Summary,
   type Turn
 } from "../domain/types.js";
-import type { MemoryStore } from "./memory-store.js";
+import type { MemoryStore, ProposalFilter, TraceFilter } from "./memory-store.js";
 
 interface PayloadRow {
   payload: string;
@@ -116,6 +120,60 @@ export class SqliteStore implements MemoryStore {
     return rows.map((row) => InjectionPacketSchema.parse(JSON.parse(row.payload)));
   }
 
+  async saveProposal(proposal: MemoryProposal): Promise<void> {
+    const parsed = MemoryProposalSchema.parse(proposal);
+    this.database
+      .prepare(
+        `insert into proposals (id, state, proposal_type, payload)
+         values (?, ?, ?, ?)
+         on conflict(id) do update set
+           state = excluded.state,
+           proposal_type = excluded.proposal_type,
+           payload = excluded.payload`
+      )
+      .run(parsed.id, parsed.state, parsed.proposalType, JSON.stringify(parsed));
+  }
+
+  async listProposals(filter: ProposalFilter = {}): Promise<MemoryProposal[]> {
+    const clauses: string[] = [];
+    const values: string[] = [];
+    if (filter.state) {
+      clauses.push("state = ?");
+      values.push(filter.state);
+    }
+    if (filter.proposalType) {
+      clauses.push("proposal_type = ?");
+      values.push(filter.proposalType);
+    }
+    const where = clauses.length > 0 ? ` where ${clauses.join(" and ")}` : "";
+    const rows = this.database
+      .prepare(`select payload from proposals${where} order by id asc`)
+      .all(...values) as PayloadRow[];
+
+    return rows.map((row) => MemoryProposalSchema.parse(JSON.parse(row.payload)));
+  }
+
+  async saveTrace(trace: MemoryTrace): Promise<void> {
+    const parsed = MemoryTraceSchema.parse(trace);
+    this.database
+      .prepare(
+        `insert into traces (id, state, payload)
+         values (?, ?, ?)
+         on conflict(id) do update set
+           state = excluded.state,
+           payload = excluded.payload`
+      )
+      .run(parsed.id, parsed.state, JSON.stringify(parsed));
+  }
+
+  async listTraces(filter: TraceFilter = {}): Promise<MemoryTrace[]> {
+    const rows = filter.state
+      ? this.database.prepare("select payload from traces where state = ? order by id asc").all(filter.state) as PayloadRow[]
+      : this.database.prepare("select payload from traces order by id asc").all() as PayloadRow[];
+
+    return rows.map((row) => MemoryTraceSchema.parse(JSON.parse(row.payload)));
+  }
+
   private migrate(): void {
     this.database.exec(`
       create table if not exists turns (
@@ -151,6 +209,25 @@ export class SqliteStore implements MemoryStore {
 
       create index if not exists idx_injections_host_session
         on injections (host_session_id);
+
+      create table if not exists proposals (
+        id text primary key,
+        state text not null,
+        proposal_type text not null,
+        payload text not null
+      );
+
+      create index if not exists idx_proposals_state_type
+        on proposals (state, proposal_type);
+
+      create table if not exists traces (
+        id text primary key,
+        state text not null,
+        payload text not null
+      );
+
+      create index if not exists idx_traces_state
+        on traces (state);
     `);
   }
 
