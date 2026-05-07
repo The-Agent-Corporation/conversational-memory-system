@@ -10,16 +10,35 @@ const ResumeOptionsSchema = z.object({
   input: z.string().min(1)
 });
 
-const HermesResumeRequestSchema = z.union([
-  z.object({
-    summary_id: z.string().min(1),
-    injection_packet: z.undefined().optional()
-  }),
-  z.object({
-    summary_id: z.undefined().optional(),
-    injection_packet: InjectionPacketSchema
-  })
-]);
+const HermesResumeRequestSchema = z.object({
+  summary_id: z.string().min(1).optional(),
+  trace_id: z.string().min(1).optional(),
+  box_id: z.string().min(1).optional(),
+  injection_packet: InjectionPacketSchema.optional(),
+  max_turn_ranges: z.number().int().positive().optional(),
+  include_child_boxes: z.boolean().optional()
+}).superRefine((request, context) => {
+  const targetCount = [
+    request.summary_id,
+    request.trace_id,
+    request.box_id,
+    request.injection_packet
+  ].filter((target) => target !== undefined).length;
+
+  if (targetCount !== 1) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide exactly one of summary_id, trace_id, box_id, or injection_packet."
+    });
+  }
+
+  if (!request.box_id && (request.max_turn_ranges !== undefined || request.include_child_boxes !== undefined)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Box resume options require box_id."
+    });
+  }
+});
 
 export interface HermesResumeCommandResult extends ResumeResult {
   ok: true;
@@ -36,9 +55,7 @@ export async function resumeHermesMemory(options: {
 
   try {
     const resumer = new ConversationResumer(store);
-    const result = "summary_id" in request && request.summary_id
-      ? await resumer.resumeSummary(request.summary_id)
-      : await resumer.resumeInjection(request.injection_packet as InjectionPacket);
+    const result = await routeResumeRequest(resumer, request);
 
     return {
       ok: true,
@@ -48,6 +65,28 @@ export async function resumeHermesMemory(options: {
   } finally {
     store.close();
   }
+}
+
+function routeResumeRequest(
+  resumer: ConversationResumer,
+  request: z.infer<typeof HermesResumeRequestSchema>
+): Promise<ResumeResult> {
+  if (request.summary_id) {
+    return resumer.resumeSummary(request.summary_id);
+  }
+
+  if (request.trace_id) {
+    return resumer.resumeTrace(request.trace_id);
+  }
+
+  if (request.box_id) {
+    return resumer.resumeBox(request.box_id, {
+      maxTurnRanges: request.max_turn_ranges,
+      includeChildBoxes: request.include_child_boxes
+    });
+  }
+
+  return resumer.resumeInjection(request.injection_packet as InjectionPacket);
 }
 
 export function formatResumeContextBlock(result: ResumeResult): string {
