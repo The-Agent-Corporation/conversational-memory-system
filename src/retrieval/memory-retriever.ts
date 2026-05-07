@@ -35,7 +35,7 @@ export class MemoryRetriever {
     const topicEmbedding = this.options.embedder
       ? await this.options.embedder.embed(request.currentTopicSummary)
       : null;
-    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, boxes, {
+    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, {
       embedder: this.options.embedder,
       topicEmbedding
     });
@@ -44,7 +44,8 @@ export class MemoryRetriever {
       return null;
     }
 
-    const selected = selectMemories(ranked, request.maxMemoryTokens);
+    const primarySelected = selectMemories(ranked, request.maxMemoryTokens);
+    const selected = addParentBoxContext(primarySelected, boxes, request.maxMemoryTokens);
     if (selected.length === 0) {
       return null;
     }
@@ -64,7 +65,7 @@ export class MemoryRetriever {
       boxIds: [...new Set(selected.flatMap((memory) => memory.boxIds))],
       relevanceReason: buildRelevanceReason(selected),
       confidence: Math.min(0.95, Math.max(0.1, selected[0].score)),
-      disclosureText: buildDisclosureText(selected.length, request.currentTopicSummary, selectedTokenCount, request.maxMemoryTokens),
+      disclosureText: buildDisclosureText(selected, request.currentTopicSummary, selectedTokenCount, request.maxMemoryTokens),
       createdAt
     };
 
@@ -126,6 +127,52 @@ function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): Ranke
     if (stub) {
       return [stub];
     }
+  }
+
+  return selected;
+}
+
+function addParentBoxContext(
+  selected: RankedMemory[],
+  boxes: Box[],
+  maxMemoryTokens?: number
+): RankedMemory[] {
+  const boxesById = new Map(boxes.map((box) => [box.id, box]));
+  const selectedBoxIds = new Set(selected.flatMap((memory) => memory.boxIds));
+  const usedTokens = selected.reduce((sum, memory) => sum + memory.tokenCount, 0);
+
+  for (const boxId of selectedBoxIds) {
+    const child = boxesById.get(boxId);
+    if (!child?.parentBoxId) {
+      continue;
+    }
+
+    const parent = boxesById.get(child.parentBoxId);
+    if (!parent || !["active", "approved", "revived"].includes(parent.state)) {
+      continue;
+    }
+
+    const text = `[Parent Box: ${parent.title}]\n${parent.summary}`;
+    const candidate: RankedMemory = {
+      kind: "box_context",
+      id: parent.id,
+      text,
+      score: 0.01,
+      tokenCount: estimateTokenCount(text),
+      canUseStub: false,
+      scoringMethod: "keyword overlap",
+      summaryId: null,
+      summaryIds: [],
+      traceId: null,
+      sourceTurnRanges: parent.turnRanges,
+      boxIds: [parent.id]
+    };
+
+    if (maxMemoryTokens !== undefined && usedTokens + candidate.tokenCount > maxMemoryTokens) {
+      return selected;
+    }
+
+    return selected.some((memory) => memory.boxIds.includes(parent.id)) ? selected : [...selected, candidate];
   }
 
   return selected;
@@ -207,7 +254,6 @@ function rankMemories(
   summaries: Summary[],
   anchors: Anchor[],
   traces: MemoryTrace[],
-  _boxes: Box[],
   options: {
     embedder?: Embedder;
     topicEmbedding: Summary["embedding"];
@@ -454,12 +500,17 @@ function buildRelevanceReason(selected: RankedMemory[]): string {
 }
 
 function buildDisclosureText(
-  selectedCount: number,
+  selected: RankedMemory[],
   currentTopicSummary: string,
   selectedTokenCount: number,
   maxMemoryTokens?: number
 ): string {
-  const base = `Retrieved ${selectedCount} memory item${selectedCount === 1 ? "" : "s"} for ${currentTopicSummary}.`;
+  const parentContextCount = selected.filter((memory) => memory.kind === "box_context").length;
+  const primaryCount = selected.length - parentContextCount;
+  const parentText = parentContextCount > 0
+    ? ` Included ${parentContextCount} parent box context item${parentContextCount === 1 ? "" : "s"}.`
+    : "";
+  const base = `Retrieved ${primaryCount} memory item${primaryCount === 1 ? "" : "s"} for ${currentTopicSummary}.${parentText}`;
 
   if (maxMemoryTokens === undefined) {
     return base;

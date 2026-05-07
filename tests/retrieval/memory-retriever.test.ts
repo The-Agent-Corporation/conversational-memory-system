@@ -521,4 +521,76 @@ describe("MemoryRetriever", () => {
     expect(packet?.sourceTraceIds).toEqual([]);
     expect(packet?.relevanceReason).toContain("Top summary match summary_provider_bill");
   });
+
+  it("adds bounded parent box context for selected child memories", async () => {
+    const store = new InMemoryStore();
+    await store.saveBox(makeBox({
+      id: "box_case_smith",
+      title: "Smith Case",
+      description: "Smith car accident matter.",
+      childBoxIds: ["box_smith_pip"],
+      summaryIds: ["summary_case_smith"],
+      boxType: "case",
+      summary: "Smith car accident case with PIP and BI coverage issues.",
+      turnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 20 }]
+    }));
+    await store.saveBox(makeBox({
+      id: "box_smith_pip",
+      parentBoxId: "box_case_smith"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill review needs the ledger before demand finalization.",
+      boxIds: ["box_smith_pip"],
+      tokenCount: 10
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP provider bill ledger",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.selectedMemory).toContain("[Parent Box: Smith Case]");
+    expect(packet?.selectedMemory).toContain("Smith car accident case");
+    expect(packet?.boxIds).toEqual(["box_smith_pip", "box_case_smith"]);
+    expect(packet?.disclosureText).toContain("parent box context");
+  });
+
+  it("omits parent box context when the explicit token budget is too small", async () => {
+    const store = new InMemoryStore();
+    await store.saveBox(makeBox({
+      id: "box_case_smith",
+      title: "Smith Case",
+      childBoxIds: ["box_smith_pip"],
+      summary: "Smith car accident case with PIP and BI coverage issues."
+    }));
+    await store.saveBox(makeBox({
+      id: "box_smith_pip",
+      parentBoxId: "box_case_smith"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill ledger.",
+      boxIds: ["box_smith_pip"],
+      tokenCount: 5
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP provider bill ledger",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 6
+    });
+
+    expect(packet?.selectedMemory).not.toContain("[Parent Box: Smith Case]");
+    expect(packet?.boxIds).toEqual(["box_smith_pip"]);
+  });
 });
