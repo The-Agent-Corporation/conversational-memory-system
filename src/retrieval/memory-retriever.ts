@@ -378,8 +378,9 @@ function rankTrace(
     ...linkedSummaries.map((summary) => summary.summaryText)
   ].join(" ");
   const overlap = overlappingWords(topicWords, significantWords(traceText));
+  const specificOverlap = overlap.filter((word) => !TRACE_BROAD_WORDS.has(word));
 
-  if (overlap.length < 2) {
+  if (specificOverlap.length < 2) {
     return null;
   }
 
@@ -541,3 +542,5 @@ const STOP_WORDS = new Set([
   "user",
   "with"
 ]);
+
+const TRACE_BROAD_WORDS = new Set(["case", "matter", "client", "claim", "overview", "general"]);

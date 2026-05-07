@@ -593,4 +593,37 @@ describe("MemoryRetriever", () => {
     expect(packet?.selectedMemory).not.toContain("[Parent Box: Smith Case]");
     expect(packet?.boxIds).toEqual(["box_smith_pip"]);
   });
+
+  it("does not retrieve a child trace for a broad parent-only query", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_case_smith",
+      summaryText: "Smith car accident case overview and general planning.",
+      boxIds: ["box_case_smith"],
+      tokenCount: 8
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill ledger dispute.",
+      boxIds: ["box_smith_pip"],
+      tokenCount: 8
+    }));
+    await store.saveTrace(makeTrace({
+      description: "Recurring Smith case PIP provider bill dispute and no-fault payment timing.",
+      rationale: "The same Smith case provider bill issue recurred across separated turns."
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith case overview",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.sourceTraceIds).toEqual([]);
+    expect(packet?.sourceSummaryIds[0]).toBe("summary_case_smith");
+  });
 });
