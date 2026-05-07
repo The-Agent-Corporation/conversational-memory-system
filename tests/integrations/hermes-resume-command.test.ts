@@ -64,6 +64,7 @@ const injection = (overrides: Partial<InjectionPacket> = {}): InjectionPacket =>
   currentTopicSummary: "Smith PIP",
   selectedMemory: "Smith PIP demand timing.",
   sourceSummaryIds: ["summary_smith_pip"],
+  sourceTraceIds: [],
   sourceTurnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 2 }],
   boxIds: ["box_smith"],
   relevanceReason: "Top summary match.",

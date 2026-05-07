@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Anchor, Summary } from "../../src/domain/types.js";
+import type { Anchor, Box, MemoryTrace, Summary } from "../../src/domain/types.js";
 import type { Embedder } from "../../src/embeddings/embedder.js";
 import { MemoryRetriever } from "../../src/retrieval/memory-retriever.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
@@ -42,6 +42,44 @@ const makeAnchor = (overrides: Partial<Anchor> = {}): Anchor => ({
   ...overrides
 });
 
+const makeBox = (overrides: Partial<Box> = {}): Box => ({
+  id: "box_smith_pip",
+  title: "Smith PIP",
+  description: "Smith no-fault benefits and provider bills.",
+  parentBoxId: null,
+  childBoxIds: [],
+  summaryIds: ["summary_1", "summary_provider_bill"],
+  turnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 12 }],
+  state: "approved",
+  createdAt: "2026-05-04T10:00:00.000Z",
+  updatedAt: "2026-05-04T10:05:00.000Z",
+  caseId: "case_smith",
+  boxType: "topic",
+  summary: "Smith PIP coverage and provider bill issues.",
+  lastActivityAt: "2026-05-04T10:05:00.000Z",
+  ...overrides
+});
+
+const makeTrace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
+  id: "trace_smith_pip_provider_bills",
+  title: "Smith PIP Provider Bills",
+  description: "Recurring Smith PIP provider bill dispute and no-fault payment timing.",
+  traceType: "case_issue",
+  state: "approved",
+  summaryIds: ["summary_1", "summary_provider_bill"],
+  boxIds: ["box_smith_pip"],
+  turnRanges: [
+    { threadId: "session_1", startSequence: 1, endSequence: 2 },
+    { threadId: "session_1", startSequence: 10, endSequence: 12 }
+  ],
+  createdAt: "2026-05-04T10:05:00.000Z",
+  updatedAt: "2026-05-04T10:05:00.000Z",
+  lastActivityAt: "2026-05-04T10:05:00.000Z",
+  confidence: 0.88,
+  rationale: "The same provider bill issue recurred across separated turns.",
+  ...overrides
+});
+
 describe("MemoryRetriever", () => {
   it("returns and audits a ranked injection packet for matching memory", async () => {
     const store = new InMemoryStore();
@@ -62,6 +100,7 @@ describe("MemoryRetriever", () => {
       hostSessionId: "session_1",
       currentTopicSummary: "Smith PIP demand",
       sourceSummaryIds: ["summary_1"],
+      sourceTraceIds: [],
       sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }],
       boxIds: ["box_1"],
       createdAt: "2026-05-04T10:10:00.000Z"
@@ -427,5 +466,164 @@ describe("MemoryRetriever", () => {
 
     expect(packet?.sourceSummaryIds[0]).toBe("summary_keyword");
     expect(packet?.relevanceReason).toContain("keyword overlap");
+  });
+
+  it("retrieves approved traces with linked summary provenance", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill review needs the ledger before demand finalization.",
+      sourceTurnRanges: [{ threadId: "session_1", startSequence: 10, endSequence: 12 }],
+      boxIds: ["box_smith_pip"],
+      tokenCount: 12
+    }));
+    await store.saveTrace(makeTrace());
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP provider bill ledger",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.sourceTraceIds).toEqual(["trace_smith_pip_provider_bills"]);
+    expect(packet?.sourceSummaryIds).toContain("summary_provider_bill");
+    expect(packet?.selectedMemory).toContain("[Trace: Smith PIP Provider Bills]");
+    expect(packet?.relevanceReason).toContain("Top trace match trace_smith_pip_provider_bills");
+  });
+
+  it("ignores traces that are not approved", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill review needs the ledger.",
+      tokenCount: 8
+    }));
+    await store.saveTrace(makeTrace({ state: "proposed" }));
+    await store.saveTrace(makeTrace({
+      id: "trace_rejected_provider_bills",
+      state: "rejected"
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP provider bill ledger",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.sourceTraceIds).toEqual([]);
+    expect(packet?.relevanceReason).toContain("Top summary match summary_provider_bill");
+  });
+
+  it("adds bounded parent box context for selected child memories", async () => {
+    const store = new InMemoryStore();
+    await store.saveBox(makeBox({
+      id: "box_case_smith",
+      title: "Smith Case",
+      description: "Smith car accident matter.",
+      childBoxIds: ["box_smith_pip"],
+      summaryIds: ["summary_case_smith"],
+      boxType: "case",
+      summary: "Smith car accident case with PIP and BI coverage issues.",
+      turnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 20 }]
+    }));
+    await store.saveBox(makeBox({
+      id: "box_smith_pip",
+      parentBoxId: "box_case_smith"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill review needs the ledger before demand finalization.",
+      boxIds: ["box_smith_pip"],
+      tokenCount: 10
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP provider bill ledger",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.selectedMemory).toContain("[Parent Box: Smith Case]");
+    expect(packet?.selectedMemory).toContain("Smith car accident case");
+    expect(packet?.boxIds).toEqual(["box_smith_pip", "box_case_smith"]);
+    expect(packet?.disclosureText).toContain("parent box context");
+  });
+
+  it("omits parent box context when the explicit token budget is too small", async () => {
+    const store = new InMemoryStore();
+    await store.saveBox(makeBox({
+      id: "box_case_smith",
+      title: "Smith Case",
+      childBoxIds: ["box_smith_pip"],
+      summary: "Smith car accident case with PIP and BI coverage issues."
+    }));
+    await store.saveBox(makeBox({
+      id: "box_smith_pip",
+      parentBoxId: "box_case_smith"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill ledger.",
+      boxIds: ["box_smith_pip"],
+      tokenCount: 5
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP provider bill ledger",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 6
+    });
+
+    expect(packet?.selectedMemory).not.toContain("[Parent Box: Smith Case]");
+    expect(packet?.boxIds).toEqual(["box_smith_pip"]);
+  });
+
+  it("does not retrieve a child trace for a broad parent-only query", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_case_smith",
+      summaryText: "Smith car accident case overview and general planning.",
+      boxIds: ["box_case_smith"],
+      tokenCount: 8
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill ledger dispute.",
+      boxIds: ["box_smith_pip"],
+      tokenCount: 8
+    }));
+    await store.saveTrace(makeTrace({
+      description: "Recurring Smith case PIP provider bill dispute and no-fault payment timing.",
+      rationale: "The same Smith case provider bill issue recurred across separated turns."
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith case overview",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.sourceTraceIds).toEqual([]);
+    expect(packet?.sourceSummaryIds[0]).toBe("summary_case_smith");
   });
 });
