@@ -67,7 +67,10 @@ describe("Hermes sleep command", () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
     const store = new SqliteStore(databasePath);
-    await store.saveSummary(summary({ id: "summary_1" }));
+    await store.saveSummary(summary({
+      id: "summary_1",
+      summaryText: "Smith PIP provider bill review and coverage timing."
+    }));
     await store.saveSummary(summary({
       id: "summary_2",
       summaryText: "Smith PIP deadline and provider bill review.",
@@ -89,6 +92,7 @@ describe("Hermes sleep command", () => {
       input: JSON.stringify({
         reviewed_at: "2026-05-03T00:00:00.000Z",
         minimum_summaries_per_box: 2,
+        minimum_trace_summaries: 2,
         stale_strength_threshold: 0.25
       })
     });
@@ -98,6 +102,11 @@ describe("Hermes sleep command", () => {
     expect(result.updatedSummaryIds).toEqual(["summary_1", "summary_2", "summary_old"]);
     expect(result.updatedBoxIds).toEqual(["box_topic_old"]);
     expect(result.proposedBoxIds).toEqual(["box_topic_smith_pip"]);
+    expect(result.proposalIds).toEqual(expect.arrayContaining([
+      "proposal_box_box_topic_smith_pip",
+      "proposal_trace_trace_smith_pip_provider_bill"
+    ]));
+    expect(result.proposedTraceIds).toEqual(["trace_smith_pip_provider_bill"]);
     expect(result.noopReason).toBeNull();
 
     const verifyStore = new SqliteStore(databasePath);
@@ -127,6 +136,8 @@ describe("Hermes sleep command", () => {
       updatedSummaryIds: [],
       updatedBoxIds: [],
       proposedBoxIds: [],
+      proposalIds: [],
+      proposedTraceIds: [],
       noopReason: "No summaries or boxes needed sleep review changes."
     });
   });

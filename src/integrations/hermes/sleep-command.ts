@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
+import { TraceProposalPayloadSchema } from "../../domain/types.js";
 import { SleepReviewer } from "../../sleep/sleep-reviewer.js";
 import { SqliteStore } from "../../storage/sqlite-store.js";
 
@@ -11,7 +12,12 @@ const SleepOptionsSchema = z.object({
 const HermesSleepRequestSchema = z.object({
   reviewed_at: z.string().datetime().optional(),
   minimum_summaries_per_box: z.number().int().positive().optional(),
-  stale_strength_threshold: z.number().min(0).max(1).optional()
+  stale_strength_threshold: z.number().min(0).max(1).optional(),
+  include_proposals: z.boolean().optional(),
+  proposal_mode: z.enum(["deterministic"]).optional(),
+  minimum_trace_summaries: z.number().int().positive().optional(),
+  minimum_box_confidence: z.number().min(0).max(1).optional(),
+  minimum_trace_confidence: z.number().min(0).max(1).optional()
 });
 
 export interface HermesSleepResult {
@@ -20,6 +26,8 @@ export interface HermesSleepResult {
   updatedSummaryIds: string[];
   updatedBoxIds: string[];
   proposedBoxIds: string[];
+  proposalIds: string[];
+  proposedTraceIds: string[];
   noopReason: string | null;
 }
 
@@ -41,13 +49,27 @@ export async function sleepHermesMemory(options: {
     const refresh = await reviewer.refreshBoxStates({ reviewedAt });
     const proposals = await reviewer.proposeBoxes({
       reviewedAt,
-      minimumSummariesPerBox: request.minimum_summaries_per_box
+      minimumSummariesPerBox: request.minimum_summaries_per_box,
+      minimumBoxConfidence: request.minimum_box_confidence
     });
+    const traceProposals = request.include_proposals === false
+      ? { proposals: [] }
+      : await reviewer.proposeTraces({
+        reviewedAt,
+        minimumTraceSummaries: request.minimum_trace_summaries,
+        minimumTraceConfidence: request.minimum_trace_confidence
+      });
 
     const updatedSummaryIds = decay.updatedSummaries.map((summary) => summary.id);
     const updatedBoxIds = refresh.updatedBoxes.map((box) => box.id);
     const proposedBoxIds = proposals.proposedBoxes.map((box) => box.id);
-    const hasChanges = updatedSummaryIds.length > 0 || updatedBoxIds.length > 0 || proposedBoxIds.length > 0;
+    const proposalIds = [...proposals.proposals, ...traceProposals.proposals].map((proposal) => proposal.id);
+    const proposedTraceIds = traceProposals.proposals
+      .map((proposal) => TraceProposalPayloadSchema.parse(proposal.payload).traceId);
+    const hasChanges = updatedSummaryIds.length > 0 ||
+      updatedBoxIds.length > 0 ||
+      proposedBoxIds.length > 0 ||
+      proposalIds.length > 0;
 
     return {
       ok: true,
@@ -55,6 +77,8 @@ export async function sleepHermesMemory(options: {
       updatedSummaryIds,
       updatedBoxIds,
       proposedBoxIds,
+      proposalIds,
+      proposedTraceIds,
       noopReason: hasChanges ? null : "No summaries or boxes needed sleep review changes."
     };
   } finally {

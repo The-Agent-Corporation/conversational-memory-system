@@ -1,5 +1,6 @@
 import { BoxProposalPayloadSchema, type Box, type MemoryProposal, type Summary, type TurnRange } from "../domain/types.js";
 import { DeterministicBoxProposalPlanner } from "../boxes/box-proposal-planner.js";
+import { DeterministicTraceProposalPlanner } from "../traces/trace-proposal-planner.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
 export interface SleepReviewRequest {
@@ -7,6 +8,8 @@ export interface SleepReviewRequest {
   minimumSummariesPerBox?: number;
   staleStrengthThreshold?: number;
   minimumBoxConfidence?: number;
+  minimumTraceSummaries?: number;
+  minimumTraceConfidence?: number;
 }
 
 export interface SleepReviewResult {
@@ -20,6 +23,10 @@ export interface SummaryDecayResult {
 
 export interface BoxStateRefreshResult {
   updatedBoxes: Box[];
+}
+
+export interface TraceProposalReviewResult {
+  proposals: MemoryProposal[];
 }
 
 export class SleepReviewer {
@@ -56,6 +63,33 @@ export class SleepReviewer {
     }
 
     return { proposedBoxes, proposals: result.proposals };
+  }
+
+  async proposeTraces(request: SleepReviewRequest): Promise<TraceProposalReviewResult> {
+    const [summaries, boxes, anchors, proposals, traces] = await Promise.all([
+      this.store.listSummaries(),
+      this.store.listBoxes(),
+      this.store.listAnchors(),
+      this.store.listProposals({ state: "proposed" }),
+      this.store.listTraces()
+    ]);
+    const planner = new DeterministicTraceProposalPlanner();
+    const result = await planner.proposeTraces({
+      reviewedAt: request.reviewedAt,
+      summaries,
+      boxes,
+      anchors,
+      proposals,
+      traces,
+      minimumTraceSummaries: request.minimumTraceSummaries,
+      minimumConfidence: request.minimumTraceConfidence
+    });
+
+    for (const proposal of result.proposals) {
+      await this.store.saveProposal(proposal);
+    }
+
+    return { proposals: result.proposals };
   }
 
   async decaySummaries(request: SleepReviewRequest): Promise<SummaryDecayResult> {

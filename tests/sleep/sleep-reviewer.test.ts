@@ -113,6 +113,29 @@ describe("SleepReviewer", () => {
     await expect(store.listBoxes()).resolves.toEqual([makeBox()]);
   });
 
+  it("stores trace proposals for non-contiguous continuing issues", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_1",
+      summaryText: "Smith PIP provider bill review and coverage timing.",
+      sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 3 }]
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_3",
+      summaryText: "Smith PIP provider bill review follow-up after new records.",
+      sourceTurnRanges: [{ threadId: "session_1", startSequence: 4350, endSequence: 4380 }],
+      createdAt: "2026-05-04T11:05:00.000Z"
+    }));
+
+    const reviewer = new SleepReviewer(store);
+    const result = await reviewer.proposeTraces({
+      reviewedAt: "2026-05-05T06:00:00.000Z"
+    });
+
+    expect(result.proposals.map((proposal) => proposal.id)).toEqual(["proposal_trace_trace_smith_pip_provider_bill"]);
+    await expect(store.listProposals({ proposalType: "trace", state: "proposed" })).resolves.toHaveLength(1);
+  });
+
   it("decays old untouched summaries and marks weak summaries stale", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary({
