@@ -19,4 +19,5 @@ Sleep review stores proposed boxes, parent/child relationships, and trace links 
 - Sleep review can explain what it found without silently changing approved organization.
 - Hermes receives compact proposal ids from `hermes:sleep`.
 - Proposal review commands can be added without changing planner output.
+- Proposal review commands provide the approval path for proposed boxes, parent/child relationships, and traces.
 - SQLite remains local-first with additive JSON payload tables.
