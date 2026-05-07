@@ -11,6 +11,7 @@
     "hermes:inject": "tsx src/integrations/hermes/inject-command.ts",
     "hermes:proposals:approve": "tsx src/integrations/hermes/proposals-approve-command.ts",
     "hermes:proposals:list": "tsx src/integrations/hermes/proposals-list-command.ts",
+    "hermes:proposals:reject": "tsx src/integrations/hermes/proposals-reject-command.ts",
     "hermes:resume": "tsx src/integrations/hermes/resume-command.ts",
     "hermes:sleep": "tsx src/integrations/hermes/sleep-command.ts",
     "hermes:smoke": "tsx src/integrations/hermes/smoke-harness.ts"

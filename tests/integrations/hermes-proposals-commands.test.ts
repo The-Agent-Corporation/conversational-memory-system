@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Box, MemoryProposal } from "../../src/domain/types.js";
 import { approveHermesProposal } from "../../src/integrations/hermes/proposals-approve-command.js";
 import { listHermesProposals } from "../../src/integrations/hermes/proposals-list-command.js";
+import { rejectHermesProposal } from "../../src/integrations/hermes/proposals-reject-command.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 let tempDir: string | null = null;
@@ -224,6 +225,56 @@ describe("Hermes proposal commands", () => {
         decided_at: "2026-05-07T14:00:00.000Z"
       })
     })).rejects.toThrow("Proposal missing was not found");
+  });
+
+  it("rejects a proposal without deleting it or mutating durable memory", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "memory.sqlite");
+    const store = new SqliteStore(databasePath);
+    await store.saveProposal(traceProposal());
+    await store.saveBox(box());
+    store.close();
+
+    const result = await rejectHermesProposal({
+      databasePath,
+      input: JSON.stringify({
+        proposal_id: "proposal_trace_trace_smith_pip_provider_bill",
+        decided_at: "2026-05-07T14:00:00.000Z",
+        note: "Too broad."
+      })
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      proposalId: "proposal_trace_trace_smith_pip_provider_bill",
+      proposalType: "trace",
+      rejectedAt: "2026-05-07T14:00:00.000Z",
+      updatedProposalIds: ["proposal_trace_trace_smith_pip_provider_bill"]
+    });
+
+    const verifyStore = new SqliteStore(databasePath);
+    await expect(verifyStore.getProposal("proposal_trace_trace_smith_pip_provider_bill")).resolves.toEqual(
+      expect.objectContaining({ state: "rejected", decisionNote: "Too broad." })
+    );
+    await expect(verifyStore.getBox("box_case_smith")).resolves.toEqual(box());
+    await expect(verifyStore.listTraces()).resolves.toEqual([]);
+    verifyStore.close();
+  });
+
+  it("fails rejecting an already approved proposal", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "memory.sqlite");
+    const store = new SqliteStore(databasePath);
+    await store.saveProposal(boxProposal({ state: "approved" }));
+    store.close();
+
+    await expect(rejectHermesProposal({
+      databasePath,
+      input: JSON.stringify({
+        proposal_id: "proposal_box_box_topic_smith_pip",
+        decided_at: "2026-05-07T14:00:00.000Z"
+      })
+    })).rejects.toThrow("Proposal proposal_box_box_topic_smith_pip is already approved");
   });
 });
 
