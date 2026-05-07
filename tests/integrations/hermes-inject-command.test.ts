@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { injectHermesMemory } from "../../src/integrations/hermes/inject-command.js";
-import type { Summary } from "../../src/domain/types.js";
+import type { MemoryTrace, Summary } from "../../src/domain/types.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 let tempDir: string | null = null;
@@ -44,12 +44,40 @@ const summary = (overrides: Partial<Summary> = {}): Summary => ({
   ...overrides
 });
 
+const trace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
+  id: "trace_smith_pip_provider_bills",
+  title: "Smith PIP Provider Bills",
+  description: "Recurring Smith PIP provider bill dispute and no-fault payment timing.",
+  traceType: "case_issue",
+  state: "approved",
+  summaryIds: ["summary_smith_pip", "summary_smith_provider_bill"],
+  boxIds: ["box_smith_pip"],
+  turnRanges: [
+    { threadId: "profile:default", startSequence: 1, endSequence: 2 },
+    { threadId: "profile:default", startSequence: 10, endSequence: 12 }
+  ],
+  createdAt: "2024-05-04T12:50:00.000Z",
+  updatedAt: "2024-05-04T12:50:00.000Z",
+  lastActivityAt: "2024-05-04T12:50:00.000Z",
+  confidence: 0.9,
+  rationale: "The provider bill issue recurred across separated turns.",
+  ...overrides
+});
+
 describe("Hermes inject command", () => {
   it("returns a delimited memory context block for a matching Hermes query", async () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
     const store = new SqliteStore(databasePath);
     await store.saveSummary(summary());
+    await store.saveSummary(summary({
+      id: "summary_smith_provider_bill",
+      summaryText: "Smith PIP provider bill ledger must be reviewed before demand finalization.",
+      sourceTurnRanges: [{ threadId: "profile:default", startSequence: 10, endSequence: 12 }],
+      boxIds: ["box_smith_pip"],
+      tokenCount: 10
+    }));
+    await store.saveTrace(trace());
     store.close();
 
     const result = await injectHermesMemory({
@@ -57,17 +85,18 @@ describe("Hermes inject command", () => {
       input: JSON.stringify({
         profile_id: "default",
         session_id: "profile:default",
-        query: "Can we resume Smith PIP demand timing?",
+        query: "Smith PIP provider bill ledger",
         requested_at: "2024-05-04T13:00:00.000Z",
-        max_memory_tokens: 50
+        max_memory_tokens: 120
       })
     });
 
     expect(result.ok).toBe(true);
-    expect(result.packet?.sourceSummaryIds).toEqual(["summary_smith_pip"]);
+    expect(result.packet?.sourceTraceIds).toEqual(["trace_smith_pip_provider_bills"]);
+    expect(result.packet?.sourceSummaryIds).toContain("summary_smith_provider_bill");
     expect(result.contextBlock).toContain("<memory-context>");
-    expect(result.contextBlock).toContain("Smith PIP demand strategy");
-    expect(result.contextBlock).toContain("Top summary match summary_smith_pip");
+    expect(result.contextBlock).toContain("[Trace: Smith PIP Provider Bills]");
+    expect(result.contextBlock).toContain("Top trace match trace_smith_pip_provider_bills");
     expect(result.contextBlock).toContain("</memory-context>");
   });
 
