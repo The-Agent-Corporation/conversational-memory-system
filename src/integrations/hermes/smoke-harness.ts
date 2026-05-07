@@ -22,6 +22,9 @@ export interface RoscoeMemoryEnvironment {
   HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: string;
   HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: string;
   HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_APPROVE_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND: string;
 }
 
 export interface HermesSmokeHarnessResult {
@@ -113,7 +116,10 @@ export function buildRoscoeMemoryEnvironment(options: {
     HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED: "1",
     HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: npmCommand(projectRoot, "hermes:inject", options.databasePath),
     HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: npmCommand(projectRoot, "hermes:resume", options.databasePath),
-    HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND: npmCommand(projectRoot, "hermes:sleep", options.databasePath)
+    HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND: npmCommand(projectRoot, "hermes:sleep", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND: npmCommand(projectRoot, "hermes:proposals:list", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_APPROVE_COMMAND: npmCommand(projectRoot, "hermes:proposals:approve", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND: npmCommand(projectRoot, "hermes:proposals:reject", options.databasePath)
   };
 }
 

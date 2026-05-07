@@ -46,6 +46,9 @@ export HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED=1
 export HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND="npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:inject -- --db /path/to/memory.sqlite"
 export HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND="npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:resume -- --db /path/to/memory.sqlite"
 export HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND="npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:sleep -- --db /path/to/memory.sqlite"
+export HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND="npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:proposals:list -- --db /path/to/memory.sqlite"
+export HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_APPROVE_COMMAND="npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:proposals:approve -- --db /path/to/memory.sqlite"
+export HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND="npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:proposals:reject -- --db /path/to/memory.sqlite"
 ```
 
 Run the local smoke check with:

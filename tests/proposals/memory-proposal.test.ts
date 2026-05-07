@@ -20,6 +20,9 @@ describe("memory proposal schemas", () => {
       confidence: 0.82,
       createdAt: "2026-05-07T12:00:00.000Z",
       reviewedAt: "2026-05-07T12:00:00.000Z",
+      decidedAt: null,
+      decidedBy: null,
+      decisionNote: null,
       sourceSummaryIds: ["summary_1", "summary_2"],
       sourceTurnRanges: [turnRange],
       targetBoxIds: ["box_topic_smith_pip"],
@@ -82,6 +85,40 @@ describe("memory proposal schemas", () => {
     });
 
     expect(trace.state).toBe("proposed");
+  });
+
+  it("parses proposal decision metadata", () => {
+    const parsed = MemoryProposalSchema.parse({
+      id: "proposal_box_smith_pip",
+      proposalType: "box",
+      state: "approved",
+      title: "Smith PIP Coverage",
+      rationale: "Approved box proposal.",
+      confidence: 0.82,
+      createdAt: "2026-05-07T12:00:00.000Z",
+      reviewedAt: "2026-05-07T12:00:00.000Z",
+      decidedAt: "2026-05-07T13:00:00.000Z",
+      decidedBy: "aaron",
+      decisionNote: "Looks right.",
+      sourceSummaryIds: ["summary_1"],
+      sourceTurnRanges: [turnRange],
+      targetBoxIds: ["box_topic_smith_pip"],
+      targetTraceIds: [],
+      payload: {
+        boxId: "box_topic_smith_pip",
+        title: "Smith PIP Coverage",
+        description: "Proposed topic box for Smith PIP coverage.",
+        summary: "Smith PIP coverage and provider bill review.",
+        boxType: "topic",
+        candidateParentBoxId: null,
+        keywords: ["smith", "pip"],
+        evidence: ["Shared keywords: smith, pip"],
+        sourceSummaryIds: ["summary_1"],
+        sourceTurnRanges: [turnRange]
+      }
+    });
+
+    expect(parsed.decidedBy).toBe("aaron");
   });
 
   it("rejects proposal payloads without source provenance", () => {

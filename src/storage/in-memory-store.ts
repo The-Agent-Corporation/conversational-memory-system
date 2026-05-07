@@ -48,6 +48,10 @@ export class InMemoryStore implements MemoryStore {
     this.upsertById(this.boxes, structuredClone(BoxSchema.parse(box)));
   }
 
+  async getBox(id: string): Promise<Box | null> {
+    return structuredClone(this.boxes.find((box) => box.id === id) ?? null);
+  }
+
   async listBoxes(): Promise<Box[]> {
     return structuredClone(this.boxes);
   }
@@ -74,6 +78,10 @@ export class InMemoryStore implements MemoryStore {
     this.upsertById(this.proposals, structuredClone(MemoryProposalSchema.parse(proposal)));
   }
 
+  async getProposal(id: string): Promise<MemoryProposal | null> {
+    return structuredClone(this.proposals.find((proposal) => proposal.id === id) ?? null);
+  }
+
   async listProposals(filter: ProposalFilter = {}): Promise<MemoryProposal[]> {
     return structuredClone(this.proposals.filter((proposal) =>
       (filter.state === undefined || proposal.state === filter.state) &&
@@ -83,6 +91,10 @@ export class InMemoryStore implements MemoryStore {
 
   async saveTrace(trace: MemoryTrace): Promise<void> {
     this.upsertById(this.traces, structuredClone(MemoryTraceSchema.parse(trace)));
+  }
+
+  async getTrace(id: string): Promise<MemoryTrace | null> {
+    return structuredClone(this.traces.find((trace) => trace.id === id) ?? null);
   }
 
   async listTraces(filter: TraceFilter = {}): Promise<MemoryTrace[]> {
