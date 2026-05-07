@@ -61,5 +61,8 @@ describe("Hermes memory smoke harness", () => {
     expect(env.HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND).toBe(
       "npm --silent --prefix /repo/conversational-memory-system run hermes:resume -- --db /tmp/memory.sqlite"
     );
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND).toBe(
+      "npm --silent --prefix /repo/conversational-memory-system run hermes:sleep -- --db /tmp/memory.sqlite"
+    );
   });
 });

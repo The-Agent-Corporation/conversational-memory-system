@@ -10,6 +10,7 @@
     "hermes:ingest": "tsx src/integrations/hermes/ingest-command.ts",
     "hermes:inject": "tsx src/integrations/hermes/inject-command.ts",
     "hermes:resume": "tsx src/integrations/hermes/resume-command.ts",
+    "hermes:sleep": "tsx src/integrations/hermes/sleep-command.ts",
     "hermes:smoke": "tsx src/integrations/hermes/smoke-harness.ts"
   },
   "dependencies": {
