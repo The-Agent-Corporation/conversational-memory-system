@@ -13,6 +13,7 @@
     "hermes:proposals:list": "tsx src/integrations/hermes/proposals-list-command.ts",
     "hermes:proposals:reject": "tsx src/integrations/hermes/proposals-reject-command.ts",
     "hermes:resume": "tsx src/integrations/hermes/resume-command.ts",
+    "hermes:roscoe-env": "tsx src/integrations/hermes/roscoe-env-command.ts",
     "hermes:sleep": "tsx src/integrations/hermes/sleep-command.ts",
     "hermes:smoke": "tsx src/integrations/hermes/smoke-harness.ts"
   },

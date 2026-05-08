@@ -41,6 +41,8 @@ describe("Hermes memory smoke harness", () => {
     expect(result.resume.contextBlock).toContain("<memory-resume>");
     expect(result.resume.contextBlock).toContain("[USER]: Let's talk about Smith PIP.");
     expect(result.resume.contextBlock).toContain("[ASSISTANT]: The Smith PIP demand deadline is June 1.");
+    expect(result.sleep.ok).toBe(true);
+    expect(result.proposals.proposals.length).toBeGreaterThanOrEqual(1);
   });
 
   it("prints Roscoe environment commands for the same database path", () => {
@@ -55,15 +57,20 @@ describe("Hermes memory smoke harness", () => {
     expect(env.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toBe(
       "npm --silent --prefix /repo/conversational-memory-system run hermes:ingest -- --db /tmp/memory.sqlite"
     );
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_TIMEOUT).toBe("10");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND).toBe(
       "npm --silent --prefix /repo/conversational-memory-system run hermes:inject -- --db /tmp/memory.sqlite"
     );
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_INJECT_TIMEOUT).toBe("10");
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_MAX_TOKENS).toBe("120");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND).toBe(
       "npm --silent --prefix /repo/conversational-memory-system run hermes:resume -- --db /tmp/memory.sqlite"
     );
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_RESUME_TIMEOUT).toBe("10");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND).toBe(
       "npm --silent --prefix /repo/conversational-memory-system run hermes:sleep -- --db /tmp/memory.sqlite"
     );
+    expect(env.HERMES_CONVERSATIONAL_MEMORY_SLEEP_TIMEOUT).toBe("60");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND).toBe(
       "npm --silent --prefix /repo/conversational-memory-system run hermes:proposals:list -- --db /tmp/memory.sqlite"
     );

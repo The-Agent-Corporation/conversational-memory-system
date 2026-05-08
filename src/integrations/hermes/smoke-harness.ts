@@ -8,6 +8,10 @@ import type { HermesInjectResult } from "./inject-command.js";
 import { injectHermesMemory } from "./inject-command.js";
 import type { HermesResumeCommandResult } from "./resume-command.js";
 import { resumeHermesMemory } from "./resume-command.js";
+import type { HermesSleepResult } from "./sleep-command.js";
+import { sleepHermesMemory } from "./sleep-command.js";
+import type { HermesProposalListResult } from "./proposals-list-command.js";
+import { listHermesProposals } from "./proposals-list-command.js";
 
 export interface HermesSmokeHarnessOptions {
   databasePath?: string;
@@ -18,10 +22,15 @@ export interface RoscoeMemoryEnvironment {
   HERMES_CONVERSATIONAL_MEMORY_DB: string;
   HERMES_CONVERSATIONAL_MEMORY_ENABLED: string;
   HERMES_CONVERSATIONAL_MEMORY_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_TIMEOUT: string;
   HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED: string;
   HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_INJECT_TIMEOUT: string;
+  HERMES_CONVERSATIONAL_MEMORY_MAX_TOKENS: string;
   HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_RESUME_TIMEOUT: string;
   HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND: string;
+  HERMES_CONVERSATIONAL_MEMORY_SLEEP_TIMEOUT: string;
   HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND: string;
   HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_APPROVE_COMMAND: string;
   HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND: string;
@@ -35,6 +44,8 @@ export interface HermesSmokeHarnessResult {
   compaction: HermesIngestResult;
   injection: HermesInjectResult;
   resume: HermesResumeCommandResult;
+  sleep: HermesSleepResult;
+  proposals: HermesProposalListResult;
 }
 
 export async function runHermesMemorySmokeHarness(
@@ -89,6 +100,19 @@ export async function runHermesMemorySmokeHarness(
     databasePath,
     input: JSON.stringify({ injection_packet: injection.packet })
   });
+  const sleep = await sleepHermesMemory({
+    databasePath,
+    input: JSON.stringify({
+      reviewed_at: "2024-05-05T06:00:00.000Z",
+      minimum_summaries_per_box: 1,
+      minimum_trace_summaries: 2,
+      proposal_mode: "deterministic"
+    })
+  });
+  const proposals = await listHermesProposals({
+    databasePath,
+    input: JSON.stringify({ state: "proposed", limit: 20 })
+  });
 
   return {
     ok: true,
@@ -99,7 +123,9 @@ export async function runHermesMemorySmokeHarness(
     ),
     compaction,
     injection,
-    resume
+    resume,
+    sleep,
+    proposals
   };
 }
 
@@ -113,10 +139,15 @@ export function buildRoscoeMemoryEnvironment(options: {
     HERMES_CONVERSATIONAL_MEMORY_DB: options.databasePath,
     HERMES_CONVERSATIONAL_MEMORY_ENABLED: "1",
     HERMES_CONVERSATIONAL_MEMORY_COMMAND: npmCommand(projectRoot, "hermes:ingest", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_TIMEOUT: "10",
     HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED: "1",
     HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: npmCommand(projectRoot, "hermes:inject", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_INJECT_TIMEOUT: "10",
+    HERMES_CONVERSATIONAL_MEMORY_MAX_TOKENS: "120",
     HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: npmCommand(projectRoot, "hermes:resume", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_RESUME_TIMEOUT: "10",
     HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND: npmCommand(projectRoot, "hermes:sleep", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_SLEEP_TIMEOUT: "60",
     HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND: npmCommand(projectRoot, "hermes:proposals:list", options.databasePath),
     HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_APPROVE_COMMAND: npmCommand(projectRoot, "hermes:proposals:approve", options.databasePath),
     HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND: npmCommand(projectRoot, "hermes:proposals:reject", options.databasePath)
