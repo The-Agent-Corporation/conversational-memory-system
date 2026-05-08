@@ -71,7 +71,7 @@ Run:
 npm run hermes:smoke -- --db /tmp/roscoe-memory-smoke.sqlite
 ```
 
-The smoke harness proves that one SQLite store supports ingest, compaction, injection, resume, sleep review, and proposal listing.
+The smoke harness proves that one SQLite store supports ingest, compaction, injection, resume, sleep review, and proposal listing. It creates two non-contiguous Smith PIP provider-bill spans, then requires sleep review and proposal listing to surface the matching trace proposal.
 
 ## OpenRouter Sleep Planning
 

@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 describe("Hermes memory smoke harness", () => {
-  it("proves ingest, compaction, injection, and resume share one SQLite store", async () => {
+  it("proves ingest, compaction, injection, resume, sleep, and proposal listing share one SQLite store", async () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
 
@@ -30,19 +30,30 @@ describe("Hermes memory smoke harness", () => {
 
     expect(result.ok).toBe(true);
     expect(result.databasePath).toBe(databasePath);
-    expect(result.compaction.summaryId).toBe("summary_profile:default_1_2");
-    expect(result.injection.packet?.sourceSummaryIds).toEqual(["summary_profile:default_1_2"]);
-    expect(result.injection.packet?.selectedMemory).toBe(
-      "Smith PIP (2 turns, seq 1-2): Let's talk about Smith PIP. The Smith PIP demand deadline is June 1."
-    );
+    expect(result.compaction.summaryId).toBe("summary_profile:default_4_5");
+    expect(result.injection.packet?.sourceSummaryIds).toEqual(expect.arrayContaining([
+      "summary_profile:default_1_2",
+      "summary_profile:default_4_5"
+    ]));
+    expect(result.injection.packet?.selectedMemory).toContain("Smith PIP");
+    expect(result.injection.packet?.selectedMemory).toContain("provider bill");
     expect(result.injection.contextBlock).toContain("<memory-context>");
     expect(result.injection.contextBlock).toContain("Smith PIP");
-    expect(result.resume.turnCount).toBe(2);
+    expect(result.resume.turnCount).toBe(4);
     expect(result.resume.contextBlock).toContain("<memory-resume>");
-    expect(result.resume.contextBlock).toContain("[USER]: Let's talk about Smith PIP.");
-    expect(result.resume.contextBlock).toContain("[ASSISTANT]: The Smith PIP demand deadline is June 1.");
+    expect(result.resume.contextBlock).toContain("[USER]: Let's talk about Smith PIP provider bill review.");
+    expect(result.resume.contextBlock).toContain("[ASSISTANT]: The Smith PIP provider bill deadline is June 1.");
+    expect(result.resume.contextBlock).toContain("[USER]: Returning to Smith PIP provider bill review after new records.");
     expect(result.sleep.ok).toBe(true);
-    expect(result.proposals.proposals.length).toBeGreaterThanOrEqual(1);
+    expect(result.sleep.proposalIds).toEqual(expect.arrayContaining([
+      "proposal_box_box_topic_smith_pip",
+      "proposal_trace_trace_smith_pip_provider_bill"
+    ]));
+    expect(result.sleep.proposedTraceIds).toEqual(["trace_smith_pip_provider_bill"]);
+    expect(result.proposals.proposals.map((proposal) => proposal.id)).toEqual(expect.arrayContaining([
+      "proposal_box_box_topic_smith_pip",
+      "proposal_trace_trace_smith_pip_provider_bill"
+    ]));
   });
 
   it("prints Roscoe environment commands for the same database path", () => {

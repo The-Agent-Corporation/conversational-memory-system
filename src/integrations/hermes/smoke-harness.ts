@@ -59,7 +59,7 @@ export async function runHermesMemorySmokeHarness(
       id: "default:1",
       sequence: 1,
       role: "user",
-      content: "Let's talk about Smith PIP."
+      content: "Let's talk about Smith PIP provider bill review."
     }))
   });
   const secondTurn = await ingestHermesTimelineRow({
@@ -68,10 +68,10 @@ export async function runHermesMemorySmokeHarness(
       id: "default:2",
       sequence: 2,
       role: "assistant",
-      content: "The Smith PIP demand deadline is June 1."
+      content: "The Smith PIP provider bill deadline is June 1."
     }))
   });
-  const compaction = await ingestHermesTimelineRow({
+  await ingestHermesTimelineRow({
     databasePath,
     input: JSON.stringify(timelineRow({
       id: "default:3",
@@ -79,6 +79,36 @@ export async function runHermesMemorySmokeHarness(
       role: "user",
       content: "/new",
       created_at: "2024-05-04T12:45:00.000Z"
+    }))
+  });
+  const thirdTurn = await ingestHermesTimelineRow({
+    databasePath,
+    input: JSON.stringify(timelineRow({
+      id: "default:4",
+      sequence: 4,
+      role: "user",
+      content: "Returning to Smith PIP provider bill review after new records.",
+      created_at: "2024-05-04T13:10:00.000Z"
+    }))
+  });
+  const fourthTurn = await ingestHermesTimelineRow({
+    databasePath,
+    input: JSON.stringify(timelineRow({
+      id: "default:5",
+      sequence: 5,
+      role: "assistant",
+      content: "The Smith PIP provider bill follow-up should track the new records before June 15.",
+      created_at: "2024-05-04T13:11:00.000Z"
+    }))
+  });
+  const compaction = await ingestHermesTimelineRow({
+    databasePath,
+    input: JSON.stringify(timelineRow({
+      id: "default:6",
+      sequence: 6,
+      role: "user",
+      content: "/new",
+      created_at: "2024-05-04T13:15:00.000Z"
     }))
   });
   const injection = await injectHermesMemory({
@@ -118,7 +148,7 @@ export async function runHermesMemorySmokeHarness(
     ok: true,
     databasePath,
     roscoeEnvironment: buildRoscoeMemoryEnvironment({ databasePath, projectRoot }),
-    ingestedTurnIds: [firstTurn.turnId, secondTurn.turnId].filter(
+    ingestedTurnIds: [firstTurn.turnId, secondTurn.turnId, thirdTurn.turnId, fourthTurn.turnId].filter(
       (turnId): turnId is string => turnId !== null
     ),
     compaction,
