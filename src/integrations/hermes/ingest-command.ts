@@ -1,10 +1,10 @@
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { PreCompactor, type PreCompactionResult } from "../../compaction/pre-compactor.js";
-import type { ConversationTurnEvent } from "../../domain/events.js";
+import type { ConversationTurnEvent, ControlSignalEvent } from "../../domain/events.js";
 import type { Turn } from "../../domain/types.js";
 import { SqliteStore } from "../../storage/sqlite-store.js";
-import { TopicMonitor } from "../../topic/topic-monitor.js";
+import { TopicMonitor, type RollingTopicState, type CompletedTopicSpan } from "../../topic/topic-monitor.js";
 import { HermesMemoryAdapter } from "./adapter.js";
 import {
   HermesTimelineRowSchema,
@@ -65,14 +65,16 @@ async function compactStoredTopicForControlSignal(
     return null;
   }
 
-  const turns = await store.listTurns(row.session_id);
+  const turns = await unsummarizedTurnsBeforeControlSignal(store, row);
   if (turns.length === 0) {
     return null;
   }
 
   const monitor = new TopicMonitor();
+  let firstTopic: RollingTopicState | null = null;
   for (const turn of turns) {
-    monitor.observe(turnToConversationEvent(turn, row));
+    const result = monitor.observe(turnToConversationEvent(turn, row));
+    firstTopic ??= result.current;
   }
 
   const topicResult = monitor.observe(event);
@@ -80,10 +82,62 @@ async function compactStoredTopicForControlSignal(
     return null;
   }
 
+  const completedSpan = completedSpanForUnsummarizedTail({
+    event,
+    turns,
+    firstTopic,
+    completed: topicResult.completed
+  });
   const compactor = new PreCompactor(store);
   return {
-    completedTopic: topicResult.completed.topicLabel,
-    compaction: await compactor.compactCompletedTopic(topicResult.completed)
+    completedTopic: completedSpan.topicLabel,
+    compaction: await compactor.compactCompletedTopic(completedSpan)
+  };
+}
+
+async function unsummarizedTurnsBeforeControlSignal(
+  store: SqliteStore,
+  row: HermesTimelineRow
+): Promise<Turn[]> {
+  const [turns, summaries] = await Promise.all([
+    store.listTurns(row.session_id),
+    store.listSummaries()
+  ]);
+  let lastCompactedSequence = -1;
+  for (const summary of summaries) {
+    for (const range of summary.sourceTurnRanges) {
+      if (range.threadId === row.session_id) {
+        lastCompactedSequence = Math.max(lastCompactedSequence, range.endSequence);
+      }
+    }
+  }
+
+  return turns.filter(
+    (turn) => turn.sequence > lastCompactedSequence && turn.sequence < row.sequence
+  );
+}
+
+function completedSpanForUnsummarizedTail(options: {
+  event: ControlSignalEvent;
+  turns: Turn[];
+  firstTopic: RollingTopicState | null;
+  completed: CompletedTopicSpan;
+}): CompletedTopicSpan {
+  const startSequence = options.turns[0]?.sequence ?? options.completed.sourceTurnRange.startSequence;
+  const endSequence = options.turns.at(-1)?.sequence ?? options.completed.sourceTurnRange.endSequence;
+  const topicLabel = options.firstTopic?.topicLabel ?? options.completed.topicLabel;
+
+  return {
+    ...options.completed,
+    topicLabel,
+    currentTopicSummary: `${topicLabel} (${options.turns.length} turn${options.turns.length === 1 ? "" : "s"}, seq ${startSequence}-${endSequence})`,
+    sourceTurnRange: {
+      threadId: options.completed.hostSessionId,
+      startSequence,
+      endSequence
+    },
+    turnCount: options.turns.length,
+    completedAt: options.event.createdAt
   };
 }
 

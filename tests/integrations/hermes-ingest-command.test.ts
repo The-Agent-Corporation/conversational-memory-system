@@ -141,4 +141,70 @@ describe("Hermes ingest command", () => {
     ]);
     store.close();
   });
+
+  it("compacts the full unsummarized tail on control signals even when topic labels drift", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "memory.sqlite");
+
+    await ingestHermesTimelineRow({
+      databasePath,
+      input: JSON.stringify({
+        id: "memory-test:7",
+        profile_id: "memory-test",
+        session_id: "profile:memory-test",
+        sequence: 7,
+        role: "user",
+        content: "Let us discuss Alpha Boundary Case. The settlement ledger review deadline is July 9.",
+        created_at: "2024-05-04T12:40:00.000Z",
+        channel: "api_server",
+        metadata_json: null
+      })
+    });
+    await ingestHermesTimelineRow({
+      databasePath,
+      input: JSON.stringify({
+        id: "memory-test:8",
+        profile_id: "memory-test",
+        session_id: "profile:memory-test",
+        sequence: 8,
+        role: "assistant",
+        content: "To help you effectively with the Alpha Boundary Case and the settlement ledger review deadline on July 9, could you please specify what exactly you'd like to discuss or need assistance with? For example, do you want a summary of the case, key points about the ledger, preparatory steps for the review, or anything else?",
+        created_at: "2024-05-04T12:40:10.000Z",
+        channel: "api_server",
+        metadata_json: null
+      })
+    });
+
+    const result = await ingestHermesTimelineRow({
+      databasePath,
+      input: JSON.stringify({
+        id: "memory-test:9",
+        profile_id: "memory-test",
+        session_id: "profile:memory-test",
+        sequence: 9,
+        role: "user",
+        content: "/new",
+        created_at: "2024-05-04T12:45:00.000Z",
+        channel: "api_server",
+        metadata_json: null
+      })
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      turnId: null,
+      completedTopic: "Alpha Boundary Case",
+      summaryId: "summary_profile:memory-test_7_8"
+    });
+
+    const store = new SqliteStore(databasePath);
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].summaryText).toContain("Alpha Boundary Case");
+    expect(summaries[0].summaryText).toContain("July 9");
+    expect(summaries[0].sourceTurnRanges).toEqual([
+      { threadId: "profile:memory-test", startSequence: 7, endSequence: 8 }
+    ]);
+    store.close();
+  });
 });
