@@ -115,6 +115,13 @@ function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): Ranke
       break;
     }
     if (usedTokens + memory.tokenCount > maxMemoryTokens) {
+      if (selected.length === 0 && memory.kind === "trace") {
+        const stub = buildMemoryStub(memory, maxMemoryTokens);
+        if (stub) {
+          selected.push(stub);
+          break;
+        }
+      }
       continue;
     }
 

@@ -495,6 +495,40 @@ describe("MemoryRetriever", () => {
     expect(packet?.relevanceReason).toContain("Top trace match trace_smith_pip_provider_bills");
   });
 
+  it("uses a trace stub when the full trace exceeds the explicit token budget", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_1",
+      summaryText: "Smith PIP provider bill review audit deadline June 1 ".repeat(6),
+      tokenCount: 60
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_provider_bill",
+      summaryText: "Smith PIP provider bill review records deadline June 15 ".repeat(6),
+      sourceTurnRanges: [{ threadId: "session_1", startSequence: 10, endSequence: 12 }],
+      tokenCount: 60
+    }));
+    await store.saveTrace(makeTrace({
+      description: "Recurring Smith PIP provider bill deadline issue. ".repeat(10),
+      rationale: "The provider bill issue recurred across separated turns and should stay linked. ".repeat(10)
+    }));
+
+    const retriever = new MemoryRetriever(store);
+    const packet = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP provider bill deadline",
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 80
+    });
+
+    expect(packet?.sourceTraceIds).toEqual(["trace_smith_pip_provider_bills"]);
+    expect(packet?.selectedMemory).toContain("[Trace: Smith PIP Provider Bills]");
+    expect(packet?.selectedMemory).toContain("...");
+    expect(packet?.disclosureText).toContain("using 80/80 memory tokens");
+  });
+
   it("ignores traces that are not approved", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary({
