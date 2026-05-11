@@ -45,11 +45,14 @@ export async function ingestHermesTimelineRow(options: {
 
     const adapter = new HermesMemoryAdapter(store);
     const result = await adapter.processTimelineRow(row);
+    const storedTopicCompaction = result.compaction
+      ? null
+      : await compactStoredTopicForTopicChange(store, row);
     return {
       ok: true,
       turnId: result.turn?.id ?? null,
-      completedTopic: result.completedTopic?.topicLabel ?? null,
-      summaryId: result.compaction?.summary.id ?? null
+      completedTopic: result.completedTopic?.topicLabel ?? storedTopicCompaction?.completedTopic ?? null,
+      summaryId: result.compaction?.summary.id ?? storedTopicCompaction?.compaction.summary.id ?? null
     };
   } finally {
     store.close();
@@ -114,6 +117,60 @@ async function unsummarizedTurnsBeforeControlSignal(
 
   return turns.filter(
     (turn) => turn.sequence > lastCompactedSequence && turn.sequence < row.sequence
+  );
+}
+
+async function compactStoredTopicForTopicChange(
+  store: SqliteStore,
+  row: HermesTimelineRow
+): Promise<{ completedTopic: string; compaction: PreCompactionResult } | null> {
+  const event = mapHermesTimelineRowToHostEvent(row);
+  if (event.type !== "conversation_turn" || event.role !== "user") {
+    return null;
+  }
+
+  const turns = await unsummarizedTurnsThroughConversationRow(store, row);
+  if (turns.length < 2) {
+    return null;
+  }
+
+  const monitor = new TopicMonitor();
+  let completed: CompletedTopicSpan | null = null;
+  for (const turn of turns) {
+    const result = monitor.observe(turnToConversationEvent(turn, row));
+    completed = result.completed ?? completed;
+  }
+
+  if (!completed || completed.sourceTurnRange.endSequence >= row.sequence) {
+    return null;
+  }
+
+  const compactor = new PreCompactor(store);
+  return {
+    completedTopic: completed.topicLabel,
+    compaction: await compactor.compactCompletedTopic(completed)
+  };
+}
+
+async function unsummarizedTurnsThroughConversationRow(
+  store: SqliteStore,
+  row: HermesTimelineRow
+): Promise<Turn[]> {
+  const [turns, summaries] = await Promise.all([
+    store.listTurns(row.session_id),
+    store.listSummaries()
+  ]);
+  let lastCompactedSequence = -1;
+  for (const summary of summaries) {
+    for (const range of summary.sourceTurnRanges) {
+      if (range.threadId === row.session_id) {
+        lastCompactedSequence = Math.max(lastCompactedSequence, range.endSequence);
+      }
+    }
+  }
+
+  return turns.filter(
+    (turn) => turn.sequence > lastCompactedSequence && turn.sequence <= row.sequence
   );
 }
 

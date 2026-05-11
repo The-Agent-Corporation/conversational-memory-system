@@ -142,6 +142,73 @@ describe("Hermes ingest command", () => {
     store.close();
   });
 
+  it("compacts stored topic turns when a later row changes topics in a fresh process", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "memory.sqlite");
+
+    await ingestHermesTimelineRow({
+      databasePath,
+      input: JSON.stringify({
+        id: "default:1",
+        profile_id: "default",
+        session_id: "profile:default",
+        sequence: 1,
+        role: "user",
+        content: "Let's talk about Smith PIP.",
+        created_at: "2024-05-04T12:40:00.000Z",
+        channel: "telegram",
+        metadata_json: null
+      })
+    });
+    await ingestHermesTimelineRow({
+      databasePath,
+      input: JSON.stringify({
+        id: "default:2",
+        profile_id: "default",
+        session_id: "profile:default",
+        sequence: 2,
+        role: "assistant",
+        content: "The Smith PIP demand deadline is June 1.",
+        created_at: "2024-05-04T12:40:10.000Z",
+        channel: "telegram",
+        metadata_json: null
+      })
+    });
+
+    const result = await ingestHermesTimelineRow({
+      databasePath,
+      input: JSON.stringify({
+        id: "default:3",
+        profile_id: "default",
+        session_id: "profile:default",
+        sequence: 3,
+        role: "user",
+        content: "Switch to Jones BI coverage.",
+        created_at: "2024-05-04T12:45:00.000Z",
+        channel: "telegram",
+        metadata_json: null
+      })
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      turnId: "turn_hermes_default:3",
+      completedTopic: "Smith PIP",
+      summaryId: "summary_profile:default_1_2"
+    });
+
+    const store = new SqliteStore(databasePath);
+    const turns = await store.listTurns("profile:default");
+    const summaries = await store.listSummaries();
+    expect(turns).toHaveLength(3);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].summaryText).toContain("Smith PIP");
+    expect(summaries[0].sourceTurnRanges).toEqual([
+      { threadId: "profile:default", startSequence: 1, endSequence: 2 }
+    ]);
+    store.close();
+  });
+
   it("compacts the full unsummarized tail on control signals even when topic labels drift", async () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
