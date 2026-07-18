@@ -7,6 +7,22 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "memory:codex:discover": "tsx src/imports/codex-discover-command.ts",
+    "memory:codex:import": "tsx src/imports/codex-import-command.ts",
+    "memory:claude:discover": "tsx src/imports/history-discover-command.ts --source claude-code",
+    "memory:claude:import": "tsx src/imports/history-import-command.ts --source claude-code",
+    "memory:openclaw:discover": "tsx src/imports/history-discover-command.ts --source openclaw",
+    "memory:openclaw:import": "tsx src/imports/history-import-command.ts --source openclaw",
+    "memory:hermes:discover": "tsx src/imports/history-discover-command.ts --source hermes",
+    "memory:hermes:import": "tsx src/imports/history-import-command.ts --source hermes",
+    "memory:bootstrap": "tsx src/bootstrap/bootstrap-command.ts",
+    "memory:status": "tsx src/bootstrap/status-command.ts",
+    "memory:daemon": "tsx src/daemon/daemon-command.ts",
+    "memory:daemon:launch-agent-uat": "zsh scripts/macos-launch-agent-uat.zsh",
+    "memory:daemon:notification-smoke": "tsx src/daemon/macos/notification-smoke-command.ts",
+    "memory:source:revoke": "tsx src/imports/source-revoke-command.ts",
+    "memory:source:delete": "tsx src/imports/source-delete-command.ts",
+    "memory:quarantine": "tsx src/imports/quarantine-command.ts",
     "hermes:ingest": "tsx src/integrations/hermes/ingest-command.ts",
     "hermes:inject": "tsx src/integrations/hermes/inject-command.ts",
     "hermes:proposals:approve": "tsx src/integrations/hermes/proposals-approve-command.ts",
@@ -18,7 +34,8 @@
     "hermes:smoke": "tsx src/integrations/hermes/smoke-harness.ts"
   },
   "dependencies": {
-    "zod": "^3.23.8"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
