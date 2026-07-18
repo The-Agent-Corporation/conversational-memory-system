@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CommitHistoryImportInputSchema,
@@ -6,6 +9,11 @@ import {
   CommitSourceRevocationInputSchema,
   mutationEffectsFingerprint
 } from "../../src/storage/mcp-mutation-contracts.js";
+import { InMemoryStore } from "../../src/storage/in-memory-store.js";
+import type { MemoryStore } from "../../src/storage/memory-store.js";
+import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import type { MemoryProposal } from "../../src/domain/types.js";
+import type { SourceGrant, SourceLifecycleAuditEvent } from "../../src/domain/source-lifecycle.js";
 import {
   createSyntheticMcpFixture,
   snapshotSemanticMemory,
@@ -66,8 +74,65 @@ describe("MCP mutation application contract", () => {
     expect(CommitHistoryImportInputSchema.parse({ ...base, targetCanonicalEventIds: [] }).targetCanonicalEventIds).toEqual([]);
     expect(() => CommitHistoryImportInputSchema.parse({ ...base, effectsFingerprint: "drift" })).toThrow();
   });
-  it.todo("05-04 Task 2 configures bounded concurrent-writer behavior and rejects stale state");
-  it.todo("05-04 Task 2 rolls back every durable effect at each injected transaction boundary");
+  it("05-04 Task 2 configures bounded concurrent-writer behavior and rejects stale state", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "mcp-mutation-stale-"));
+    const path = join(tempDir, "memory.sqlite");
+    const first = new SqliteStore(path, { busyTimeoutMs: 250 });
+    const second = new SqliteStore(path, { busyTimeoutMs: 250 });
+    try {
+      const expected = grant("approved");
+      await first.saveSourceGrant(expected);
+      const input = revocationInput(expected);
+      await second.saveSourceGrant({ ...expected, updatedAt: "2026-07-18T12:00:30.000Z" });
+      const before = await mutationSnapshot(first);
+      await expect(first.commitSourceRevocation(input)).resolves.toMatchObject({ status: "STATE_CHANGED", effectCounts: {} });
+      await expect(mutationSnapshot(first)).resolves.toBe(before);
+      expect(() => new SqliteStore(join(tempDir, "invalid.sqlite"), { busyTimeoutMs: 0 })).toThrow(/busy timeout/i);
+    } finally {
+      first.close(); second.close(); await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("05-04 Task 2 rolls back every durable effect at each injected transaction boundary", async () => {
+    const cases = [
+      ...["history_import_before_write", "history_import_after_sources", "history_import_after_events", "history_import_after_checkpoint"].map((boundary) => ({ operation: "history" as const, boundary })),
+      ...["proposal_decision_before_write", "proposal_decision_after_boxes", "proposal_decision_after_traces", "proposal_decision_after_proposal"].map((boundary) => ({ operation: "proposal" as const, boundary })),
+      ...["source_revocation_before_write", "source_revocation_after_grant", "source_revocation_after_audit"].map((boundary) => ({ operation: "revocation" as const, boundary })),
+      ...["source_deletion_before_write", "source_deletion_after_supersessions", "source_deletion_after_injections", "source_deletion_after_anchors", "source_deletion_after_turns", "source_deletion_after_events", "source_deletion_after_sources", "source_deletion_after_quarantine", "source_deletion_after_checkpoint", "source_deletion_after_audits"].map((boundary) => ({ operation: "deletion" as const, boundary }))
+    ];
+    for (const backend of ["memory", "sqlite"] as const) {
+      for (const item of cases) {
+        const harness = await mutationHarness(backend, item.boundary);
+        try {
+          const input = await seedMutation(harness.store, item.operation);
+          const before = await mutationSnapshot(harness.store);
+          await expect(commitMutation(harness.store, item.operation, input)).rejects.toThrow(`Synthetic fault at ${item.boundary}`);
+          await harness.reopen();
+          await expect(mutationSnapshot(harness.store)).resolves.toBe(before);
+        } finally {
+          await harness.cleanup();
+        }
+      }
+    }
+  });
+
+  it("commits identical receipts and final state across in-memory and reopened SQLite adapters", async () => {
+    for (const operation of ["history", "proposal", "revocation", "deletion"] as const) {
+      const memory = await mutationHarness("memory", "never");
+      const sqlite = await mutationHarness("sqlite", "never");
+      try {
+        const memoryInput = await seedMutation(memory.store, operation);
+        const sqliteInput = await seedMutation(sqlite.store, operation);
+        const memoryReceipt = await commitMutation(memory.store, operation, memoryInput);
+        const sqliteReceipt = await commitMutation(sqlite.store, operation, sqliteInput);
+        expect(sqliteReceipt).toEqual(memoryReceipt);
+        await sqlite.reopen();
+        expect(await mutationSnapshot(sqlite.store)).toBe(await mutationSnapshot(memory.store));
+      } finally {
+        await memory.cleanup(); await sqlite.cleanup();
+      }
+    }
+  });
   it.todo("05-05 Task 2 previews history ingestion without opening an unconfigured source root");
   it.todo("05-05 Task 2 executes history ingestion only for the exact confirmed preview effects");
   it.todo("05-05 Task 2 previews and executes scoped proposal approval or rejection atomically");
@@ -77,3 +142,109 @@ describe("MCP mutation application contract", () => {
   it.todo("05-07 Task 2 routes each preview tool to one scoped application operation");
   it.todo("05-07 Task 2 routes each execute tool with exact ticket binding and truthful annotations");
 });
+
+const NOW = "2026-07-18T12:00:00.000Z";
+const LATER = "2026-07-18T12:01:00.000Z";
+
+const grant = (state: "approved" | "revoked"): SourceGrant => ({
+  id: "grant-atomic", personId: "person-alpha", candidateId: "candidate-atomic",
+  application: "synthetic", format: "jsonl", sourceLocator: "synthetic://atomic",
+  profileId: "profile", scopeId: "scope-alpha", state, approvedAt: NOW,
+  revokedAt: state === "revoked" ? LATER : null, updatedAt: state === "revoked" ? LATER : NOW
+});
+
+const audit = (action: "revoked" | "deletion_requested" | "deletion_completed", id = `audit-${action}`): SourceLifecycleAuditEvent => ({
+  id, personId: "person-alpha", grantId: "grant-atomic", candidateId: "candidate-atomic",
+  action, actor: "synthetic-reviewer", occurredAt: LATER, details: {}
+});
+
+const receipt = (operation: "history_import" | "proposal_decision" | "source_revocation" | "source_deletion", targetId: string, effectCounts: Record<string, number>) => ({
+  operation, status: "COMMITTED" as const, personId: "person-alpha", targetId, effectCounts, committedAt: LATER
+});
+
+const proposal = (): MemoryProposal => ({
+  id: "proposal-atomic", personId: "person-alpha", proposalType: "trace", state: "proposed",
+  title: "Synthetic proposal", rationale: "Synthetic atomic proposal", confidence: 0.8,
+  createdAt: NOW, reviewedAt: NOW, decidedAt: null, decidedBy: null, decisionNote: null,
+  sourceSummaryIds: ["summary-1", "summary-2"], sourceTurnRanges: [{ threadId: "synthetic-thread", startSequence: 1, endSequence: 2 }],
+  targetBoxIds: [], targetTraceIds: ["trace-atomic"],
+  payload: { traceId: "trace-atomic", title: "Synthetic trace", description: "Synthetic", traceType: "task_thread", summaryIds: ["summary-1", "summary-2"], boxIds: [], turnRanges: [{ threadId: "synthetic-thread", startSequence: 1, endSequence: 2 }], continuityReason: "Synthetic continuity", boundaryReason: "Synthetic boundary", keywords: ["synthetic"] }
+});
+
+const historyInput = () => {
+  const expectedGrant = grant("approved");
+  const nextSource = { id: "source-atomic", personId: "person-alpha", application: "synthetic", profileId: "profile", instanceId: "candidate-atomic", scopeId: "scope-alpha", createdAt: NOW, lastImportedAt: LATER };
+  const nextEvent = { id: "event-atomic", personId: "person-alpha", sourceId: "source-atomic", sourceApplication: "synthetic", sourceProfileId: "profile", scopeId: "scope-alpha", nativeSessionId: "session-atomic", nativeEventId: "native-atomic", nativeSequence: 1, causalParentId: null, eventKind: "message" as const, role: "user" as const, content: "Synthetic atomic event", occurredAt: NOW, importedAt: LATER, provenance: "direct_user_input" as const, trustLevel: "high" as const, contentHash: "hash-atomic", parserVersion: "synthetic/v1", metadata: { fixture: true } };
+  const nextCheckpoint = { id: "checkpoint-atomic", personId: "person-alpha", candidateId: "candidate-atomic", resourcePath: "synthetic.jsonl", fileIdentity: "synthetic-identity", byteOffset: 10, recordIndex: 1, nativeSessionId: "session-atomic", parserVersion: "synthetic/v1", updatedAt: LATER };
+  const effects = { sourceIds: [nextSource.id], eventIds: [nextEvent.id], checkpointIds: [nextCheckpoint.id], auditEventIds: [] };
+  return CommitHistoryImportInputSchema.parse({ operation: "history_import", personId: "person-alpha", candidateId: "candidate-atomic", normalizedParameters: { importer: "synthetic/v1", limit: 1 }, expectedSource: null, expectedSourceStateFingerprint: mutationEffectsFingerprint(null), expectedCheckpoint: null, expectedGrant, targetCanonicalEventIds: [nextEvent.id], nextSources: [nextSource], nextCanonicalEvents: [nextEvent], nextCheckpoint, auditEvents: [], effects, effectsFingerprint: mutationEffectsFingerprint(effects), receipt: receipt("history_import", "candidate-atomic", { sources: 1, events: 1, checkpoints: 1, audits: 0 }) });
+};
+
+const proposalInput = () => {
+  const expectedProposal = proposal();
+  const nextProposal = { ...expectedProposal, state: "rejected" as const, decidedAt: LATER, decidedBy: "synthetic-reviewer" };
+  const effects = { proposalIds: [expectedProposal.id], boxIds: [], traceIds: [] };
+  return CommitProposalDecisionInputSchema.parse({ operation: "proposal_decision", personId: "person-alpha", decision: "reject", expectedProposal, nextProposal, nextBoxes: [], nextTraces: [], effects, effectsFingerprint: mutationEffectsFingerprint(effects), receipt: receipt("proposal_decision", expectedProposal.id, { proposals: 1, boxes: 0, traces: 0 }) });
+};
+
+const revocationInput = (expectedGrant = grant("approved")) => {
+  const nextGrant = { ...expectedGrant, state: "revoked" as const, revokedAt: LATER, updatedAt: LATER };
+  const auditEvent = audit("revoked");
+  return CommitSourceRevocationInputSchema.parse({ operation: "source_revocation", personId: "person-alpha", expectedGrant, nextGrant, auditEvent, effectsFingerprint: mutationEffectsFingerprint({ grantId: nextGrant.id, auditEventId: auditEvent.id }), receipt: receipt("source_revocation", expectedGrant.candidateId, { grants: 1, audits: 1 }) });
+};
+
+const deletionInput = () => {
+  const expectedGrant = grant("revoked");
+  const auditEvents = [audit("deletion_requested"), audit("deletion_completed")];
+  const effects = { sourceIds: ["source-delete"], canonicalEventIds: [], turnIds: [], anchorIds: [], injectionIds: [], quarantineIds: [], bootstrapCheckpointIds: [], supersededSummaryIds: [], supersededBoxIds: [], supersededProposalIds: [], supersededTraceIds: [], auditEventIds: auditEvents.map((item) => item.id) };
+  return CommitSourceDeletionInputSchema.parse({ operation: "source_deletion", personId: "person-alpha", expectedGrant, nextSummaries: [], nextBoxes: [], nextProposals: [], nextTraces: [], auditEvents, effects, effectsFingerprint: mutationEffectsFingerprint(effects), receipt: receipt("source_deletion", expectedGrant.candidateId, { sources: 1, audits: 2 }) });
+};
+
+interface MutationHarness {
+  store: MemoryStore;
+  reopen(): Promise<void>;
+  cleanup(): Promise<void>;
+}
+
+const mutationHarness = async (backend: "memory" | "sqlite", failingBoundary: string): Promise<MutationHarness> => {
+  const faultInjector = { reach(boundary: string) { if (boundary === failingBoundary) throw new Error(`Synthetic fault at ${boundary}`); } };
+  if (backend === "memory") {
+    return { store: new InMemoryStore({ faultInjector }), reopen: async () => {}, cleanup: async () => {} };
+  }
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-mutation-fault-"));
+  const databasePath = join(tempDir, "memory.sqlite");
+  const harness: MutationHarness = {
+    store: new SqliteStore(databasePath, { faultInjector, busyTimeoutMs: 250 }),
+    async reopen() {
+      (this.store as SqliteStore).close();
+      this.store = new SqliteStore(databasePath, { busyTimeoutMs: 250 });
+    },
+    async cleanup() {
+      (this.store as SqliteStore).close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  };
+  return harness;
+};
+
+const seedMutation = async (store: MemoryStore, operation: "history" | "proposal" | "revocation" | "deletion") => {
+  if (operation === "history") { await store.saveSourceGrant(grant("approved")); return historyInput(); }
+  if (operation === "proposal") { const input = proposalInput(); await store.saveProposal(input.expectedProposal); return input; }
+  if (operation === "revocation") { await store.saveSourceGrant(grant("approved")); return revocationInput(); }
+  await store.saveSourceGrant(grant("revoked"));
+  await store.saveSource({ id: "source-delete", personId: "person-alpha", application: "synthetic", profileId: "profile", instanceId: "candidate-atomic", scopeId: "scope-alpha", createdAt: NOW, lastImportedAt: NOW });
+  return deletionInput();
+};
+
+const commitMutation = (store: MemoryStore, operation: "history" | "proposal" | "revocation" | "deletion", input: Awaited<ReturnType<typeof seedMutation>>) => {
+  if (operation === "history") return store.commitHistoryImport(CommitHistoryImportInputSchema.parse(input));
+  if (operation === "proposal") return store.commitProposalDecision(CommitProposalDecisionInputSchema.parse(input));
+  if (operation === "revocation") return store.commitSourceRevocation(CommitSourceRevocationInputSchema.parse(input));
+  return store.commitSourceDeletion(CommitSourceDeletionInputSchema.parse(input));
+};
+
+const mutationSnapshot = async (store: MemoryStore): Promise<string> => JSON.stringify(await Promise.all([
+  store.listSources("person-alpha"), store.listCanonicalEvents("person-alpha"), store.listImportCheckpoints("person-alpha"),
+  store.listSourceGrants("person-alpha"), store.listSourceLifecycleAuditEvents("person-alpha"), store.listProposals(),
+  store.listSummaries(), store.listBoxes(), store.listAnchors(), store.listTraces()
+]));
