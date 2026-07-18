@@ -1,4 +1,18 @@
 import { describe, expect, it } from "vitest";
+import {
+  MemoryExpandSubjectInputSchema,
+  MemoryExpandSubjectOutputSchema,
+  MemoryRecallInputSchema,
+  MemoryRecallOutputSchema,
+  MemoryReviewInputSchema,
+  MemoryReviewOutputSchema,
+  MemorySearchInputSchema,
+  MemorySearchOutputSchema,
+  ProposalListInputSchema,
+  ProposalListOutputSchema,
+  SourceStatusInputSchema,
+  SourceStatusOutputSchema
+} from "../../src/mcp/tools/read-tools.js";
 
 interface ToolContract {
   name: string;
@@ -73,7 +87,54 @@ describe("MCP explicit tool catalog contract", () => {
     ]);
   });
 
-  it.todo("05-06 Task 1 registers all six read schemas with no authority-widening inputs");
+  it("05-06 Task 1 registers all six read schemas with no authority-widening inputs", () => {
+    const schemas = [
+      MemorySearchInputSchema,
+      MemoryRecallInputSchema,
+      MemoryReviewInputSchema,
+      MemoryExpandSubjectInputSchema,
+      SourceStatusInputSchema,
+      ProposalListInputSchema
+    ];
+    const authorityFields = {
+      databasePath: "/private/synthetic.sqlite",
+      profile: "other-profile",
+      personId: "person-other",
+      allowedScopeIds: ["scope-other"]
+    };
+
+    for (const schema of schemas) {
+      expect(schema.safeParse(authorityFields).success).toBe(false);
+      expect(Object.keys(schema.shape)).not.toEqual(
+        expect.arrayContaining(Object.keys(authorityFields))
+      );
+    }
+
+    expect(MemorySearchInputSchema.safeParse({ query: "synthetic", limit: 101 }).success).toBe(false);
+    expect(MemoryRecallInputSchema.safeParse({ task: "synthetic", tokenBudget: 0 }).success).toBe(false);
+    expect(MemoryReviewInputSchema.safeParse({ kinds: ["unknown"], limit: 1 }).success).toBe(false);
+    expect(MemoryExpandSubjectInputSchema.safeParse({ subject: "synthetic", tokenBudget: 8, cursor: "x".repeat(4097) }).success).toBe(false);
+    expect(ProposalListInputSchema.safeParse({ limit: 101 }).success).toBe(false);
+
+    expect(Object.keys(MemorySearchOutputSchema.shape)).toEqual(
+      expect.arrayContaining(["candidates", "restrictedLabels", "disclosure"])
+    );
+    expect(Object.keys(MemoryRecallOutputSchema.shape)).toEqual(
+      expect.arrayContaining(["items", "budget", "continuation", "disclosure"])
+    );
+    expect(Object.keys(MemoryReviewOutputSchema.shape)).toEqual(
+      expect.arrayContaining(["items", "count", "nextCursor", "disclosure"])
+    );
+    expect(Object.keys(MemoryExpandSubjectOutputSchema.shape)).toEqual(
+      expect.arrayContaining(["subject", "events", "budget", "continuation", "disclosure"])
+    );
+    expect(Object.keys(SourceStatusOutputSchema.shape)).toEqual(
+      expect.arrayContaining(["sourceCount", "memoryCount", "synchronization", "disclosure"])
+    );
+    expect(Object.keys(ProposalListOutputSchema.shape)).toEqual(
+      expect.arrayContaining(["proposals", "count", "disclosure"])
+    );
+  });
   it.todo("05-06 Task 2 exposes all six read contracts through tools/list and tools/call");
   it.todo("05-07 Task 1 registers all ten mutation schemas as explicit preview and execute pairs");
   it.todo("05-07 Task 2 exposes all ten mutation contracts with exact annotations");
