@@ -12,6 +12,11 @@ import {
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import type { MemoryStore } from "../../src/storage/memory-store.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { ConfirmationService } from "../../src/mcp/confirmation-service.js";
+import { MemoryMutationApplication } from "../../src/mcp/mutation-application.js";
+import { loadMemoryMcpProfile } from "../../src/mcp/profile-loader.js";
+import { ScopedProposalReviewer } from "../../src/proposals/scoped-proposal-reviewer.js";
+import { SourceLifecycleService } from "../../src/service/source-lifecycle-service.js";
 import type { MemoryProposal } from "../../src/domain/types.js";
 import type { SourceGrant, SourceLifecycleAuditEvent } from "../../src/domain/source-lifecycle.js";
 import {
@@ -135,16 +140,88 @@ describe("MCP mutation application contract", () => {
   });
   it.todo("05-05 Task 2 previews history ingestion without opening an unconfigured source root");
   it.todo("05-05 Task 2 executes history ingestion only for the exact confirmed preview effects");
-  it.todo("05-05 Task 2 previews and executes scoped proposal approval or rejection atomically");
-  it.todo("05-05 Task 3 keeps source revocation distinct from source deletion");
-  it.todo("05-05 Task 3 rejects deletion until the exact already-revoked source is confirmed");
-  it.todo("05-05 Task 3 revalidates state drift inside the execute transaction");
+  it("05-05 Task 2 previews and executes scoped proposal approval or rejection atomically", async () => {
+    fixture = await createSyntheticMcpFixture();
+    const restrictedAuthority = await loadMemoryMcpProfile({ configPath: fixture.configPath, profileName: "alpha-workspace" });
+    const restricted = new ScopedProposalReviewer(fixture.store, restrictedAuthority);
+    await expect(restricted.listProposals()).resolves.toMatchObject({ proposals: [], count: 0 });
+    await expect(restricted.planDecision({ proposalId: "proposal-mixed", decision: "approve", decidedAt: LATER }))
+      .rejects.toMatchObject({ code: "UNAUTHORIZED_OR_NOT_FOUND" });
+
+    const authority = await loadMemoryMcpProfile({ configPath: fixture.configPath, profileName: "alpha-expanded" });
+    const app = new MemoryMutationApplication({
+      store: fixture.store,
+      authority,
+      confirmations: new ConfirmationService({ clock: () => fixture!.clock.now() })
+    });
+    const preview = await app.previewProposalRejection({ proposalId: "proposal-mixed", decidedAt: LATER, reviewer: "synthetic-reviewer" });
+    expect(preview.effects).toEqual({ proposalIds: ["proposal-mixed"], boxIds: [], traceIds: [] });
+    await expect(app.executeProposalRejection({ token: preview.token, proposalId: "proposal-mixed", decidedAt: LATER, reviewer: "synthetic-reviewer" }))
+      .resolves.toMatchObject({ operation: "proposal_decision", status: "COMMITTED", targetId: "proposal-mixed" });
+    await expect(fixture.store.getProposal("proposal-mixed")).resolves.toMatchObject({ state: "rejected", decidedBy: "synthetic-reviewer" });
+  });
+
+  it("05-05 Task 2 keeps source revocation distinct from source deletion", async () => {
+    const store = new InMemoryStore();
+    const lifecycle = new SourceLifecycleService(store);
+    const authority = testAuthority();
+    await lifecycle.approve({ personId: authority.personId, candidateId: "candidate-lifecycle", application: "synthetic", format: "jsonl", sourceLocator: "synthetic://configured", profileId: authority.profileName, scopeId: authority.ingestScopeId, approvedAt: NOW });
+    const app = new MemoryMutationApplication({ store, authority, confirmations: new ConfirmationService({ clock: () => NOW }) });
+    const preview = await app.previewSourceRevocation({ candidateId: "candidate-lifecycle", actor: "synthetic-reviewer", revokedAt: LATER });
+    expect(preview.effects).toMatchObject({ grantIds: [expect.any(String)], auditEventIds: [expect.any(String)] });
+    await expect(app.executeSourceRevocation({ token: preview.token, candidateId: "candidate-lifecycle", actor: "synthetic-reviewer", revokedAt: LATER }))
+      .resolves.toMatchObject({ operation: "source_revocation", status: "COMMITTED" });
+    await expect(store.listSourceGrants(authority.personId)).resolves.toEqual([expect.objectContaining({ state: "revoked" })]);
+    await expect(store.listSources(authority.personId)).resolves.toEqual([]);
+  });
+
+  it("05-05 Task 2 rejects deletion until the exact already-revoked source is confirmed", async () => {
+    const store = new InMemoryStore();
+    const lifecycle = new SourceLifecycleService(store);
+    const authority = testAuthority();
+    await lifecycle.approve({ personId: authority.personId, candidateId: "candidate-delete", application: "synthetic", format: "jsonl", sourceLocator: "synthetic://configured", profileId: authority.profileName, scopeId: authority.ingestScopeId, approvedAt: NOW });
+    const app = new MemoryMutationApplication({ store, authority, confirmations: new ConfirmationService({ clock: () => NOW }) });
+    await expect(app.previewSourceDeletion({ candidateId: "candidate-delete", actor: "synthetic-reviewer", deletedAt: LATER }))
+      .rejects.toMatchObject({ code: "SOURCE_NOT_REVOKED" });
+    const revoke = await app.previewSourceRevocation({ candidateId: "candidate-delete", actor: "synthetic-reviewer", revokedAt: LATER });
+    await app.executeSourceRevocation({ token: revoke.token, candidateId: "candidate-delete", actor: "synthetic-reviewer", revokedAt: LATER });
+    const deletion = await app.previewSourceDeletion({ candidateId: "candidate-delete", actor: "synthetic-reviewer", deletedAt: LATER });
+    await expect(app.executeSourceDeletion({ token: deletion.token, candidateId: "candidate-other", actor: "synthetic-reviewer", deletedAt: LATER }))
+      .rejects.toMatchObject({ code: "CONFIRMATION_MISMATCH" });
+    await expect(app.executeSourceDeletion({ token: deletion.token, candidateId: "candidate-delete", actor: "synthetic-reviewer", deletedAt: LATER }))
+      .rejects.toMatchObject({ code: "CONFIRMATION_REPLAYED" });
+  });
+
+  it("05-05 Task 2 revalidates state drift inside the execute transaction", async () => {
+    const store = new InMemoryStore();
+    const lifecycle = new SourceLifecycleService(store);
+    const authority = testAuthority();
+    const grant = await lifecycle.approve({ personId: authority.personId, candidateId: "candidate-drift", application: "synthetic", format: "jsonl", sourceLocator: "synthetic://configured", profileId: authority.profileName, scopeId: authority.ingestScopeId, approvedAt: NOW });
+    const app = new MemoryMutationApplication({ store, authority, confirmations: new ConfirmationService({ clock: () => NOW }) });
+    const preview = await app.previewSourceRevocation({ candidateId: "candidate-drift", actor: "synthetic-reviewer", revokedAt: LATER });
+    await store.saveSourceGrant({ ...grant, updatedAt: "2026-07-18T12:00:30.000Z" });
+    await expect(app.executeSourceRevocation({ token: preview.token, candidateId: "candidate-drift", actor: "synthetic-reviewer", revokedAt: LATER }))
+      .resolves.toMatchObject({ status: "STATE_CHANGED", effectCounts: {} });
+    await expect(app.executeSourceRevocation({ token: preview.token, candidateId: "candidate-drift", actor: "synthetic-reviewer", revokedAt: LATER }))
+      .rejects.toMatchObject({ code: "CONFIRMATION_REPLAYED" });
+  });
   it.todo("05-07 Task 2 routes each preview tool to one scoped application operation");
   it.todo("05-07 Task 2 routes each execute tool with exact ticket binding and truthful annotations");
 });
 
 const NOW = "2026-07-18T12:00:00.000Z";
 const LATER = "2026-07-18T12:01:00.000Z";
+
+const testAuthority = () => ({
+  profileName: "synthetic-profile",
+  databasePath: "/synthetic/memory.sqlite",
+  personId: "person-alpha",
+  allowedScopeIds: ["scope-alpha"] as readonly string[],
+  ingestScopeId: "scope-alpha",
+  sourceRoots: { synthetic: "/synthetic/configured" },
+  scopeAliases: { "scope-alpha": "context-one" },
+  fingerprint: "synthetic-authority-fingerprint"
+});
 
 const grant = (state: "approved" | "revoked"): SourceGrant => ({
   id: "grant-atomic", personId: "person-alpha", candidateId: "candidate-atomic",
