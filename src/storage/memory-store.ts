@@ -32,7 +32,8 @@ import type {
   CommitProposalDecisionInput,
   CommitSourceDeletionInput,
   CommitSourceRevocationInput,
-  MutationCommitReceipt
+  MutationCommitReceipt,
+  SourceDeletionEffects
 } from "./mcp-mutation-contracts.js";
 
 export interface ProposalFilter {
@@ -49,6 +50,7 @@ export interface MemoryStore {
   commitProposalDecision(input: CommitProposalDecisionInput): Promise<MutationCommitReceipt>;
   commitSourceRevocation(input: CommitSourceRevocationInput): Promise<MutationCommitReceipt>;
   commitSourceDeletion(input: CommitSourceDeletionInput): Promise<MutationCommitReceipt>;
+  inspectSourceDeletionEffects(personId: string, candidateId: string, auditEventIds: string[]): Promise<SourceDeletionEffects>;
   acquireDaemonLease(input: {
     databaseId: string;
     ownerToken: string;

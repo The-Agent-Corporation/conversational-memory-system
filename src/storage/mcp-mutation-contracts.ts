@@ -45,7 +45,7 @@ const ProposalEffectsSchema = z.object({
   traceIds: IdListSchema
 }).strict();
 
-const SourceDeletionEffectsSchema = z.object({
+export const SourceDeletionEffectsSchema = z.object({
   sourceIds: IdListSchema,
   canonicalEventIds: IdListSchema,
   turnIds: IdListSchema,
@@ -195,6 +195,7 @@ export type CommitHistoryImportInput = z.infer<typeof CommitHistoryImportInputSc
 export type CommitProposalDecisionInput = z.infer<typeof CommitProposalDecisionInputSchema>;
 export type CommitSourceRevocationInput = z.infer<typeof CommitSourceRevocationInputSchema>;
 export type CommitSourceDeletionInput = z.infer<typeof CommitSourceDeletionInputSchema>;
+export type SourceDeletionEffects = z.infer<typeof SourceDeletionEffectsSchema>;
 
 export type McpMutationFaultBoundary =
   | "history_import_before_write" | "history_import_after_sources" | "history_import_after_events" | "history_import_after_checkpoint"

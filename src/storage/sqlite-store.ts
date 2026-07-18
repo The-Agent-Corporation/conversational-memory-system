@@ -469,6 +469,10 @@ export class SqliteStore implements MemoryStore {
     }
   }
 
+  async inspectSourceDeletionEffects(personId: string, candidateId: string, auditEventIds: string[]) {
+    return this.computeSourceDeletionEffects(personId, candidateId, auditEventIds);
+  }
+
   async commitImportBatch(input: CommitImportBatchInput): Promise<ImportBatchReceipt> {
     const parsed = CommitImportBatchInputSchema.parse(input);
     this.validateImportOwnership(parsed);
@@ -1110,11 +1114,16 @@ export class SqliteStore implements MemoryStore {
   }
 
   private async sourceDeletionEffectsMatch(input: CommitSourceDeletionInput): Promise<boolean> {
-    const sourceIds = (await this.listSources(input.personId)).filter((item) => item.instanceId === input.expectedGrant.candidateId).map((item) => item.id);
+    const computed = await this.computeSourceDeletionEffects(input.personId, input.expectedGrant.candidateId, input.auditEvents.map((item) => item.id));
+    return this.sameRecord(this.sortedEffects(computed), this.sortedEffects(input.effects));
+  }
+
+  private async computeSourceDeletionEffects(personId: string, candidateId: string, auditEventIds: string[]) {
+    const sourceIds = (await this.listSources(personId)).filter((item) => item.instanceId === candidateId).map((item) => item.id);
     const sourceIdSet = new Set(sourceIds);
-    const eventIds = (await this.listCanonicalEvents(input.personId)).filter((item) => sourceIdSet.has(item.sourceId)).map((item) => item.id);
+    const eventIds = (await this.listCanonicalEvents(personId)).filter((item) => sourceIdSet.has(item.sourceId)).map((item) => item.id);
     const eventIdSet = new Set(eventIds);
-    const summaryIds = (await this.listSummaries()).filter((item) => item.personId === input.personId && item.state !== "superseded" && (item.sourceCanonicalEventIds ?? []).some((id) => eventIdSet.has(id))).map((item) => item.id);
+    const summaryIds = (await this.listSummaries()).filter((item) => item.personId === personId && item.state !== "superseded" && (item.sourceCanonicalEventIds ?? []).some((id) => eventIdSet.has(id))).map((item) => item.id);
     const summaryIdSet = new Set(summaryIds);
     const allTurns = this.listAllPayloads("turns", TurnSchema);
     const allInjections = this.listAllPayloads("injections", InjectionPacketSchema);
@@ -1124,17 +1133,17 @@ export class SqliteStore implements MemoryStore {
       sourceIds,
       canonicalEventIds: eventIds,
       turnIds: allTurns.filter((item) => eventIds.some((id) => item.id === `turn_${id}` || item.id === `personal_turn_${id}`)).map((item) => item.id),
-      anchorIds: (await this.listAnchors()).filter((item) => item.personId === input.personId && item.canonicalEventId !== undefined && eventIdSet.has(item.canonicalEventId)).map((item) => item.id),
+      anchorIds: (await this.listAnchors()).filter((item) => item.personId === personId && item.canonicalEventId !== undefined && eventIdSet.has(item.canonicalEventId)).map((item) => item.id),
       injectionIds: allInjections.filter((item) => item.sourceSummaryIds.some((id) => summaryIdSet.has(id))).map((item) => item.id),
-      quarantineIds: allQuarantine.filter((item) => item.personId === input.personId && item.candidateId === input.expectedGrant.candidateId).map((item) => item.id),
-      bootstrapCheckpointIds: allBootstrap.filter((item) => item.personId === input.personId).map((item) => item.id),
+      quarantineIds: allQuarantine.filter((item) => item.personId === personId && item.candidateId === candidateId).map((item) => item.id),
+      bootstrapCheckpointIds: allBootstrap.filter((item) => item.personId === personId).map((item) => item.id),
       supersededSummaryIds: summaryIds,
-      supersededBoxIds: (await this.listBoxes()).filter((item) => item.personId === input.personId && item.state !== "superseded" && item.summaryIds.some((id) => summaryIdSet.has(id))).map((item) => item.id),
-      supersededProposalIds: (await this.listProposals()).filter((item) => item.personId === input.personId && item.state !== "superseded" && item.sourceSummaryIds.some((id) => summaryIdSet.has(id))).map((item) => item.id),
-      supersededTraceIds: (await this.listTraces()).filter((item) => item.personId === input.personId && item.state !== "superseded" && item.summaryIds.some((id) => summaryIdSet.has(id))).map((item) => item.id),
-      auditEventIds: input.auditEvents.map((item) => item.id)
+      supersededBoxIds: (await this.listBoxes()).filter((item) => item.personId === personId && item.state !== "superseded" && item.summaryIds.some((id) => summaryIdSet.has(id))).map((item) => item.id),
+      supersededProposalIds: (await this.listProposals()).filter((item) => item.personId === personId && item.state !== "superseded" && item.sourceSummaryIds.some((id) => summaryIdSet.has(id))).map((item) => item.id),
+      supersededTraceIds: (await this.listTraces()).filter((item) => item.personId === personId && item.state !== "superseded" && item.summaryIds.some((id) => summaryIdSet.has(id))).map((item) => item.id),
+      auditEventIds
     };
-    return this.sameRecord(this.sortedEffects(computed), this.sortedEffects(input.effects));
+    return this.sortedEffects(computed);
   }
 
   private listAllPayloads<T>(table: string, schema: { parse(value: unknown): T }): T[] {
