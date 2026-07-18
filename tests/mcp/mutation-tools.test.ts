@@ -36,8 +36,9 @@ describe("MCP mutation application contract", () => {
       id: "proposal-1", personId: "person-alpha", proposalType: "trace", state: "proposed",
       title: "Synthetic proposal", rationale: "Synthetic", confidence: 0.8,
       createdAt: "2026-07-18T12:00:00.000Z", reviewedAt: "2026-07-18T12:00:00.000Z",
-      decidedAt: null, decidedBy: null, decisionNote: null, sourceSummaryIds: [],
-      sourceTurnRanges: [], targetBoxIds: [], targetTraceIds: [], payload: {}
+      decidedAt: null, decidedBy: null, decisionNote: null, sourceSummaryIds: ["summary-1", "summary-2"],
+      sourceTurnRanges: [{ threadId: "synthetic-thread", startSequence: 1, endSequence: 1 }], targetBoxIds: [], targetTraceIds: ["trace-1"],
+      payload: { traceId: "trace-1", title: "Synthetic trace", description: "Synthetic trace", traceType: "task_thread", summaryIds: ["summary-1", "summary-2"], boxIds: [], turnRanges: [{ threadId: "synthetic-thread", startSequence: 1, endSequence: 1 }], continuityReason: "Synthetic continuity", boundaryReason: "Synthetic boundary", keywords: ["synthetic"] }
     } as const;
     const nextProposal = { ...expectedProposal, state: "rejected" as const, decidedAt: "2026-07-18T12:01:00.000Z" };
     const effects = { proposalIds: ["proposal-1"], boxIds: [], traceIds: [] };
@@ -60,9 +61,9 @@ describe("MCP mutation application contract", () => {
   });
 
   it("05-04 Task 1 preserves backend parity for every atomic mutation contract", () => {
-    const exact = { sourceIds: ["source-1"], eventIds: ["event-1"], checkpointIds: ["checkpoint-1"], auditEventIds: ["audit-1"] };
+    const exact = { sourceIds: [], eventIds: [], checkpointIds: ["checkpoint-1"], auditEventIds: [] };
     const base = { operation: "history_import", personId: "person-alpha", candidateId: "candidate-1", normalizedParameters: { importer: "synthetic/v1" }, expectedSource: null, expectedSourceStateFingerprint: mutationEffectsFingerprint(null), expectedCheckpoint: null, expectedGrant: { id: "grant-1", personId: "person-alpha", candidateId: "candidate-1", application: "synthetic", format: "jsonl", sourceLocator: "synthetic://candidate", profileId: "profile", scopeId: "scope-alpha", state: "approved", approvedAt: "2026-07-18T12:00:00.000Z", revokedAt: null, updatedAt: "2026-07-18T12:00:00.000Z" }, targetCanonicalEventIds: ["event-1"], nextSources: [], nextCanonicalEvents: [], nextCheckpoint: { id: "checkpoint-1", personId: "person-alpha", candidateId: "candidate-1", resourcePath: "synthetic.jsonl", fileIdentity: "synthetic-1", byteOffset: 1, recordIndex: 1, nativeSessionId: "session-1", parserVersion: "synthetic/v1", updatedAt: "2026-07-18T12:01:00.000Z" }, auditEvents: [], effects: exact, effectsFingerprint: mutationEffectsFingerprint(exact), receipt: { operation: "history_import", status: "COMMITTED", personId: "person-alpha", targetId: "candidate-1", effectCounts: { sources: 0, events: 0, checkpoints: 1, audits: 0 }, committedAt: "2026-07-18T12:01:00.000Z" } };
-    expect(CommitHistoryImportInputSchema.parse(base).targetCanonicalEventIds).toEqual(["event-1"]);
+    expect(CommitHistoryImportInputSchema.parse({ ...base, targetCanonicalEventIds: [] }).targetCanonicalEventIds).toEqual([]);
     expect(() => CommitHistoryImportInputSchema.parse({ ...base, effectsFingerprint: "drift" })).toThrow();
   });
   it.todo("05-04 Task 2 configures bounded concurrent-writer behavior and rejects stale state");
