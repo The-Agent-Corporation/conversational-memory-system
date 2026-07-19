@@ -2,7 +2,7 @@
 phase: 06
 slug: zero-knowledge-multi-device-sync
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: true
 created: 2026-07-19
 updated: 2026-07-19
@@ -56,7 +56,7 @@ updated: 2026-07-19
 | 06-07-03 | 06-07 | 4 | REQ-034, REQ-035 | T-06-24–T-06-27, T-06-35 | `npx vitest run tests/integration/sync-producers.test.ts tests/service/memory-service.test.ts tests/service/source-lifecycle-service.test.ts tests/proposals/proposal-reviewer.test.ts tests/boxes/box-reviewer.test.ts tests/mcp/mutation-tools.test.ts && npm run typecheck` | complete |
 | 06-08-01 | 06-08 | 5 | REQ-031, REQ-033–REQ-036 | T-06-28–T-06-31 | `npx vitest run tests/sync/replay-equivocation.test.ts tests/sync/convergence.test.ts tests/sync/deletion-tombstones.test.ts tests/integration/multi-device-sync.test.ts && npm run typecheck` | complete |
 | 06-08-02 | 06-08 | 5 | REQ-031–REQ-036 | T-06-29–T-06-32, T-06-36 | `node scripts/benchmark-sync-padding.mjs && npx vitest run tests/sync tests/relay tests/integration/multi-device-sync.test.ts tests/storage/sync-store.test.ts tests/daemon/contraction-runner.test.ts tests/daemon/daemon-loop.test.ts tests/daemon/daemon-commands.test.ts tests/mcp && npm test && npm run typecheck && node scripts/verify-phase06-evidence.mjs --automated` | complete |
-| 06-08-03 | 06-08 | 5 | REQ-031, REQ-032, REQ-033 | T-06-33 | `node scripts/verify-phase06-evidence.mjs --keychain-evidence /private/tmp/phase06-keychain-uat-evidence.json` | pending |
+| 06-08-03 | 06-08 | 5 | REQ-031, REQ-032, REQ-033 | T-06-33 | `node scripts/verify-phase06-evidence.mjs --keychain-evidence /private/tmp/phase06-keychain-uat-evidence.json` | complete |
 
 ## Requirement Proof Map
 
@@ -89,7 +89,7 @@ updated: 2026-07-19
 - [x] **06-05:** Account provider, strict schemas, append-only relay adapters/service, bounded HTTP/HTTPS server, and loopback privacy tests.
 - [x] **06-06:** SyncRelay/HttpSyncRelay and enrollment, recovery, revocation, recovery-rotation, and client/server control-flow tests.
 - [x] **06-07:** Deterministic materialization, complete authoritative producer wiring including BoxReviewer, lifecycle controls, tombstones, quarantine, conflicts, and both resolutions.
-- [x] **06-08:** Sealed-byte replication, production daemon transport selection, complete real-loopback multi-device proof, final validator (automated portion), and blocking external real-Keychain evidence (Task 06-08-03 remains pending -- separate blocking human gate).
+- [x] **06-08:** Sealed-byte replication, production daemon transport selection, complete real-loopback multi-device proof, final validator (automated portion), and blocking external real-Keychain evidence (Task 06-08-03 complete -- Keychain UAT evidence verified and owner-approved 2026-07-19).
 
 ## Adversarial Matrix
 
@@ -118,5 +118,5 @@ updated: 2026-07-19
 - Set `wave_0_complete: true` only after every Wave 0 artifact exists and its owning task is green.
 - Set `nyquist_compliant: true` only after every task row and requirement proof is green and the blocking Keychain human inspection is approved.
 
-**Keychain UAT:** pending (Task 06-08-03; blocking, requires real macOS host, independent human inspection, and `node scripts/verify-phase06-evidence.mjs --keychain-evidence <path>`)
-**Approval:** pending (blocked on Keychain UAT above; `nyquist_compliant` stays `false` until that gate is independently approved)
+**Keychain UAT:** complete (2026-07-19, macOS 26.4.1 real Keychain, production adapter + compiled helper, synthetic non-production item; exact sequence create→read→rotate_success→rotate_failed_preserves_old→delete→post_delete_absent; all leakageScanCounts zero; evidence digest `7ebe6a455f251b3ddb5ec0dcbbeeaedb6809ffe9b10af644c939af560237cbcc`; `verify-phase06-evidence.mjs --keychain-evidence` PASSED)
+**Approval:** approved by Aaron Whaley (owner) 2026-07-19 after reviewing the UAT evidence summary; `nyquist_compliant: true`
