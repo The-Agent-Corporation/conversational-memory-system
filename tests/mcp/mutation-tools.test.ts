@@ -1,7 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   CommitHistoryImportInputSchema,
   CommitProposalDecisionInputSchema,
@@ -15,8 +18,15 @@ import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import { ConfirmationService } from "../../src/mcp/confirmation-service.js";
 import { MemoryMutationApplication } from "../../src/mcp/mutation-application.js";
 import { loadMemoryMcpProfile } from "../../src/mcp/profile-loader.js";
+import { createProfileAuthority } from "../../src/mcp/authority.js";
 import { ScopedProposalReviewer } from "../../src/proposals/scoped-proposal-reviewer.js";
 import { SourceLifecycleService } from "../../src/service/source-lifecycle-service.js";
+import { discoverCodexHistory } from "../../src/imports/codex-discovery.js";
+import {
+  MEMORY_MUTATION_TOOL_NAMES,
+  registerMemoryMutationTools,
+  type MemoryMutationToolApplication
+} from "../../src/mcp/tools/mutation-tools.js";
 import type { MemoryProposal } from "../../src/domain/types.js";
 import type { SourceGrant, SourceLifecycleAuditEvent } from "../../src/domain/source-lifecycle.js";
 import {
@@ -138,8 +148,61 @@ describe("MCP mutation application contract", () => {
       }
     }
   });
-  it.todo("05-05 Task 2 previews history ingestion without opening an unconfigured source root");
-  it.todo("05-05 Task 2 executes history ingestion only for the exact confirmed preview effects");
+  it("05-05 Task 3 previews history ingestion without opening an unconfigured source root", async () => {
+    const harness = await codexApplicationHarness();
+    try {
+      const before = await mutationSnapshot(harness.store);
+      await expect(harness.app.previewHistoryIngest({ sourceAlias: "outside", source: "codex", requestedAt: LATER }))
+        .rejects.toMatchObject({ code: "UNAUTHORIZED_OR_NOT_FOUND" });
+      const preview = await harness.app.previewHistoryIngest({ sourceAlias: "codex", source: "codex", requestedAt: LATER });
+      expect(preview).toMatchObject({ candidateId: harness.candidateId, effects: { eventIds: [expect.any(String)], checkpointIds: [expect.any(String)] } });
+      await expect(mutationSnapshot(harness.store)).resolves.toBe(before);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("05-05 Task 3 executes history ingestion only for the exact confirmed preview effects", async () => {
+    const harness = await codexApplicationHarness();
+    try {
+      const nativeBefore = await readFile(harness.rolloutPath, "utf8");
+      const request = { sourceAlias: "codex", source: "codex" as const, requestedAt: LATER };
+      const preview = await harness.app.previewHistoryIngest(request);
+      await expect(harness.app.executeHistoryIngest({ ...request, token: preview.token }))
+        .resolves.toMatchObject({ operation: "history_import", status: "COMMITTED", targetId: harness.candidateId });
+      await expect(harness.store.listCanonicalEvents("person-alpha")).resolves.toEqual([
+        expect.objectContaining({ content: "Synthetic configured history", scopeId: "scope-alpha" })
+      ]);
+      await expect(readFile(harness.rolloutPath, "utf8")).resolves.toBe(nativeBefore);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("05-05 Task 3 consumes confirmation and writes nothing when import events or grant state drift", async () => {
+    const harness = await codexApplicationHarness();
+    try {
+      const request = { sourceAlias: "codex", source: "codex" as const, requestedAt: LATER };
+      const preview = await harness.app.previewHistoryIngest(request);
+      await appendFile(harness.rolloutPath, `${JSON.stringify({ timestamp: "2026-07-18T12:00:30.000Z", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Drifted event" }] } })}\n`);
+      const before = await mutationSnapshot(harness.store);
+      await expect(harness.app.executeHistoryIngest({ ...request, token: preview.token }))
+        .resolves.toMatchObject({ status: "STATE_CHANGED", effectCounts: {} });
+      await expect(mutationSnapshot(harness.store)).resolves.toBe(before);
+      await expect(harness.app.executeHistoryIngest({ ...request, token: preview.token }))
+        .rejects.toMatchObject({ code: "CONFIRMATION_REPLAYED" });
+
+      const grantPreview = await harness.app.previewHistoryIngest(request);
+      const [grant] = await harness.store.listSourceGrants("person-alpha");
+      await harness.store.saveSourceGrant({ ...grant!, updatedAt: "2026-07-18T12:00:45.000Z" });
+      const beforeGrantExecute = await mutationSnapshot(harness.store);
+      await expect(harness.app.executeHistoryIngest({ ...request, token: grantPreview.token }))
+        .resolves.toMatchObject({ status: "STATE_CHANGED", effectCounts: {} });
+      await expect(mutationSnapshot(harness.store)).resolves.toBe(beforeGrantExecute);
+    } finally {
+      await harness.cleanup();
+    }
+  });
   it("05-05 Task 2 previews and executes scoped proposal approval or rejection atomically", async () => {
     fixture = await createSyntheticMcpFixture();
     const restrictedAuthority = await loadMemoryMcpProfile({ configPath: fixture.configPath, profileName: "alpha-workspace" });
@@ -205,12 +268,136 @@ describe("MCP mutation application contract", () => {
     await expect(app.executeSourceRevocation({ token: preview.token, candidateId: "candidate-drift", actor: "synthetic-reviewer", revokedAt: LATER }))
       .rejects.toMatchObject({ code: "CONFIRMATION_REPLAYED" });
   });
-  it.todo("05-07 Task 2 routes each preview tool to one scoped application operation");
-  it.todo("05-07 Task 2 routes each execute tool with exact ticket binding and truthful annotations");
+  it("05-07 Task 2 routes each preview tool to one scoped application operation", async () => {
+    const protocol = await mutationProtocolHarness();
+    try {
+      const requests = [
+        ["history_ingest_preview", { sourceAlias: "codex", source: "codex", requestedAt: LATER }],
+        ["proposal_approve_preview", { proposalId: "proposal-approve", decidedAt: LATER, reviewer: "reviewer" }],
+        ["proposal_reject_preview", { proposalId: "proposal-reject", decidedAt: LATER, note: "synthetic" }],
+        ["source_revoke_preview", { candidateId: "candidate-revoke", actor: "reviewer", revokedAt: LATER }],
+        ["source_delete_preview", { candidateId: "candidate-delete", actor: "reviewer", deletedAt: LATER }]
+      ] as const;
+      for (const [name, args] of requests) {
+        const result = await protocol.client.callTool({ name, arguments: args });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toEqual(expect.objectContaining({
+          token: "t".repeat(32),
+          expiresAt: LATER,
+          effectsFingerprint: "a".repeat(64),
+          effectCounts: expect.any(Object)
+        }));
+        expect(JSON.stringify(result)).not.toContain("person-alpha");
+        expect(JSON.stringify(result)).not.toContain("/synthetic/root");
+      }
+      expect(protocol.calls.map((call) => call.method)).toEqual([
+        "previewHistoryIngest",
+        "previewProposalApproval",
+        "previewProposalRejection",
+        "previewSourceRevocation",
+        "previewSourceDeletion"
+      ]);
+      expect(protocol.calls.every((call) => call.count === 1)).toBe(true);
+    } finally {
+      await protocol.close();
+    }
+  });
+
+  it("05-07 Task 2 routes each execute tool with exact ticket binding and truthful annotations", async () => {
+    const protocol = await mutationProtocolHarness();
+    try {
+      const catalog = await protocol.client.listTools();
+      expect(catalog.tools.map((tool) => tool.name)).toEqual(MEMORY_MUTATION_TOOL_NAMES);
+      const destructive = new Set([
+        "proposal_approve_execute", "proposal_reject_execute",
+        "source_revoke_execute", "source_delete_execute"
+      ]);
+      for (const tool of catalog.tools) {
+        expect(tool.annotations).toEqual({
+          readOnlyHint: false,
+          destructiveHint: destructive.has(tool.name),
+          idempotentHint: false,
+          openWorldHint: false
+        });
+      }
+
+      const requests = [
+        ["history_ingest_execute", { sourceAlias: "codex", source: "codex", requestedAt: LATER, token: "h".repeat(32) }],
+        ["proposal_approve_execute", { proposalId: "proposal-approve", decidedAt: LATER, reviewer: "reviewer", token: "a".repeat(32) }],
+        ["proposal_reject_execute", { proposalId: "proposal-reject", decidedAt: LATER, note: "synthetic", token: "r".repeat(32) }],
+        ["source_revoke_execute", { candidateId: "candidate-revoke", actor: "reviewer", revokedAt: LATER, token: "v".repeat(32) }],
+        ["source_delete_execute", { candidateId: "candidate-delete", actor: "reviewer", deletedAt: LATER, token: "d".repeat(32) }]
+      ] as const;
+      for (const [name, args] of requests) {
+        const result = await protocol.client.callTool({ name, arguments: args });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toEqual(expect.objectContaining({
+          status: "COMMITTED",
+          targetId: expect.any(String),
+          effectCounts: expect.any(Object),
+          committedAt: LATER
+        }));
+        expect(JSON.stringify(result)).not.toContain("person-alpha");
+      }
+      expect(protocol.calls.slice(-5).map((call) => ({ method: call.method, token: call.input.token }))).toEqual([
+        { method: "executeHistoryIngest", token: "h".repeat(32) },
+        { method: "executeProposalApproval", token: "a".repeat(32) },
+        { method: "executeProposalRejection", token: "r".repeat(32) },
+        { method: "executeSourceRevocation", token: "v".repeat(32) },
+        { method: "executeSourceDeletion", token: "d".repeat(32) }
+      ]);
+
+      const rejected = await protocol.client.callTool({
+        name: "proposal_reject_execute",
+        arguments: { proposalId: "fail", decidedAt: LATER, token: "x".repeat(32) }
+      });
+      expect(rejected.isError).toBe(true);
+      expect(JSON.stringify(rejected)).toContain("UNAUTHORIZED_OR_NOT_FOUND");
+      expect(JSON.stringify(rejected)).not.toContain("/synthetic/root");
+    } finally {
+      await protocol.close();
+    }
+  });
 });
 
 const NOW = "2026-07-18T12:00:00.000Z";
 const LATER = "2026-07-18T12:01:00.000Z";
+
+const mutationProtocolHarness = async () => {
+  const calls: Array<{ method: string; input: Record<string, unknown>; count: number }> = [];
+  const record = <T>(method: string, input: T): void => {
+    calls.push({ method, input: input as Record<string, unknown>, count: 1 });
+  };
+  const preview = (effects: Record<string, string[]>) => ({
+    token: "t".repeat(32), expiresAt: LATER, targetIds: ["synthetic-target"],
+    effects, effectsFingerprint: "a".repeat(64),
+    personId: "person-alpha", sourcePath: "/synthetic/root"
+  });
+  const receipt = (
+    operation: "history_import" | "proposal_decision" | "source_revocation" | "source_deletion",
+    targetId: string,
+    effectCounts: Record<string, number>
+  ) => ({ operation, status: "COMMITTED" as const, personId: "person-alpha", targetId, effectCounts, committedAt: LATER });
+  const application: MemoryMutationToolApplication = {
+    async previewHistoryIngest(input) { record("previewHistoryIngest", input); return preview({ sourceIds: ["s"], eventIds: ["e"], checkpointIds: ["c"], auditEventIds: [] }); },
+    async executeHistoryIngest(input) { record("executeHistoryIngest", input); return receipt("history_import", "candidate-history", { sources: 1, events: 1, checkpoints: 1, audits: 0 }); },
+    async previewProposalApproval(input) { record("previewProposalApproval", input); return preview({ proposalIds: ["p"], boxIds: ["b"], traceIds: [] }); },
+    async executeProposalApproval(input) { record("executeProposalApproval", input); return receipt("proposal_decision", input.proposalId, { proposals: 1, boxes: 1, traces: 0 }); },
+    async previewProposalRejection(input) { record("previewProposalRejection", input); return preview({ proposalIds: ["p"], boxIds: [], traceIds: [] }); },
+    async executeProposalRejection(input) { record("executeProposalRejection", input); if (input.proposalId === "fail") throw new Error("UNAUTHORIZED_OR_NOT_FOUND /synthetic/root"); return receipt("proposal_decision", input.proposalId, { proposals: 1, boxes: 0, traces: 0 }); },
+    async previewSourceRevocation(input) { record("previewSourceRevocation", input); return preview({ grantIds: ["g"], auditEventIds: ["a"] }); },
+    async executeSourceRevocation(input) { record("executeSourceRevocation", input); return receipt("source_revocation", input.candidateId, { grants: 1, audits: 1 }); },
+    async previewSourceDeletion(input) { record("previewSourceDeletion", input); return preview({ sourceIds: ["s"], canonicalEventIds: ["e"], turnIds: [], anchorIds: [], injectionIds: [], quarantineIds: [], bootstrapCheckpointIds: [], supersededSummaryIds: [], supersededBoxIds: [], supersededProposalIds: [], supersededTraceIds: [], auditEventIds: ["a1", "a2"] }); },
+    async executeSourceDeletion(input) { record("executeSourceDeletion", input); return receipt("source_deletion", input.candidateId, { sources: 1, events: 1, anchors: 0, summaries: 0, boxes: 0, proposals: 0, traces: 0, audits: 2 }); }
+  };
+  const server = new McpServer({ name: "synthetic-memory-mutations", version: "1.0.0" });
+  registerMemoryMutationTools(server, application);
+  const client = new Client({ name: "synthetic-mutation-client", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return { calls, client, close: async () => { await client.close(); await server.close(); } };
+};
 
 const testAuthority = () => ({
   profileName: "synthetic-profile",
@@ -222,6 +409,36 @@ const testAuthority = () => ({
   scopeAliases: { "scope-alpha": "context-one" },
   fingerprint: "synthetic-authority-fingerprint"
 });
+
+const codexApplicationHarness = async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "mcp-configured-codex-"));
+  const rolloutPath = join(tempDir, "sessions", "2026", "07", "18", "rollout-synthetic.jsonl");
+  await mkdir(dirname(rolloutPath), { recursive: true });
+  await writeFile(rolloutPath, [
+    JSON.stringify({ timestamp: NOW, type: "session_meta", payload: { id: "synthetic-session" } }),
+    JSON.stringify({ timestamp: NOW, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Synthetic configured history" }] } }),
+    ""
+  ].join("\n"));
+  const candidate = await discoverCodexHistory(tempDir, NOW);
+  const store = new InMemoryStore();
+  const authority = createProfileAuthority({
+    profileName: "synthetic-profile", databasePath: join(tempDir, "memory.sqlite"), personId: "person-alpha",
+    allowedScopeIds: ["scope-alpha"], ingestScopeId: "scope-alpha",
+    sourceRoots: { codex: tempDir }, scopeAliases: { "scope-alpha": "context-one" }
+  });
+  await new SourceLifecycleService(store).approve({
+    personId: authority.personId, candidateId: candidate.id, application: candidate.application,
+    format: candidate.format, sourceLocator: candidate.rootPath, profileId: authority.profileName,
+    scopeId: authority.ingestScopeId, approvedAt: NOW
+  });
+  return {
+    store,
+    app: new MemoryMutationApplication({ store, authority, confirmations: new ConfirmationService({ clock: () => NOW }) }),
+    candidateId: candidate.id,
+    rolloutPath,
+    cleanup: () => rm(tempDir, { recursive: true, force: true })
+  };
+};
 
 const grant = (state: "approved" | "revoked"): SourceGrant => ({
   id: "grant-atomic", personId: "person-alpha", candidateId: "candidate-atomic",

@@ -20,6 +20,8 @@ import {
   HistoryIngestExecuteOutputSchema,
   HistoryIngestPreviewInputSchema,
   HistoryIngestPreviewOutputSchema,
+  MEMORY_MUTATION_TOOL_ANNOTATIONS,
+  MEMORY_MUTATION_TOOL_NAMES,
   ProposalApproveExecuteInputSchema,
   ProposalApproveExecuteOutputSchema,
   ProposalApprovePreviewInputSchema,
@@ -208,7 +210,14 @@ describe("MCP explicit tool catalog contract", () => {
       sourceAlias: "codex", source: "unknown", requestedAt: "2026-07-18T12:00:00.000Z"
     }).success).toBe(false);
   });
-  it.todo("05-07 Task 2 exposes all ten mutation contracts with exact annotations");
+  it("05-07 Task 2 exposes all ten mutation contracts with exact annotations", () => {
+    expect(MEMORY_MUTATION_TOOL_NAMES).toEqual(
+      REQUIRED_MCP_TOOL_CONTRACTS.slice(6).map((tool) => tool.name)
+    );
+    expect(MEMORY_MUTATION_TOOL_ANNOTATIONS).toEqual(
+      Object.fromEntries(REQUIRED_MCP_TOOL_CONTRACTS.slice(6).map((tool) => [tool.name, tool.annotations]))
+    );
+  });
   it.todo("05-08 Task 1 composes the complete catalog without duplicate or umbrella tools");
   it.todo("05-08 Task 1 keeps every capability available while daemon status is offline");
 });
