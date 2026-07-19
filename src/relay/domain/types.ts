@@ -310,6 +310,8 @@ export const RelayRequestSchema = z.discriminatedUnion("operation", [
   RelayRequestBaseSchema.extend({
     operation: z.literal("membership.cas"),
     commit: RelayMembershipCommitSchema,
+    /** Detached Ed25519 signature over the canonical bytes of `commit`. */
+    signature: relayBase64UrlBytesSchema(64, "signature"),
     enrollmentRequestId: RelayIdSchema.optional(),
     recoveryAuthorization: z.object({
       packageId: RelayIdSchema,
