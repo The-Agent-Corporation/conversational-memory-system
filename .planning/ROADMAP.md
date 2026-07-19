@@ -155,18 +155,18 @@ Plans:
 **Goal**: Synchronize memory without giving the relay decryption capability.
 **Requirements**: REQ-031, REQ-032, REQ-033, REQ-034, REQ-035, REQ-036
 **Status**: Planned — protocol approval gated
-**Plans:** 8 plans
+**Plans:** 3/8 plans executed
 
 Plans:
 
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — Benchmark padding, specify/trace ADR 0047, and obtain independent composed-protocol approval.
+- [x] 06-01-PLAN.md — Benchmark padding, specify/trace ADR 0047, and obtain independent composed-protocol approval.
 
 **Wave 2** *(blocked on Wave 1 approval)*
 
-- [ ] 06-02-PLAN.md — Install audited packages and implement strict protocol schemas, synthetic fixtures, and approved envelope cryptography.
-- [ ] 06-03-PLAN.md — Implement host-neutral DeviceSecretStore, deterministic fake, and macOS Keychain adapter.
+- [x] 06-02-PLAN.md — Install audited packages and implement strict protocol schemas, synthetic fixtures, and approved envelope cryptography.
+- [x] 06-03-PLAN.md — Implement host-neutral DeviceSecretStore, deterministic fake, and macOS Keychain adapter.
 
 **Wave 3** *(blocked on Wave 2)*
 
