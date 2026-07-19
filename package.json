@@ -36,6 +36,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "canonicalize": "3.0.0",
+    "jose": "6.2.3",
+    "libsodium-wrappers-sumo": "0.8.4",
     "zod": "3.25.76"
   },
   "devDependencies": {
