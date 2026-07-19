@@ -51,6 +51,23 @@ export interface CryptoProvider {
   /** Generates a fresh random X25519 keypair for box/seal wrapping. No seed parameter. */
   generateWrappingKeyPair(): CryptoKeyPair;
 
+  /**
+   * Deterministically derives an Ed25519 keypair from a 32-byte seed.
+   * Production callers MUST only pass a seed already produced by
+   * `deriveSubkey` from a random recovery seed (ADR 0047 "Recovery
+   * derivation", context `CMSRSIG1`) - this is the sole sanctioned seeded
+   * key-generation path and exists only for recovery-credential derivation,
+   * never for ordinary device keys.
+   */
+  generateSigningKeyPairFromSeed(seed: Uint8Array): CryptoKeyPair;
+
+  /**
+   * Deterministically derives an X25519 keypair from a 32-byte seed
+   * (ADR 0047 "Recovery derivation", context `CMSRBOX1`). Sole sanctioned
+   * seeded key-generation path for recovery-credential wrapping keys.
+   */
+  generateWrappingKeyPairFromSeed(seed: Uint8Array): CryptoKeyPair;
+
   /** Detached Ed25519 signature over `message`. Deterministic given (secretKey, message); no internal randomness. */
   sign(secretKey: Uint8Array, message: Uint8Array): Uint8Array;
 
