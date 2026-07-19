@@ -81,6 +81,18 @@ export class LibsodiumCryptoProvider implements CryptoProvider {
     return { publicKey: pair.publicKey, secretKey: pair.privateKey };
   }
 
+  generateSigningKeyPairFromSeed(seed: Uint8Array): CryptoKeyPair {
+    if (seed.length !== 32) throw new SyncProtocolError("SYNC_SCHEMA_INVALID");
+    const pair = sodium.crypto_sign_seed_keypair(seed);
+    return { publicKey: pair.publicKey, secretKey: pair.privateKey };
+  }
+
+  generateWrappingKeyPairFromSeed(seed: Uint8Array): CryptoKeyPair {
+    if (seed.length !== 32) throw new SyncProtocolError("SYNC_SCHEMA_INVALID");
+    const pair = sodium.crypto_box_seed_keypair(seed);
+    return { publicKey: pair.publicKey, secretKey: pair.privateKey };
+  }
+
   sign(secretKey: Uint8Array, message: Uint8Array): Uint8Array {
     return sodium.crypto_sign_detached(message, secretKey);
   }
