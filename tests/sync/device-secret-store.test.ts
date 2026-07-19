@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,6 +8,13 @@ import {
   type SecretBinding
 } from "../../src/sync/secrets/device-secret-store.js";
 import { InMemoryDeviceSecretStore } from "../../src/sync/secrets/in-memory-device-secret-store.js";
+import {
+  MACOS_KEYCHAIN_SERVICE_LABEL,
+  MacosKeychainSecretStore,
+  type KeychainHelperRequest,
+  type KeychainHelperResult,
+  type KeychainHelperRunner
+} from "../../src/sync/secrets/macos-keychain-secret-store.js";
 import { createFaultInjector } from "../mcp/fixtures.js";
 import { createSyntheticMcpFixture, snapshotSemanticMemory } from "../mcp/fixtures.js";
 import { createSyntheticProfileConfig } from "../mcp/fixtures.js";
@@ -313,5 +322,254 @@ describe("DeviceSecretStore contract (InMemoryDeviceSecretStore)", () => {
     // no side-effecting production registration.
     const store = new InMemoryDeviceSecretStore();
     expect(store).toBeInstanceOf(InMemoryDeviceSecretStore);
+  });
+});
+
+/**
+ * Deterministic synthetic Keychain protocol simulator used only by tests.
+ * It never touches a real Keychain and never runs a real subprocess; it
+ * exists to prove `MacosKeychainSecretStore`'s request/result mapping,
+ * CAS/failure semantics, and non-leakage of secret bytes through the
+ * control channel.
+ */
+class FakeKeychainHelperRunner implements KeychainHelperRunner {
+  readonly requestsSeen: KeychainHelperRequest[] = [];
+  readonly resultsSeen: KeychainHelperResult[] = [];
+  failNextRotate = false;
+
+  private readonly current = new Map<string, number>();
+  private readonly versions = new Map<string, Uint8Array>();
+
+  async run(
+    request: KeychainHelperRequest,
+    secretIo: { writeSecret?: () => Uint8Array; readSecret?: (bytes: Uint8Array) => void }
+  ): Promise<KeychainHelperResult> {
+    this.requestsSeen.push(request);
+    const key = `${request.service}:${request.account}`;
+    let result: KeychainHelperResult;
+
+    switch (request.operation) {
+      case "create": {
+        if (this.current.has(key)) {
+          result = { requestId: request.requestId, status: "error", code: "SECRET_ALREADY_EXISTS" };
+          break;
+        }
+        const bytes = secretIo.writeSecret!();
+        this.versions.set(`${key}#1`, Uint8Array.from(bytes));
+        this.current.set(key, 1);
+        result = { requestId: request.requestId, status: "ok", version: 1, byteLength: bytes.length };
+        break;
+      }
+      case "read": {
+        const currentVersion = this.current.get(key);
+        if (currentVersion === undefined) {
+          result = { requestId: request.requestId, status: "error", code: "SECRET_NOT_FOUND" };
+          break;
+        }
+        const version = request.expectedVersion ?? currentVersion;
+        const bytes = this.versions.get(`${key}#${version}`);
+        if (!bytes) {
+          result = { requestId: request.requestId, status: "error", code: "SECRET_VERSION_NOT_FOUND" };
+          break;
+        }
+        secretIo.readSecret!(bytes);
+        result = { requestId: request.requestId, status: "ok", version, byteLength: bytes.length };
+        break;
+      }
+      case "current_version": {
+        const currentVersion = this.current.get(key);
+        result = currentVersion === undefined
+          ? { requestId: request.requestId, status: "error", code: "SECRET_NOT_FOUND" }
+          : { requestId: request.requestId, status: "ok", version: currentVersion };
+        break;
+      }
+      case "rotate": {
+        const currentVersion = this.current.get(key);
+        if (currentVersion === undefined) {
+          result = { requestId: request.requestId, status: "error", code: "SECRET_NOT_FOUND" };
+          break;
+        }
+        if (this.failNextRotate || currentVersion !== request.expectedVersion) {
+          this.failNextRotate = false;
+          // A rejected/failed rotate never touches stored versions: the
+          // prior current version remains authoritative.
+          result = { requestId: request.requestId, status: "error", code: "SECRET_VERSION_STALE" };
+          break;
+        }
+        const bytes = secretIo.writeSecret!();
+        const nextVersion = request.newVersion!;
+        this.versions.set(`${key}#${nextVersion}`, Uint8Array.from(bytes));
+        this.current.set(key, nextVersion);
+        result = { requestId: request.requestId, status: "ok", version: nextVersion, byteLength: bytes.length };
+        break;
+      }
+      case "delete": {
+        if (!this.current.has(key)) {
+          result = { requestId: request.requestId, status: "error", code: "SECRET_NOT_FOUND" };
+          break;
+        }
+        this.current.delete(key);
+        result = { requestId: request.requestId, status: "ok" };
+        break;
+      }
+      default:
+        result = { requestId: request.requestId, status: "error", code: "SECRET_HELPER_FAILURE" };
+    }
+    this.resultsSeen.push(result);
+    return result;
+  }
+}
+
+const adapterBinding: SecretBinding = {
+  personId: "person-alpha",
+  syncId: "sync-alpha",
+  deviceId: "device-alpha"
+};
+
+describe("MacosKeychainSecretStore (helper protocol via synthetic runner)", () => {
+  it("implements the full DeviceSecretStore contract through the injected helper runner", async () => {
+    const runner = new FakeKeychainHelperRunner();
+    const store: DeviceSecretStore = new MacosKeychainSecretStore(runner);
+    const bytes = syntheticBytes("keychain-create");
+
+    const created = await store.create({
+      binding: adapterBinding,
+      kind: "device_signing_seed",
+      secretId: "keychain-secret",
+      bytes
+    });
+    expect(created.version).toBe(1);
+
+    const read = await store.read({
+      binding: adapterBinding,
+      kind: "device_signing_seed",
+      secretId: "keychain-secret"
+    });
+    expect(Buffer.from(read.bytes).equals(Buffer.from(bytes))).toBe(true);
+
+    expect(await store.currentVersion(adapterBinding, "device_signing_seed", "keychain-secret")).toBe(1);
+
+    const rotatedBytes = syntheticBytes("keychain-rotate");
+    const rotated = await store.rotate({
+      binding: adapterBinding,
+      kind: "device_signing_seed",
+      secretId: "keychain-secret",
+      expectedCurrentVersion: 1,
+      bytes: rotatedBytes
+    });
+    expect(rotated.version).toBe(2);
+
+    await store.delete({ binding: adapterBinding, kind: "device_signing_seed", secretId: "keychain-secret" });
+    await expectCode(
+      () => store.currentVersion(adapterBinding, "device_signing_seed", "keychain-secret"),
+      "SECRET_NOT_FOUND"
+    );
+  });
+
+  it("maps every account label onto the fixed, non-identifying Keychain service", async () => {
+    const runner = new FakeKeychainHelperRunner();
+    const store = new MacosKeychainSecretStore(runner);
+    await store.create({
+      binding: adapterBinding,
+      kind: "recovery_seed",
+      secretId: "service-check",
+      bytes: syntheticBytes("service-check")
+    });
+    expect(runner.requestsSeen.every((request) => request.service === MACOS_KEYCHAIN_SERVICE_LABEL)).toBe(true);
+  });
+
+  it("keeps secret bytes off the control channel: requests and results carry no secret material", async () => {
+    const runner = new FakeKeychainHelperRunner();
+    const store = new MacosKeychainSecretStore(runner);
+    const bytes = syntheticBytes("keychain-leak");
+    const marker = Buffer.from(bytes).toString("base64");
+
+    await store.create({ binding: adapterBinding, kind: "epoch_key", secretId: "leak-secret", bytes });
+    await store.read({ binding: adapterBinding, kind: "epoch_key", secretId: "leak-secret" });
+    await store.rotate({
+      binding: adapterBinding,
+      kind: "epoch_key",
+      secretId: "leak-secret",
+      expectedCurrentVersion: 1,
+      bytes: syntheticBytes("keychain-leak-2")
+    });
+
+    for (const request of runner.requestsSeen) {
+      expect(JSON.stringify(request)).not.toContain(marker);
+    }
+    for (const result of runner.resultsSeen) {
+      expect(JSON.stringify(result)).not.toContain(marker);
+    }
+  });
+
+  it("preserves the prior current version and issues no plaintext fallback on rotate failure", async () => {
+    const runner = new FakeKeychainHelperRunner();
+    const store = new MacosKeychainSecretStore(runner);
+    const originalBytes = syntheticBytes("keychain-preserve");
+    await store.create({ binding: adapterBinding, kind: "keyring_wrapping_key", secretId: "preserve-secret", bytes: originalBytes });
+
+    runner.failNextRotate = true;
+    await expectCode(
+      () =>
+        store.rotate({
+          binding: adapterBinding,
+          kind: "keyring_wrapping_key",
+          secretId: "preserve-secret",
+          expectedCurrentVersion: 1,
+          bytes: syntheticBytes("keychain-preserve-attempt")
+        }),
+      "SECRET_VERSION_STALE"
+    );
+
+    expect(await store.currentVersion(adapterBinding, "keyring_wrapping_key", "preserve-secret")).toBe(1);
+    const stillCurrent = await store.read({
+      binding: adapterBinding,
+      kind: "keyring_wrapping_key",
+      secretId: "preserve-secret"
+    });
+    expect(Buffer.from(stillCurrent.bytes).equals(Buffer.from(originalBytes))).toBe(true);
+  });
+
+  it("has no plaintext file or SQLite persistence fallback anywhere in the adapter module", () => {
+    const adapterPath = fileURLToPath(
+      new URL("../../src/sync/secrets/macos-keychain-secret-store.ts", import.meta.url)
+    );
+    const source = readFileSync(adapterPath, "utf8");
+    expect(source).not.toMatch(/writeFile|createWriteStream|node:sqlite|better-sqlite3/);
+  });
+
+  it("spawns the production helper with a fixed argv independent of the request (no secret-adjacent argv)", () => {
+    const adapterPath = fileURLToPath(
+      new URL("../../src/sync/secrets/macos-keychain-secret-store.ts", import.meta.url)
+    );
+    const source = readFileSync(adapterPath, "utf8");
+    expect(source).toContain('spawn(this.options.helperPath, ["serve"]');
+    // The argv literal is exactly ["serve"]; no request field is
+    // interpolated into it.
+    expect(source).not.toMatch(/spawn\([^)]*request\./);
+  });
+});
+
+describe("macos-keychain-helper.swift (source contract)", () => {
+  it("uses non-synchronizable, this-device-only Keychain items and no plaintext fallback", () => {
+    const helperPath = fileURLToPath(
+      new URL("../../src/sync/secrets/macos-keychain-helper.swift", import.meta.url)
+    );
+    const source = readFileSync(helperPath, "utf8");
+    expect(source).toContain("kSecAttrSynchronizable as String: false");
+    expect(source).toContain("kSecAttrAccessibleWhenUnlockedThisDeviceOnly");
+    expect(source).not.toMatch(/FileManager|write\(toFile|contentsOfFile/);
+  });
+
+  it("never writes secret bytes or account identifiers to stderr", () => {
+    const helperPath = fileURLToPath(
+      new URL("../../src/sync/secrets/macos-keychain-helper.swift", import.meta.url)
+    );
+    const source = readFileSync(helperPath, "utf8");
+    const stderrWrites = [...source.matchAll(/FileHandle\.standardError\.write\(Data\((".*?")\.utf8\)\)/g)];
+    expect(stderrWrites.length).toBeGreaterThan(0);
+    for (const [, literal] of stderrWrites) {
+      expect(literal).not.toMatch(/account|bytes|secret|version/i);
+    }
   });
 });
