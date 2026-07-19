@@ -76,6 +76,32 @@ import {
   type CommitSourceRevocationInput,
   type MutationCommitReceipt
 } from "./mcp-mutation-contracts.js";
+import {
+  AcceptedSyncOperationSchema,
+  CommitLocalSyncOperationInputSchema,
+  CommitRemoteSyncApplyInputSchema,
+  LocalSyncEffectRecordSchema,
+  PendingSyncGapSchema,
+  SealClaimedOutboxEnvelopeInputSchema,
+  SyncConflictRecordSchema,
+  SyncContractionRangeSchema,
+  SyncOutboxOperationSchema,
+  SyncQuarantineEntrySchema,
+  SyncTombstoneSchema,
+  type AcceptedSyncOperation,
+  type CommitLocalSyncOperationInput,
+  type CommitRemoteSyncApplyInput,
+  type LocalSyncEffectRecord,
+  type PendingSyncGap,
+  type SealClaimedOutboxEnvelopeInput,
+  type SealOutboxResult,
+  type SyncCommitReceipt,
+  type SyncConflictRecord,
+  type SyncContractionRange,
+  type SyncOutboxOperation,
+  type SyncQuarantineEntry,
+  type SyncTombstone
+} from "./sync-contracts.js";
 
 interface FaultInjector {
   reach(boundary: string): void;
@@ -109,6 +135,15 @@ export class InMemoryStore implements MemoryStore {
   private readonly injections: InjectionPacket[] = [];
   private readonly proposals: MemoryProposal[] = [];
   private readonly traces: MemoryTrace[] = [];
+  private readonly localSyncEffects: LocalSyncEffectRecord[] = [];
+  private readonly syncOutbox: SyncOutboxOperation[] = [];
+  private readonly syncFrontiers: Array<{ personId: string; deviceId: string; frontierSequence: number }> = [];
+  private readonly pendingSyncGaps: PendingSyncGap[] = [];
+  private readonly acceptedSyncOperations: AcceptedSyncOperation[] = [];
+  private readonly syncConflicts: SyncConflictRecord[] = [];
+  private readonly syncTombstones: SyncTombstone[] = [];
+  private readonly syncQuarantine: SyncQuarantineEntry[] = [];
+  private readonly syncContractionRanges: SyncContractionRange[] = [];
 
   constructor(options: InMemoryStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
@@ -839,6 +874,208 @@ export class InMemoryStore implements MemoryStore {
     return structuredClone(this.traces.filter((trace) =>
       filter.state === undefined || trace.state === filter.state
     ));
+  }
+
+  async commitLocalSyncOperation(input: CommitLocalSyncOperationInput): Promise<SyncCommitReceipt> {
+    const parsed = CommitLocalSyncOperationInputSchema.parse(input);
+    const existingOutbox = this.syncOutbox.find((row) =>
+      row.personId === parsed.personId && row.deviceId === parsed.deviceId && row.deviceSequence === parsed.deviceSequence
+    );
+    if (existingOutbox) {
+      const identical = existingOutbox.id === parsed.outboxId &&
+        existingOutbox.operationKind === parsed.operationKind &&
+        existingOutbox.targetId === parsed.targetId &&
+        existingOutbox.predecessorDigest === parsed.predecessorDigest &&
+        existingOutbox.effectFingerprint === parsed.effectFingerprint;
+      return structuredClone({ ...parsed.receipt, status: identical ? "IDEMPOTENT" : "EQUIVOCATION" });
+    }
+    const frontier = this.frontierFor(parsed.personId, parsed.deviceId);
+    if (frontier !== parsed.expectedFrontierSequence) {
+      return this.syncStateChanged(parsed.receipt);
+    }
+    const effects = structuredClone(this.localSyncEffects);
+    const outbox = structuredClone(this.syncOutbox);
+    this.faultInjector?.reach("local_sync_before_effect");
+    effects.push(LocalSyncEffectRecordSchema.parse({
+      id: `${parsed.outboxId}_effect`,
+      personId: parsed.personId,
+      deviceId: parsed.deviceId,
+      operationKind: parsed.operationKind,
+      targetId: parsed.targetId,
+      deviceSequence: parsed.deviceSequence,
+      effectFingerprint: parsed.effectFingerprint,
+      committedAt: parsed.committedAt
+    }));
+    this.faultInjector?.reach("local_sync_after_effect");
+    outbox.push(SyncOutboxOperationSchema.parse({
+      id: parsed.outboxId,
+      personId: parsed.personId,
+      deviceId: parsed.deviceId,
+      operationKind: parsed.operationKind,
+      targetId: parsed.targetId,
+      deviceSequence: parsed.deviceSequence,
+      predecessorDigest: parsed.predecessorDigest,
+      effectFingerprint: parsed.effectFingerprint,
+      status: "pending",
+      rowVersion: 0,
+      createdAt: parsed.committedAt,
+      sealedProtocolVersion: null,
+      sealedSequence: null,
+      sealedPredecessorDigest: null,
+      sealedEnvelopeBytesBase64: null,
+      sealedEnvelopeDigest: null,
+      sealedAt: null
+    }));
+    this.faultInjector?.reach("local_sync_after_outbox");
+    this.replace(this.localSyncEffects, effects);
+    this.replace(this.syncOutbox, outbox);
+    this.setFrontier(parsed.personId, parsed.deviceId, parsed.deviceSequence);
+    return structuredClone(parsed.receipt);
+  }
+
+  async commitRemoteSyncApply(input: CommitRemoteSyncApplyInput): Promise<SyncCommitReceipt> {
+    const parsed = CommitRemoteSyncApplyInputSchema.parse(input);
+    const frontier = this.frontierFor(parsed.personId, parsed.authorDeviceId);
+    if (parsed.sequence <= frontier) {
+      const existing = this.acceptedSyncOperations.find((op) =>
+        op.personId === parsed.personId && op.authorDeviceId === parsed.authorDeviceId && op.sequence === parsed.sequence
+      );
+      const identical = existing !== undefined && existing.envelopeDigest === parsed.envelopeDigest &&
+        existing.effectFingerprint === parsed.effectFingerprint;
+      return structuredClone({ ...parsed.receipt, status: identical ? "IDEMPOTENT" : "EQUIVOCATION" });
+    }
+    if (parsed.sequence > frontier + 1) {
+      const gaps = structuredClone(this.pendingSyncGaps);
+      for (let missing = frontier + 1; missing < parsed.sequence; missing += 1) {
+        if (!gaps.some((gap) => gap.personId === parsed.personId && gap.authorDeviceId === parsed.authorDeviceId && gap.missingSequence === missing)) {
+          gaps.push(PendingSyncGapSchema.parse({
+            personId: parsed.personId, authorDeviceId: parsed.authorDeviceId, missingSequence: missing, detectedAt: parsed.appliedAt
+          }));
+        }
+      }
+      this.replace(this.pendingSyncGaps, gaps);
+      return structuredClone({ ...parsed.receipt, status: "GAP_PENDING" });
+    }
+    const staged = {
+      accepted: structuredClone(this.acceptedSyncOperations),
+      conflicts: structuredClone(this.syncConflicts),
+      tombstones: structuredClone(this.syncTombstones),
+      quarantine: structuredClone(this.syncQuarantine),
+      ranges: structuredClone(this.syncContractionRanges)
+    };
+    this.faultInjector?.reach("remote_apply_before_write");
+    staged.accepted.push(AcceptedSyncOperationSchema.parse({
+      id: `${parsed.personId}_${parsed.authorDeviceId}_${parsed.sequence}`,
+      personId: parsed.personId,
+      authorDeviceId: parsed.authorDeviceId,
+      sequence: parsed.sequence,
+      predecessorDigest: parsed.predecessorDigest,
+      envelopeDigest: parsed.envelopeDigest,
+      effectFingerprint: parsed.effectFingerprint,
+      outcomeKind: parsed.outcome.kind,
+      acceptedAt: parsed.appliedAt
+    }));
+    this.faultInjector?.reach("remote_apply_after_operation");
+    if (parsed.outcome.kind === "conflict") {
+      staged.conflicts.push(SyncConflictRecordSchema.parse({
+        id: `${parsed.personId}_${parsed.authorDeviceId}_${parsed.sequence}_conflict`,
+        personId: parsed.personId, authorDeviceId: parsed.authorDeviceId, sequence: parsed.sequence,
+        detailFingerprint: parsed.outcome.detailFingerprint, detectedAt: parsed.appliedAt
+      }));
+    } else if (parsed.outcome.kind === "tombstone") {
+      staged.tombstones.push(SyncTombstoneSchema.parse({
+        id: `${parsed.personId}_${parsed.authorDeviceId}_${parsed.sequence}_tombstone`,
+        personId: parsed.personId, targetId: parsed.outcome.targetId, authorDeviceId: parsed.authorDeviceId,
+        sequence: parsed.sequence, tombstonedAt: parsed.appliedAt
+      }));
+    } else if (parsed.outcome.kind === "quarantine") {
+      staged.quarantine.push(SyncQuarantineEntrySchema.parse({
+        id: `${parsed.personId}_${parsed.authorDeviceId}_${parsed.sequence}_quarantine`,
+        personId: parsed.personId, authorDeviceId: parsed.authorDeviceId, sequence: parsed.sequence,
+        reasonFingerprint: parsed.outcome.reasonFingerprint, quarantinedAt: parsed.appliedAt
+      }));
+    }
+    this.faultInjector?.reach("remote_apply_after_outcome");
+    const existingRange = staged.ranges.find((range) => range.personId === parsed.personId);
+    const merged = SyncContractionRangeSchema.parse({
+      personId: parsed.personId,
+      rangeStart: existingRange ? Math.min(existingRange.rangeStart, parsed.affectedRangeStart) : parsed.affectedRangeStart,
+      rangeEnd: existingRange ? Math.max(existingRange.rangeEnd, parsed.affectedRangeEnd) : parsed.affectedRangeEnd
+    });
+    if (existingRange) Object.assign(existingRange, merged);
+    else staged.ranges.push(merged);
+    this.faultInjector?.reach("remote_apply_after_range");
+    this.replace(this.acceptedSyncOperations, staged.accepted);
+    this.replace(this.syncConflicts, staged.conflicts);
+    this.replace(this.syncTombstones, staged.tombstones);
+    this.replace(this.syncQuarantine, staged.quarantine);
+    this.replace(this.syncContractionRanges, staged.ranges);
+    this.setFrontier(parsed.personId, parsed.authorDeviceId, parsed.sequence);
+    return structuredClone(parsed.receipt);
+  }
+
+  async sealClaimedOutboxEnvelope(input: SealClaimedOutboxEnvelopeInput): Promise<SealOutboxResult> {
+    const parsed = SealClaimedOutboxEnvelopeInputSchema.parse(input);
+    const current = this.syncOutbox.find((row) =>
+      row.id === parsed.outboxId && row.personId === parsed.personId && row.deviceId === parsed.deviceId
+    );
+    if (!current) return { status: "STATE_CHANGED", record: null };
+    if (current.status === "sealed") {
+      const identical = current.sealedProtocolVersion === parsed.protocolVersion &&
+        current.sealedSequence === parsed.sequence &&
+        current.sealedPredecessorDigest === parsed.predecessorDigest &&
+        current.sealedEnvelopeBytesBase64 === parsed.envelopeBytesBase64 &&
+        current.sealedEnvelopeDigest === parsed.envelopeDigest;
+      return { status: identical ? "IDEMPOTENT" : "EQUIVOCATION", record: identical ? structuredClone(current) : null };
+    }
+    if (current.rowVersion !== parsed.expectedRowVersion) {
+      return { status: "STATE_CHANGED", record: null };
+    }
+    const staged = structuredClone(this.syncOutbox);
+    const target = staged.find((row) => row.id === parsed.outboxId)!;
+    this.faultInjector?.reach("seal_outbox_before_write");
+    target.status = "sealed";
+    target.rowVersion = target.rowVersion + 1;
+    target.sealedProtocolVersion = parsed.protocolVersion;
+    target.sealedSequence = parsed.sequence;
+    target.sealedPredecessorDigest = parsed.predecessorDigest;
+    target.sealedEnvelopeBytesBase64 = parsed.envelopeBytesBase64;
+    target.sealedEnvelopeDigest = parsed.envelopeDigest;
+    target.sealedAt = this.clock.now();
+    const sealed = SyncOutboxOperationSchema.parse(target);
+    this.faultInjector?.reach("seal_outbox_after_write");
+    this.replace(this.syncOutbox, staged);
+    return { status: "SEALED", record: structuredClone(sealed) };
+  }
+
+  async getSyncReplayFrontier(personId: string, deviceId: string): Promise<number> {
+    return this.frontierFor(personId, deviceId);
+  }
+
+  async listSyncOutboxOperations(personId: string): Promise<SyncOutboxOperation[]> {
+    return structuredClone(this.syncOutbox
+      .filter((row) => row.personId === personId)
+      .sort((left, right) => left.deviceSequence - right.deviceSequence));
+  }
+
+  async listAcceptedSyncOperations(personId: string): Promise<AcceptedSyncOperation[]> {
+    return structuredClone(this.acceptedSyncOperations
+      .filter((op) => op.personId === personId)
+      .sort((left, right) => left.sequence - right.sequence));
+  }
+
+  private frontierFor(personId: string, deviceId: string): number {
+    return this.syncFrontiers.find((entry) => entry.personId === personId && entry.deviceId === deviceId)?.frontierSequence ?? 0;
+  }
+
+  private setFrontier(personId: string, deviceId: string, sequence: number): void {
+    const existing = this.syncFrontiers.find((entry) => entry.personId === personId && entry.deviceId === deviceId);
+    if (existing) existing.frontierSequence = sequence;
+    else this.syncFrontiers.push({ personId, deviceId, frontierSequence: sequence });
+  }
+
+  private syncStateChanged(receipt: SyncCommitReceipt): SyncCommitReceipt {
+    return structuredClone({ ...receipt, status: "STATE_CHANGED" });
   }
 
   private stateChanged(receipt: MutationCommitReceipt): MutationCommitReceipt {
