@@ -79,6 +79,27 @@ import {
   type CommitSourceRevocationInput,
   type MutationCommitReceipt
 } from "./mcp-mutation-contracts.js";
+import {
+  AcceptedSyncOperationSchema,
+  CommitLocalSyncOperationInputSchema,
+  CommitRemoteSyncApplyInputSchema,
+  LocalSyncEffectRecordSchema,
+  PendingSyncGapSchema,
+  SealClaimedOutboxEnvelopeInputSchema,
+  SyncConflictRecordSchema,
+  SyncContractionRangeSchema,
+  SyncOutboxOperationSchema,
+  SyncQuarantineEntrySchema,
+  SyncTombstoneSchema,
+  type AcceptedSyncOperation,
+  type CommitLocalSyncOperationInput,
+  type CommitRemoteSyncApplyInput,
+  type SealClaimedOutboxEnvelopeInput,
+  type SealOutboxResult,
+  type SyncCommitReceipt,
+  type SyncContractionRange,
+  type SyncOutboxOperation
+} from "./sync-contracts.js";
 
 interface PayloadRow {
   payload: string;
@@ -1128,6 +1149,230 @@ export class SqliteStore implements MemoryStore {
     return rows.map((row) => MemoryTraceSchema.parse(JSON.parse(row.payload)));
   }
 
+  async commitLocalSyncOperation(input: CommitLocalSyncOperationInput): Promise<SyncCommitReceipt> {
+    const parsed = CommitLocalSyncOperationInputSchema.parse(input);
+    this.database.exec("begin immediate");
+    try {
+      const existingOutboxRow = this.database.prepare(
+        "select payload from sync_outbox where person_id = ? and device_id = ? and device_sequence = ?"
+      ).get(parsed.personId, parsed.deviceId, parsed.deviceSequence) as PayloadRow | undefined;
+      if (existingOutboxRow) {
+        const existing = SyncOutboxOperationSchema.parse(JSON.parse(existingOutboxRow.payload));
+        const identical = existing.id === parsed.outboxId &&
+          existing.operationKind === parsed.operationKind &&
+          existing.targetId === parsed.targetId &&
+          existing.predecessorDigest === parsed.predecessorDigest &&
+          existing.effectFingerprint === parsed.effectFingerprint;
+        this.database.exec("rollback");
+        return { ...parsed.receipt, status: identical ? "IDEMPOTENT" : "EQUIVOCATION" };
+      }
+      const frontier = this.frontierFor(parsed.personId, parsed.deviceId);
+      if (frontier !== parsed.expectedFrontierSequence) {
+        this.database.exec("rollback");
+        return this.syncStateChanged(parsed.receipt);
+      }
+      this.faultInjector?.reach("local_sync_before_effect");
+      const effect = LocalSyncEffectRecordSchema.parse({
+        id: `${parsed.outboxId}_effect`,
+        personId: parsed.personId,
+        deviceId: parsed.deviceId,
+        operationKind: parsed.operationKind,
+        targetId: parsed.targetId,
+        deviceSequence: parsed.deviceSequence,
+        effectFingerprint: parsed.effectFingerprint,
+        committedAt: parsed.committedAt
+      });
+      this.database.prepare(
+        "insert into local_sync_effects (id, person_id, device_id, device_sequence, payload) values (?, ?, ?, ?, ?)"
+      ).run(effect.id, effect.personId, effect.deviceId, effect.deviceSequence, JSON.stringify(effect));
+      this.faultInjector?.reach("local_sync_after_effect");
+      const outbox = SyncOutboxOperationSchema.parse({
+        id: parsed.outboxId, personId: parsed.personId, deviceId: parsed.deviceId,
+        operationKind: parsed.operationKind, targetId: parsed.targetId, deviceSequence: parsed.deviceSequence,
+        predecessorDigest: parsed.predecessorDigest, effectFingerprint: parsed.effectFingerprint,
+        status: "pending", rowVersion: 0, createdAt: parsed.committedAt,
+        sealedProtocolVersion: null, sealedSequence: null, sealedPredecessorDigest: null,
+        sealedEnvelopeBytesBase64: null, sealedEnvelopeDigest: null, sealedAt: null
+      });
+      this.database.prepare(
+        "insert into sync_outbox (id, person_id, device_id, device_sequence, status, row_version, payload) values (?, ?, ?, ?, ?, ?, ?)"
+      ).run(outbox.id, outbox.personId, outbox.deviceId, outbox.deviceSequence, outbox.status, outbox.rowVersion, JSON.stringify(outbox));
+      this.faultInjector?.reach("local_sync_after_outbox");
+      this.setFrontier(parsed.personId, parsed.deviceId, parsed.deviceSequence);
+      this.database.exec("commit");
+      return parsed.receipt;
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
+  async commitRemoteSyncApply(input: CommitRemoteSyncApplyInput): Promise<SyncCommitReceipt> {
+    const parsed = CommitRemoteSyncApplyInputSchema.parse(input);
+    this.database.exec("begin immediate");
+    try {
+      const frontier = this.frontierFor(parsed.personId, parsed.authorDeviceId);
+      if (parsed.sequence <= frontier) {
+        const row = this.database.prepare(
+          "select payload from accepted_sync_operations where person_id = ? and author_device_id = ? and sequence = ?"
+        ).get(parsed.personId, parsed.authorDeviceId, parsed.sequence) as PayloadRow | undefined;
+        const existing = row ? AcceptedSyncOperationSchema.parse(JSON.parse(row.payload)) : null;
+        const identical = existing !== null && existing.envelopeDigest === parsed.envelopeDigest && existing.effectFingerprint === parsed.effectFingerprint;
+        this.database.exec("rollback");
+        return { ...parsed.receipt, status: identical ? "IDEMPOTENT" : "EQUIVOCATION" };
+      }
+      if (parsed.sequence > frontier + 1) {
+        for (let missing = frontier + 1; missing < parsed.sequence; missing += 1) {
+          const gap = PendingSyncGapSchema.parse({
+            personId: parsed.personId, authorDeviceId: parsed.authorDeviceId, missingSequence: missing, detectedAt: parsed.appliedAt
+          });
+          this.database.prepare(
+            "insert or ignore into pending_sync_gaps (person_id, author_device_id, missing_sequence, payload) values (?, ?, ?, ?)"
+          ).run(gap.personId, gap.authorDeviceId, gap.missingSequence, JSON.stringify(gap));
+        }
+        this.database.exec("commit");
+        return { ...parsed.receipt, status: "GAP_PENDING" };
+      }
+      this.faultInjector?.reach("remote_apply_before_write");
+      const accepted = AcceptedSyncOperationSchema.parse({
+        id: `${parsed.personId}_${parsed.authorDeviceId}_${parsed.sequence}`,
+        personId: parsed.personId, authorDeviceId: parsed.authorDeviceId, sequence: parsed.sequence,
+        predecessorDigest: parsed.predecessorDigest, envelopeDigest: parsed.envelopeDigest,
+        effectFingerprint: parsed.effectFingerprint, outcomeKind: parsed.outcome.kind, acceptedAt: parsed.appliedAt
+      });
+      this.database.prepare(
+        "insert into accepted_sync_operations (id, person_id, author_device_id, sequence, payload) values (?, ?, ?, ?, ?)"
+      ).run(accepted.id, accepted.personId, accepted.authorDeviceId, accepted.sequence, JSON.stringify(accepted));
+      this.faultInjector?.reach("remote_apply_after_operation");
+      if (parsed.outcome.kind === "conflict") {
+        const conflict = SyncConflictRecordSchema.parse({
+          id: `${accepted.id}_conflict`, personId: parsed.personId, authorDeviceId: parsed.authorDeviceId,
+          sequence: parsed.sequence, detailFingerprint: parsed.outcome.detailFingerprint, detectedAt: parsed.appliedAt
+        });
+        this.database.prepare("insert into sync_conflicts (id, person_id, payload) values (?, ?, ?)")
+          .run(conflict.id, conflict.personId, JSON.stringify(conflict));
+      } else if (parsed.outcome.kind === "tombstone") {
+        const tombstone = SyncTombstoneSchema.parse({
+          id: `${accepted.id}_tombstone`, personId: parsed.personId, targetId: parsed.outcome.targetId,
+          authorDeviceId: parsed.authorDeviceId, sequence: parsed.sequence, tombstonedAt: parsed.appliedAt
+        });
+        this.database.prepare("insert into sync_tombstones (id, person_id, payload) values (?, ?, ?)")
+          .run(tombstone.id, tombstone.personId, JSON.stringify(tombstone));
+      } else if (parsed.outcome.kind === "quarantine") {
+        const quarantine = SyncQuarantineEntrySchema.parse({
+          id: `${accepted.id}_quarantine`, personId: parsed.personId, authorDeviceId: parsed.authorDeviceId,
+          sequence: parsed.sequence, reasonFingerprint: parsed.outcome.reasonFingerprint, quarantinedAt: parsed.appliedAt
+        });
+        this.database.prepare("insert into sync_quarantine (id, person_id, payload) values (?, ?, ?)")
+          .run(quarantine.id, quarantine.personId, JSON.stringify(quarantine));
+      }
+      this.faultInjector?.reach("remote_apply_after_outcome");
+      const existingRangeRow = this.database.prepare(
+        "select payload from sync_contraction_ranges where person_id = ?"
+      ).get(parsed.personId) as PayloadRow | undefined;
+      const existingRange = existingRangeRow ? SyncContractionRangeSchema.parse(JSON.parse(existingRangeRow.payload)) : null;
+      const merged = SyncContractionRangeSchema.parse({
+        personId: parsed.personId,
+        rangeStart: existingRange ? Math.min(existingRange.rangeStart, parsed.affectedRangeStart) : parsed.affectedRangeStart,
+        rangeEnd: existingRange ? Math.max(existingRange.rangeEnd, parsed.affectedRangeEnd) : parsed.affectedRangeEnd
+      });
+      this.database.prepare(
+        "insert into sync_contraction_ranges (person_id, payload) values (?, ?) on conflict(person_id) do update set payload = excluded.payload"
+      ).run(merged.personId, JSON.stringify(merged));
+      this.faultInjector?.reach("remote_apply_after_range");
+      this.setFrontier(parsed.personId, parsed.authorDeviceId, parsed.sequence);
+      this.database.exec("commit");
+      return parsed.receipt;
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
+  async sealClaimedOutboxEnvelope(input: SealClaimedOutboxEnvelopeInput): Promise<SealOutboxResult> {
+    const parsed = SealClaimedOutboxEnvelopeInputSchema.parse(input);
+    this.database.exec("begin immediate");
+    try {
+      const row = this.database.prepare(
+        "select payload from sync_outbox where id = ? and person_id = ? and device_id = ?"
+      ).get(parsed.outboxId, parsed.personId, parsed.deviceId) as PayloadRow | undefined;
+      if (!row) {
+        this.database.exec("rollback");
+        return { status: "STATE_CHANGED", record: null };
+      }
+      const current = SyncOutboxOperationSchema.parse(JSON.parse(row.payload));
+      if (current.status === "sealed") {
+        const identical = current.sealedProtocolVersion === parsed.protocolVersion &&
+          current.sealedSequence === parsed.sequence &&
+          current.sealedPredecessorDigest === parsed.predecessorDigest &&
+          current.sealedEnvelopeBytesBase64 === parsed.envelopeBytesBase64 &&
+          current.sealedEnvelopeDigest === parsed.envelopeDigest;
+        this.database.exec("rollback");
+        return { status: identical ? "IDEMPOTENT" : "EQUIVOCATION", record: identical ? current : null };
+      }
+      if (current.rowVersion !== parsed.expectedRowVersion) {
+        this.database.exec("rollback");
+        return { status: "STATE_CHANGED", record: null };
+      }
+      this.faultInjector?.reach("seal_outbox_before_write");
+      const sealed = SyncOutboxOperationSchema.parse({
+        ...current,
+        status: "sealed",
+        rowVersion: current.rowVersion + 1,
+        sealedProtocolVersion: parsed.protocolVersion,
+        sealedSequence: parsed.sequence,
+        sealedPredecessorDigest: parsed.predecessorDigest,
+        sealedEnvelopeBytesBase64: parsed.envelopeBytesBase64,
+        sealedEnvelopeDigest: parsed.envelopeDigest,
+        sealedAt: this.clock.now()
+      });
+      this.database.prepare(
+        "update sync_outbox set status = ?, row_version = ?, payload = ? where id = ?"
+      ).run(sealed.status, sealed.rowVersion, JSON.stringify(sealed), sealed.id);
+      this.faultInjector?.reach("seal_outbox_after_write");
+      this.database.exec("commit");
+      return { status: "SEALED", record: sealed };
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
+  async getSyncReplayFrontier(personId: string, deviceId: string): Promise<number> {
+    return this.frontierFor(personId, deviceId);
+  }
+
+  async listSyncOutboxOperations(personId: string): Promise<SyncOutboxOperation[]> {
+    const rows = this.database.prepare(
+      "select payload from sync_outbox where person_id = ? order by device_sequence asc"
+    ).all(personId) as PayloadRow[];
+    return rows.map((row) => SyncOutboxOperationSchema.parse(JSON.parse(row.payload)));
+  }
+
+  async listAcceptedSyncOperations(personId: string): Promise<AcceptedSyncOperation[]> {
+    const rows = this.database.prepare(
+      "select payload from accepted_sync_operations where person_id = ? order by sequence asc"
+    ).all(personId) as PayloadRow[];
+    return rows.map((row) => AcceptedSyncOperationSchema.parse(JSON.parse(row.payload)));
+  }
+
+  private frontierFor(personId: string, deviceId: string): number {
+    const row = this.database.prepare(
+      "select frontier_sequence as frontierSequence from sync_frontiers where person_id = ? and device_id = ?"
+    ).get(personId, deviceId) as { frontierSequence: number } | undefined;
+    return row?.frontierSequence ?? 0;
+  }
+
+  private setFrontier(personId: string, deviceId: string, sequence: number): void {
+    this.database.prepare(
+      "insert into sync_frontiers (person_id, device_id, frontier_sequence) values (?, ?, ?) on conflict(person_id, device_id) do update set frontier_sequence = excluded.frontier_sequence"
+    ).run(personId, deviceId, sequence);
+  }
+
+  private syncStateChanged(receipt: SyncCommitReceipt): SyncCommitReceipt {
+    return { ...receipt, status: "STATE_CHANGED" };
+  }
+
   private stateChanged(receipt: MutationCommitReceipt): MutationCommitReceipt {
     return { ...receipt, status: "STATE_CHANGED", effectCounts: {} };
   }
@@ -1561,6 +1806,78 @@ export class SqliteStore implements MemoryStore {
 
       create index if not exists idx_traces_state
         on traces (state);
+
+      create table if not exists local_sync_effects (
+        id text primary key,
+        person_id text not null,
+        device_id text not null,
+        device_sequence integer not null,
+        payload text not null
+      );
+
+      create table if not exists sync_outbox (
+        id text primary key,
+        person_id text not null,
+        device_id text not null,
+        device_sequence integer not null,
+        status text not null,
+        row_version integer not null,
+        payload text not null,
+        unique (person_id, device_id, device_sequence)
+      );
+
+      create index if not exists idx_sync_outbox_person
+        on sync_outbox (person_id, device_sequence);
+
+      create table if not exists sync_frontiers (
+        person_id text not null,
+        device_id text not null,
+        frontier_sequence integer not null,
+        primary key (person_id, device_id)
+      );
+
+      create table if not exists pending_sync_gaps (
+        person_id text not null,
+        author_device_id text not null,
+        missing_sequence integer not null,
+        payload text not null,
+        primary key (person_id, author_device_id, missing_sequence)
+      );
+
+      create table if not exists accepted_sync_operations (
+        id text primary key,
+        person_id text not null,
+        author_device_id text not null,
+        sequence integer not null,
+        payload text not null,
+        unique (person_id, author_device_id, sequence)
+      );
+
+      create index if not exists idx_accepted_sync_operations_person
+        on accepted_sync_operations (person_id, sequence);
+
+      create table if not exists sync_conflicts (
+        id text primary key,
+        person_id text not null,
+        payload text not null
+      );
+
+      create table if not exists sync_tombstones (
+        id text primary key,
+        person_id text not null,
+        payload text not null
+      );
+
+      create table if not exists sync_quarantine (
+        id text primary key,
+        person_id text not null,
+        payload text not null
+      );
+
+      create table if not exists sync_contraction_ranges (
+        person_id text primary key,
+        payload text not null
+      );
     `);
     this.migrateDaemonContractionPayloads();
   }
