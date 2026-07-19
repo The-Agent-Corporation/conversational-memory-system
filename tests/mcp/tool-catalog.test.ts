@@ -8,11 +8,35 @@ import {
   MemoryReviewOutputSchema,
   MemorySearchInputSchema,
   MemorySearchOutputSchema,
+  MEMORY_READ_TOOL_ANNOTATIONS,
+  MEMORY_READ_TOOL_NAMES,
   ProposalListInputSchema,
   ProposalListOutputSchema,
   SourceStatusInputSchema,
   SourceStatusOutputSchema
 } from "../../src/mcp/tools/read-tools.js";
+import {
+  HistoryIngestExecuteInputSchema,
+  HistoryIngestExecuteOutputSchema,
+  HistoryIngestPreviewInputSchema,
+  HistoryIngestPreviewOutputSchema,
+  ProposalApproveExecuteInputSchema,
+  ProposalApproveExecuteOutputSchema,
+  ProposalApprovePreviewInputSchema,
+  ProposalApprovePreviewOutputSchema,
+  ProposalRejectExecuteInputSchema,
+  ProposalRejectExecuteOutputSchema,
+  ProposalRejectPreviewInputSchema,
+  ProposalRejectPreviewOutputSchema,
+  SourceDeleteExecuteInputSchema,
+  SourceDeleteExecuteOutputSchema,
+  SourceDeletePreviewInputSchema,
+  SourceDeletePreviewOutputSchema,
+  SourceRevokeExecuteInputSchema,
+  SourceRevokeExecuteOutputSchema,
+  SourceRevokePreviewInputSchema,
+  SourceRevokePreviewOutputSchema
+} from "../../src/mcp/tools/mutation-tools.js";
 
 interface ToolContract {
   name: string;
@@ -135,8 +159,55 @@ describe("MCP explicit tool catalog contract", () => {
       expect.arrayContaining(["proposals", "count", "disclosure"])
     );
   });
-  it.todo("05-06 Task 2 exposes all six read contracts through tools/list and tools/call");
-  it.todo("05-07 Task 1 registers all ten mutation schemas as explicit preview and execute pairs");
+  it("05-06 Task 2 exposes all six read contracts through tools/list and tools/call", () => {
+    expect(MEMORY_READ_TOOL_NAMES).toEqual(
+      REQUIRED_MCP_TOOL_CONTRACTS.slice(0, 6).map((tool) => tool.name)
+    );
+    expect(MEMORY_READ_TOOL_ANNOTATIONS).toEqual(annotations(true, false));
+  });
+  it("05-07 Task 1 registers all ten mutation schemas as explicit preview and execute pairs", () => {
+    const inputPairs = [
+      [HistoryIngestPreviewInputSchema, HistoryIngestExecuteInputSchema],
+      [ProposalApprovePreviewInputSchema, ProposalApproveExecuteInputSchema],
+      [ProposalRejectPreviewInputSchema, ProposalRejectExecuteInputSchema],
+      [SourceRevokePreviewInputSchema, SourceRevokeExecuteInputSchema],
+      [SourceDeletePreviewInputSchema, SourceDeleteExecuteInputSchema]
+    ] as const;
+    const outputPairs = [
+      [HistoryIngestPreviewOutputSchema, HistoryIngestExecuteOutputSchema],
+      [ProposalApprovePreviewOutputSchema, ProposalApproveExecuteOutputSchema],
+      [ProposalRejectPreviewOutputSchema, ProposalRejectExecuteOutputSchema],
+      [SourceRevokePreviewOutputSchema, SourceRevokeExecuteOutputSchema],
+      [SourceDeletePreviewOutputSchema, SourceDeleteExecuteOutputSchema]
+    ] as const;
+    const forbidden = ["action", "databasePath", "path", "profile", "personId", "allowedScopeIds"];
+
+    for (const [preview, execute] of inputPairs) {
+      expect(Object.keys(preview.shape)).not.toEqual(expect.arrayContaining(forbidden));
+      expect(Object.keys(execute.shape)).not.toEqual(expect.arrayContaining(forbidden));
+      expect(Object.keys(execute.shape)).toEqual(expect.arrayContaining([...Object.keys(preview.shape), "token"]));
+      expect(Object.keys(execute.shape)).toHaveLength(Object.keys(preview.shape).length + 1);
+      expect(execute.safeParse({ action: "delete", token: "x".repeat(32) }).success).toBe(false);
+    }
+
+    for (const [preview, execute] of outputPairs) {
+      expect(Object.keys(preview.shape)).toEqual(
+        expect.arrayContaining(["token", "expiresAt", "effectsFingerprint", "effectCounts"])
+      );
+      expect(Object.keys(execute.shape)).toEqual(
+        expect.arrayContaining(["operation", "status", "targetId", "effectCounts", "committedAt"])
+      );
+      expect(Object.keys(preview.shape)).not.toContain("content");
+      expect(Object.keys(execute.shape)).not.toContain("personId");
+    }
+
+    expect(HistoryIngestPreviewInputSchema.safeParse({
+      sourceAlias: "/tmp/synthetic", source: "codex", requestedAt: "2026-07-18T12:00:00.000Z"
+    }).success).toBe(false);
+    expect(HistoryIngestPreviewInputSchema.safeParse({
+      sourceAlias: "codex", source: "unknown", requestedAt: "2026-07-18T12:00:00.000Z"
+    }).success).toBe(false);
+  });
   it.todo("05-07 Task 2 exposes all ten mutation contracts with exact annotations");
   it.todo("05-08 Task 1 composes the complete catalog without duplicate or umbrella tools");
   it.todo("05-08 Task 1 keeps every capability available while daemon status is offline");
