@@ -155,7 +155,7 @@ Plans:
 **Goal**: Synchronize memory without giving the relay decryption capability.
 **Requirements**: REQ-031, REQ-032, REQ-033, REQ-034, REQ-035, REQ-036
 **Status**: Planned — protocol approval gated
-**Plans:** 5/8 plans executed
+**Plans:** 7/8 plans executed
 
 Plans:
 
@@ -175,8 +175,8 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 06-06-PLAN.md — Implement complete-history enrollment, recovery, revocation, future-key/recovery rotation, and production HttpSyncRelay client/control-flow proof.
-- [ ] 06-07-PLAN.md — Materialize convergence, wire every authoritative producer including BoxReviewer, propagate revocation/deletion, and enforce both quarantine resolutions.
+- [x] 06-06-PLAN.md — Implement complete-history enrollment, recovery, revocation, future-key/recovery rotation, and production HttpSyncRelay client/control-flow proof.
+- [x] 06-07-PLAN.md — Materialize convergence, wire every authoritative producer including BoxReviewer, propagate revocation/deletion, and enforce both quarantine resolutions.
 
 **Wave 5** *(blocked on Wave 4)*
 
