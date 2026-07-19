@@ -19,6 +19,10 @@ import {
   type ConfiguredHistoryImportRequest
 } from "../imports/history-import-command.js";
 import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
+import {
+  DEFAULT_LOCAL_SYNC_DEVICE_ID,
+  emitLocalSyncOperation
+} from "../sync/materialization/sync-materializer.js";
 
 export type MutationApplicationErrorCode =
   | "UNAUTHORIZED_OR_NOT_FOUND"
@@ -36,6 +40,7 @@ export interface MutationApplicationOptions {
   store: MemoryStore;
   authority: ProfileAuthority;
   confirmations: ConfirmationService;
+  syncDeviceId?: string;
 }
 
 export interface MutationPreview<Effects> {
@@ -60,10 +65,12 @@ export class MemoryMutationApplication {
   private readonly proposals: ScopedProposalReviewer;
   private readonly lifecycle: SourceLifecycleService;
   private readonly plans = new Map<string, StoredPlan>();
+  private readonly syncDeviceId: string;
 
   constructor(private readonly options: MutationApplicationOptions) {
     this.proposals = new ScopedProposalReviewer(options.store, options.authority);
-    this.lifecycle = new SourceLifecycleService(options.store);
+    this.syncDeviceId = options.syncDeviceId ?? DEFAULT_LOCAL_SYNC_DEVICE_ID;
+    this.lifecycle = new SourceLifecycleService(options.store, { syncDeviceId: this.syncDeviceId });
   }
 
   async previewProposalApproval(request: ProposalMutationRequest) {
@@ -105,7 +112,18 @@ export class MemoryMutationApplication {
     if (mutationEffectsFingerprint(this.historyBinding(fresh)) !== mutationEffectsFingerprint(this.historyBinding(history.input))) {
       return this.stateChanged(history.input.receipt);
     }
-    return this.options.store.commitHistoryImport(fresh);
+    const receipt = await this.options.store.commitHistoryImport(fresh);
+    if (receipt.status === "COMMITTED") {
+      await emitLocalSyncOperation(this.options.store, {
+        personId: fresh.personId,
+        deviceId: this.syncDeviceId,
+        operationKind: "canonical_append",
+        targetId: fresh.candidateId,
+        effectFingerprint: fresh.effectsFingerprint,
+        committedAt: receipt.committedAt
+      });
+    }
+    return receipt;
   }
 
   async executeProposalApproval(request: ProposalMutationRequest & { token: string }) {
@@ -173,7 +191,18 @@ export class MemoryMutationApplication {
     const plan = this.takePlan(request.token, kind);
     this.consume(request.token, kind, [request.proposalId], this.proposalParameters(request), plan?.input.effectsFingerprint ?? "");
     if (!plan || (plan.kind !== "proposal_approve" && plan.kind !== "proposal_reject")) throw new ConfirmationError("CONFIRMATION_MISMATCH");
-    return this.options.store.commitProposalDecision(plan.input);
+    const receipt = await this.options.store.commitProposalDecision(plan.input);
+    if (receipt.status === "COMMITTED") {
+      await emitLocalSyncOperation(this.options.store, {
+        personId: plan.input.personId,
+        deviceId: this.syncDeviceId,
+        operationKind: "proposal_decision",
+        targetId: plan.input.expectedProposal.id,
+        effectFingerprint: plan.input.effectsFingerprint,
+        committedAt: receipt.committedAt
+      });
+    }
+    return receipt;
   }
 
   private issue<Effects>(kind: StoredPlan["kind"], input: StoredPlan["input"], targetIds: string[], normalizedParameters: Record<string, unknown>, effects: Effects): MutationPreview<Effects> {

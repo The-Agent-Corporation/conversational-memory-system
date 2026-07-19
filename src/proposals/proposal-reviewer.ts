@@ -10,6 +10,11 @@ import {
   type ProposalType
 } from "../domain/types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
+import {
+  DEFAULT_LOCAL_SYNC_DEVICE_ID,
+  emitLocalSyncOperation
+} from "../sync/materialization/sync-materializer.js";
 
 export interface ProposalListRequest {
   state?: ProposalState;
@@ -66,7 +71,11 @@ export interface ProposalRejectionResult {
 }
 
 export class ProposalReviewer {
-  constructor(private readonly store: MemoryStore) {}
+  private readonly syncDeviceId: string;
+
+  constructor(private readonly store: MemoryStore, options: { syncDeviceId?: string } = {}) {
+    this.syncDeviceId = options.syncDeviceId ?? DEFAULT_LOCAL_SYNC_DEVICE_ID;
+  }
 
   async listProposals(request: ProposalListRequest): Promise<ProposalListResult> {
     const proposals = await this.store.listProposals({
@@ -97,6 +106,7 @@ export class ProposalReviewer {
   async rejectProposal(request: ProposalDecisionRequest): Promise<ProposalRejectionResult> {
     const proposal = await this.loadProposed(request.proposalId);
     await this.store.saveProposal(markProposalDecided(proposal, "rejected", request));
+    await this.emitProposalDecision(proposal, "reject", [], request.decidedAt);
 
     return {
       ok: true,
@@ -105,6 +115,23 @@ export class ProposalReviewer {
       rejectedAt: request.decidedAt,
       updatedProposalIds: [proposal.id]
     };
+  }
+
+  private async emitProposalDecision(
+    proposal: MemoryProposal,
+    decision: "approve" | "reject",
+    effectIds: string[],
+    decidedAt: string
+  ): Promise<void> {
+    if (!proposal.personId) return; // legacy unscoped proposals carry no person to bind a sync operation to
+    await emitLocalSyncOperation(this.store, {
+      personId: proposal.personId,
+      deviceId: this.syncDeviceId,
+      operationKind: "proposal_decision",
+      targetId: proposal.id,
+      effectFingerprint: mutationEffectsFingerprint({ proposalId: proposal.id, decision, effectIds: [...effectIds].sort() }),
+      committedAt: decidedAt
+    });
   }
 
   private async approveBoxProposal(
@@ -136,6 +163,7 @@ export class ProposalReviewer {
 
     await this.store.saveBox(approvedBox);
     await this.store.saveProposal(markProposalDecided(proposal, "approved", request));
+    await this.emitProposalDecision(proposal, "approve", [approvedBox.id], request.decidedAt);
 
     return {
       ok: true,
@@ -179,6 +207,7 @@ export class ProposalReviewer {
       updatedAt: request.decidedAt
     });
     await this.store.saveProposal(markProposalDecided(proposal, "approved", request));
+    await this.emitProposalDecision(proposal, "approve", [parent.id, child.id], request.decidedAt);
 
     return {
       ok: true,
@@ -217,6 +246,7 @@ export class ProposalReviewer {
 
     await this.store.saveTrace(trace);
     await this.store.saveProposal(markProposalDecided(proposal, "approved", request));
+    await this.emitProposalDecision(proposal, "approve", [trace.id], request.decidedAt);
 
     return {
       ok: true,

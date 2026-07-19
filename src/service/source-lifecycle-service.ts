@@ -14,6 +14,7 @@ import {
   type CommitSourceRevocationInput,
   type MutationCommitReceipt
 } from "../storage/mcp-mutation-contracts.js";
+import { DEFAULT_LOCAL_SYNC_DEVICE_ID, emitLocalSyncOperation } from "../sync/materialization/sync-materializer.js";
 
 export interface ApproveSourceInput {
   personId: string;
@@ -39,7 +40,11 @@ export interface SourceDeletionResult {
 }
 
 export class SourceLifecycleService {
-  constructor(private readonly store: MemoryStore) {}
+  private readonly syncDeviceId: string;
+
+  constructor(private readonly store: MemoryStore, options: { syncDeviceId?: string } = {}) {
+    this.syncDeviceId = options.syncDeviceId ?? DEFAULT_LOCAL_SYNC_DEVICE_ID;
+  }
 
   async approve(input: ApproveSourceInput): Promise<SourceGrant> {
     const id = this.grantId(input.personId, input.candidateId);
@@ -102,8 +107,19 @@ export class SourceLifecycleService {
     });
   }
 
-  commitRevocation(input: CommitSourceRevocationInput): Promise<MutationCommitReceipt> {
-    return this.store.commitSourceRevocation(input);
+  async commitRevocation(input: CommitSourceRevocationInput): Promise<MutationCommitReceipt> {
+    const receipt = await this.store.commitSourceRevocation(input);
+    if (receipt.status === "COMMITTED") {
+      await emitLocalSyncOperation(this.store, {
+        personId: input.personId,
+        deviceId: this.syncDeviceId,
+        operationKind: "source_revocation",
+        targetId: input.expectedGrant.candidateId,
+        effectFingerprint: input.effectsFingerprint,
+        committedAt: input.receipt.committedAt
+      });
+    }
+    return receipt;
   }
 
   async assertApproved(personId: string, candidateId: string): Promise<SourceGrant> {
@@ -196,8 +212,77 @@ export class SourceLifecycleService {
     });
   }
 
-  commitDeletion(input: CommitSourceDeletionInput): Promise<MutationCommitReceipt> {
-    return this.store.commitSourceDeletion(input);
+  async commitDeletion(input: CommitSourceDeletionInput): Promise<MutationCommitReceipt> {
+    const receipt = await this.store.commitSourceDeletion(input);
+    if (receipt.status === "COMMITTED") {
+      await emitLocalSyncOperation(this.store, {
+        personId: input.personId,
+        deviceId: this.syncDeviceId,
+        operationKind: "source_deletion",
+        targetId: input.expectedGrant.candidateId,
+        effectFingerprint: input.effectsFingerprint,
+        committedAt: input.receipt.committedAt
+      });
+    }
+    return receipt;
+  }
+
+  /**
+   * Permanently disposes a stale quarantined content offer left behind by a source
+   * revocation/deletion tombstone. Retains the tombstone/audit trail and creates no active
+   * content; converges idempotently with any concurrent restoration decision (materialization is
+   * SyncMaterializer's responsibility — this emits the confirmed local decision).
+   */
+  async keepDeletion(input: {
+    personId: string;
+    candidateId: string;
+    tombstoneTargetId: string;
+    actor: string;
+    decidedAt: string;
+  }): Promise<void> {
+    await emitLocalSyncOperation(this.store, {
+      personId: input.personId,
+      deviceId: this.syncDeviceId,
+      operationKind: "quarantine_resolution",
+      targetId: input.tombstoneTargetId,
+      effectFingerprint: mutationEffectsFingerprint({
+        kind: "keep_deletion",
+        candidateId: input.candidateId,
+        tombstoneTargetId: input.tombstoneTargetId,
+        actor: input.actor,
+        decidedAt: input.decidedAt
+      }),
+      committedAt: input.decidedAt
+    });
+  }
+
+  /**
+   * Creates the reviewed restoration path for exact bounded restored content without clearing the
+   * tombstone or silently resuming source ingestion.
+   */
+  async restoreReviewed(input: {
+    personId: string;
+    candidateId: string;
+    tombstoneTargetId: string;
+    restoredCanonicalEventIds: string[];
+    actor: string;
+    decidedAt: string;
+  }): Promise<void> {
+    await emitLocalSyncOperation(this.store, {
+      personId: input.personId,
+      deviceId: this.syncDeviceId,
+      operationKind: "quarantine_resolution",
+      targetId: input.tombstoneTargetId,
+      effectFingerprint: mutationEffectsFingerprint({
+        kind: "restore_reviewed",
+        candidateId: input.candidateId,
+        tombstoneTargetId: input.tombstoneTargetId,
+        restoredCanonicalEventIds: [...input.restoredCanonicalEventIds].sort(),
+        actor: input.actor,
+        decidedAt: input.decidedAt
+      }),
+      committedAt: input.decidedAt
+    });
   }
 
   grantId(personId: string, candidateId: string): string {

@@ -15,6 +15,11 @@ import { redactKnownSecrets } from "./secret-redactor.js";
 import { createToolCallEvent } from "./tool-call-record.js";
 import { QuarantineService, type QuarantineReason } from "./quarantine-service.js";
 import {
+  DEFAULT_LOCAL_SYNC_DEVICE_ID,
+  emitLocalSyncOperation
+} from "../sync/materialization/sync-materializer.js";
+import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
+import {
   HistorySourceApprovalSchema,
   ImportCheckpointSchema,
   type CodexImportResult,
@@ -33,6 +38,7 @@ export interface ApprovedGrantBatchOptions {
   clock?: () => string;
   authority?: WriteAuthority;
   beforeCommit?: () => void | Promise<void>;
+  syncDeviceId?: string;
 }
 
 interface CompleteLine {
@@ -385,6 +391,19 @@ export async function commitStagedGrantBatch(
         updatedAt: committedAt
       }
     });
+    if (receipt.canonicalEventIds.length > 0) {
+      await emitLocalSyncOperation(store, {
+        personId: grant.personId,
+        deviceId: options.syncDeviceId ?? DEFAULT_LOCAL_SYNC_DEVICE_ID,
+        operationKind: "canonical_append",
+        targetId: receipt.id,
+        effectFingerprint: mutationEffectsFingerprint({
+          canonicalEventIds: [...receipt.canonicalEventIds].sort(),
+          checkpointIds: [...receipt.checkpointIds].sort()
+        }),
+        committedAt
+      });
+    }
     receipts.push(receipt);
   }
 

@@ -11,6 +11,11 @@ import { TurnSchema, type InjectionPacket, type Turn } from "../domain/types.js"
 import type { Embedder } from "../embeddings/embedder.js";
 import { MemoryRetriever } from "../retrieval/memory-retriever.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
+import {
+  DEFAULT_LOCAL_SYNC_DEVICE_ID,
+  emitLocalSyncOperation
+} from "../sync/materialization/sync-materializer.js";
 
 export interface InjectionRequest {
   host: string;
@@ -32,6 +37,7 @@ export interface MemoryServiceOptions {
   scopeId?: string;
   allowLegacyUnscopedRetrieval?: boolean;
   clock?: () => string;
+  syncDeviceId?: string;
 }
 
 export class MemoryService {
@@ -42,6 +48,7 @@ export class MemoryService {
   private readonly sourceInstanceId: string;
   private readonly scopeId: string;
   private readonly clock: () => string;
+  private readonly syncDeviceId: string;
 
   constructor(private readonly store: MemoryStore, options: MemoryServiceOptions = {}) {
     this.retriever = new MemoryRetriever(store, {
@@ -54,6 +61,7 @@ export class MemoryService {
     this.sourceInstanceId = options.sourceInstanceId ?? "default";
     this.scopeId = options.scopeId ?? "personal";
     this.clock = options.clock ?? (() => new Date().toISOString());
+    this.syncDeviceId = options.syncDeviceId ?? DEFAULT_LOCAL_SYNC_DEVICE_ID;
   }
 
   async ingestEvent(event: HostEvent): Promise<Turn | null> {
@@ -118,6 +126,19 @@ export class MemoryService {
 
     await this.store.saveCanonicalEvent(canonicalEvent);
     await this.store.saveTurn(turn);
+    await emitLocalSyncOperation(this.store, {
+      personId: this.personId,
+      deviceId: this.syncDeviceId,
+      operationKind: "host_event_ingest",
+      targetId: canonicalEvent.id,
+      effectFingerprint: mutationEffectsFingerprint({
+        canonicalEventId: canonicalEvent.id,
+        turnId: turn.id,
+        sourceId: source.id,
+        contentHash
+      }),
+      committedAt: importedAt
+    });
     return turn;
   }
 
