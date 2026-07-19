@@ -1,5 +1,10 @@
 import type { Box, Summary } from "../domain/types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
+import {
+  DEFAULT_LOCAL_SYNC_DEVICE_ID,
+  emitLocalSyncOperation
+} from "../sync/materialization/sync-materializer.js";
 
 export interface BoxReviewRequest {
   boxId: string;
@@ -12,7 +17,11 @@ export interface BoxReviewResult {
 }
 
 export class BoxReviewer {
-  constructor(private readonly store: MemoryStore) {}
+  private readonly syncDeviceId: string;
+
+  constructor(private readonly store: MemoryStore, options: { syncDeviceId?: string } = {}) {
+    this.syncDeviceId = options.syncDeviceId ?? DEFAULT_LOCAL_SYNC_DEVICE_ID;
+  }
 
   async approveBox(request: BoxReviewRequest): Promise<BoxReviewResult> {
     const box = await this.loadProposedBox(request.boxId);
@@ -24,6 +33,7 @@ export class BoxReviewer {
     const updatedSummaries = await this.attachSummaries(approvedBox);
 
     await this.store.saveBox(approvedBox);
+    await this.emitReviewedBoxDecision(approvedBox, updatedSummaries, "approved", request.reviewedAt);
     return { box: approvedBox, updatedSummaries };
   }
 
@@ -36,7 +46,29 @@ export class BoxReviewer {
     };
 
     await this.store.saveBox(rejectedBox);
+    await this.emitReviewedBoxDecision(rejectedBox, [], "rejected", request.reviewedAt);
     return { box: rejectedBox, updatedSummaries: [] };
+  }
+
+  private async emitReviewedBoxDecision(
+    box: Box,
+    updatedSummaries: Summary[],
+    decision: "approved" | "rejected",
+    reviewedAt: string
+  ): Promise<void> {
+    if (!box.personId) return; // legacy unscoped boxes carry no person to bind a sync operation to
+    await emitLocalSyncOperation(this.store, {
+      personId: box.personId,
+      deviceId: this.syncDeviceId,
+      operationKind: "reviewed_box_decision",
+      targetId: box.id,
+      effectFingerprint: mutationEffectsFingerprint({
+        boxId: box.id,
+        decision,
+        summaryIds: decision === "approved" ? [...updatedSummaries.map((item) => item.id)].sort() : []
+      }),
+      committedAt: reviewedAt
+    });
   }
 
   private async loadProposedBox(boxId: string): Promise<Box> {

@@ -26,7 +26,8 @@ const ATOMIC_COMMIT_METHODS = new Set<PropertyKey>([
   "commitHistoryImport",
   "commitProposalDecision",
   "commitSourceRevocation",
-  "commitSourceDeletion"
+  "commitSourceDeletion",
+  "commitLocalSyncOperation"
 ]);
 
 export interface CreateMemoryMcpServerOptions extends LoadMemoryMcpProfileOptions {
