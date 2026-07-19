@@ -35,6 +35,15 @@ import type {
   MutationCommitReceipt,
   SourceDeletionEffects
 } from "./mcp-mutation-contracts.js";
+import type {
+  AcceptedSyncOperation,
+  CommitLocalSyncOperationInput,
+  CommitRemoteSyncApplyInput,
+  SealClaimedOutboxEnvelopeInput,
+  SealOutboxResult,
+  SyncCommitReceipt,
+  SyncOutboxOperation
+} from "./sync-contracts.js";
 
 export interface ProposalFilter {
   state?: ProposalState;
@@ -127,4 +136,17 @@ export interface MemoryStore {
   saveTrace(trace: MemoryTrace): Promise<void>;
   getTrace(id: string): Promise<MemoryTrace | null>;
   listTraces(filter?: TraceFilter): Promise<MemoryTrace[]>;
+
+  /** Atomically commits one authoritative local domain-effect proof plus one pending outbox row. */
+  commitLocalSyncOperation(input: CommitLocalSyncOperationInput): Promise<SyncCommitReceipt>;
+  /** Atomically applies one untrusted remote-origin operation; never creates a local outbox row. */
+  commitRemoteSyncApply(input: CommitRemoteSyncApplyInput): Promise<SyncCommitReceipt>;
+  /**
+   * Exact-state CAS that binds expected person/device/outbox identity and row version before
+   * sealing immutable envelope bytes. Only the current claim may assign sequence/protocol.
+   */
+  sealClaimedOutboxEnvelope(input: SealClaimedOutboxEnvelopeInput): Promise<SealOutboxResult>;
+  getSyncReplayFrontier(personId: string, deviceId: string): Promise<number>;
+  listSyncOutboxOperations(personId: string): Promise<SyncOutboxOperation[]>;
+  listAcceptedSyncOperations(personId: string): Promise<AcceptedSyncOperation[]>;
 }
