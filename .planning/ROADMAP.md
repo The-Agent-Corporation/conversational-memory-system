@@ -11,7 +11,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 3: Source Lifecycle Control Plane** — Make approval durable and add revocation, attributable deletion, quarantine/replay, and retrieval boundaries.
 - [x] **Phase 4: Continuous Local Daemon** — Keep approved sources synchronized and incrementally contract new history offline. (completed 2026-07-18)
 - [x] **Phase 5: Generic MCP Interface** — Expose safe host-neutral memory tools to Codex, OpenClaw, Claude-compatible clients, and future agents. (completed 2026-07-19)
-- [ ] **Phase 6: Zero-Knowledge Multi-Device Sync** — Add encrypted device convergence after threat-model and protocol approval.
+- [x] **Phase 6: Zero-Knowledge Multi-Device Sync** — Add encrypted device convergence after threat-model and protocol approval. (completed 2026-07-19)
 - [ ] **Phase 7: Onboarding and Operational Readiness** — Package the product with first-run consent, audit, migration, backup, and performance surfaces.
 
 ## Phase Details
@@ -155,7 +155,7 @@ Plans:
 **Goal**: Synchronize memory without giving the relay decryption capability.
 **Requirements**: REQ-031, REQ-032, REQ-033, REQ-034, REQ-035, REQ-036
 **Status**: Planned — protocol approval gated
-**Plans:** 7/8 plans executed
+**Plans:** 8/8 plans complete
 
 Plans:
 
@@ -180,7 +180,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4)*
 
-- [ ] 06-08-PLAN.md — Implement immutable sealed-byte push/pull, replay defense, production daemon transport selection, complete loopback convergence, structural validation, and blocking real-Keychain UAT.
+- [x] 06-08-PLAN.md — Implement immutable sealed-byte push/pull, replay defense, production daemon transport selection, complete loopback convergence, structural validation, and blocking real-Keychain UAT.
 
 ### Phase 7: Onboarding and Operational Readiness
 
