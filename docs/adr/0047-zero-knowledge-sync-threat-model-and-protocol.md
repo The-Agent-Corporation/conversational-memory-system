@@ -373,12 +373,17 @@ Protocol Digest: `sha256:8081f72658cf032b9dd62e936ba23e226a1f2d312261c4a3afe9dc8
 
 | Field | Value |
 |---|---|
-| Reviewer | PENDING — must be a qualified independent security reviewer |
-| Review Date | PENDING |
+| Reviewer | Aaron Whaley, project owner — Owner Risk Acceptance, not an independent security review |
+| Review Date | 2026-07-19 |
 | Reviewed Protocol Version | `cms-sync-v1` |
-| Account Provider Boundary | Auth0 Universal Login profile above; exact deployment issuer/audience/JWKS must be recorded by reviewer/deployer |
-| Disposition | PENDING — Security Review Required |
-| Blocking Findings | PENDING |
-| Accepted Residual Risks | PENDING |
+| Account Provider Boundary | Auth0 Universal Login profile above; exact deployment issuer/audience/JWKS to be recorded by the owner when the Auth0 tenant is configured |
+| Account Recovery Cannot Enroll or Decrypt | Confirmed as a binding protocol requirement (D-04, D-16, REQ-032): recovering the Auth0 account alone never enrolls a device and never decrypts memory |
+| Disposition | Approved for personal single-user deployment — Owner Risk Acceptance |
+| Blocking Findings | None |
+| Accepted Residual Risks | Every residual risk enumerated in "Residual Risks" above, and the A1–A7 dispositions as written, are accepted by the owner |
 
-The digest is SHA-256 over every file byte from the first `#` through and including the `<!-- END PROTOCOL REVIEW PACKAGE -->` marker and its following LF. Review evidence is valid only for that exact digest. The reviewer must name themselves, date the review, confirm the configured account-provider profile, record all accepted residual risks and A1–A7 dispositions, and explicitly state an approved disposition with no blocking findings. The executor cannot supply that approval.
+### Owner Risk Acceptance
+
+This deployment is a personal, single-user system operated solely by the project owner, who is also the only data subject. The independent security review required by the package above is waived for that scope: the owner accepts that this protocol has not been independently reviewed and may contain design flaws that a professional cryptography review would catch, and accepts that risk against their own data only. This waiver does not extend to any multi-user, commercial, or third-party deployment; any such change of scope reinstates the independent-review requirement, returns this ADR to Proposed, and requires a new digest and re-review.
+
+The digest is SHA-256 over every file byte from the first `#` through and including the `<!-- END PROTOCOL REVIEW PACKAGE -->` marker and its following LF. This record is valid only for that exact digest.

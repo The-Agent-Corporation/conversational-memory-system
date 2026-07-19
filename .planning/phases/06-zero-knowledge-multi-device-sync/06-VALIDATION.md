@@ -26,7 +26,7 @@ updated: 2026-07-19
 
 | Wave | Plans | Dependency gate |
 |------|-------|-----------------|
-| 1 | 06-01 | None; blocks production protocol implementation on independent digest-bound approval |
+| 1 | 06-01 | None; blocks protocol implementation on digest-bound owner risk acceptance (independent review waived for personal single-user deployment per ADR 0047 Security Review Record) |
 | 2 | 06-02, 06-03 | Both depend on 06-01; files do not overlap |
 | 3 | 06-04, 06-05 | Both depend on 06-02; files do not overlap |
 | 4 | 06-06, 06-07 | 06-06 depends on 06-03/04/05; 06-07 depends on 06-04; files do not overlap |
@@ -38,7 +38,7 @@ updated: 2026-07-19
 |---------|------|------|--------------|-------------|---------------------------|--------|
 | 06-01-00 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03 | `git status --short && git branch --show-current && git diff --check` | pending |
 | 06-01-01 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03, T-06-SC | `node scripts/benchmark-sync-padding.mjs && node -e "const fs=require('fs'); const p='docs/adr/0047-zero-knowledge-sync-threat-model-and-protocol.md'; const s=fs.readFileSync(p,'utf8'); for (let i=1;i<=16;i++){const d='D-'+String(i).padStart(2,'0'); if(!s.includes(d)) throw new Error('missing '+d)} for (let i=31;i<=36;i++){const q='REQ-'+String(i).padStart(3,'0'); if(!s.includes(q)) throw new Error('missing '+q)} for (const x of ['Threat Model','Protocol Version','Wire','Recovery','Revocation','Tombstone','Conflict','Padding Policy','split-view','Merkle','Residual Risk','Security Review']) if(!s.includes(x)) throw new Error('missing '+x);" && node -e "const s=require('fs').readFileSync('.planning/phases/06-zero-knowledge-multi-device-sync/06-VALIDATION.md','utf8'); if(!/wave_0_complete: false/.test(s)||!/nyquist_compliant: false/.test(s)||/TBD-03[1-6]/.test(s)) process.exit(1)"` | pending |
-| 06-01-02 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03 | `node -e "const s=require('fs').readFileSync('docs/adr/0047-zero-knowledge-sync-threat-model-and-protocol.md','utf8'); for (const x of ['Reviewer','Review Date','Protocol Digest','Account Provider Boundary','Email Signup','Email Login','Password Recovery','Passkey Recovery','Account Recovery Cannot Enroll or Decrypt','Disposition: Approved','Blocking Findings: None']) if(!s.includes(x)) throw new Error('missing approval evidence: '+x)"` | pending |
+| 06-01-02 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03 | `node -e "const s=require('fs').readFileSync('docs/adr/0047-zero-knowledge-sync-threat-model-and-protocol.md','utf8'); for (const x of ['Reviewer','Review Date','Protocol Digest','Account Provider Boundary','Email Signup','Email Login','Password Recovery','Passkey Recovery','Account Recovery Cannot Enroll or Decrypt','Owner Risk Acceptance','| Disposition | Approved for personal single-user deployment','| Blocking Findings | None']) if(!s.includes(x)) throw new Error('missing approval evidence: '+x)"` | pending |
 | 06-02-01 | 06-02 | 2 | REQ-031, REQ-034, REQ-036 | T-06-07, T-06-SC | `npx vitest run tests/sync/protocol-contracts.test.ts && npm run typecheck` | pending |
 | 06-02-02 | 06-02 | 2 | REQ-031, REQ-034, REQ-036 | T-06-04–T-06-07 | `npx vitest run tests/sync/crypto-envelope.test.ts && npm run typecheck` | pending |
 | 06-03-01 | 06-03 | 2 | REQ-031, REQ-032, REQ-033 | T-06-09, T-06-10 | `npx vitest run tests/sync/device-secret-store.test.ts && npm run typecheck` | pending |
@@ -82,7 +82,7 @@ updated: 2026-07-19
 
 ## Wave 0 Gaps
 
-- [ ] **06-01:** ADR 0047, benchmark, exact eight-plan validation mapping, and independent digest-bound protocol/account-provider approval.
+- [ ] **06-01:** ADR 0047, benchmark, exact eight-plan validation mapping, and digest-bound owner risk acceptance (independent review waived for personal single-user deployment).
 - [ ] **06-02:** Audited dependencies, strict contracts, fixtures, crypto provider, and vectors.
 - [ ] **06-03:** DeviceSecretStore, deterministic fake, production macOS Keychain adapter/helper, and leakage/rotation tests.
 - [ ] **06-04:** Atomic local outbox/remote apply, immutable pre-upload envelope sealing, and both local adapter implementations.
