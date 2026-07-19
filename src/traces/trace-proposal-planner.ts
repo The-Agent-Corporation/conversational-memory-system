@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Anchor, Box, MemoryProposal, MemoryTrace, Summary } from "../domain/types.js";
 import {
   dedupeTurnRanges,
@@ -10,6 +11,7 @@ import {
 
 export interface TraceProposalPlanningRequest {
   reviewedAt: string;
+  idNamespace?: string;
   summaries: Summary[];
   boxes: Box[];
   anchors: Anchor[];
@@ -46,7 +48,11 @@ export class DeterministicTraceProposalPlanner implements TraceProposalPlanner {
     const skippedCandidates: TraceProposalPlanningResult["skippedCandidates"] = [];
     const proposals: MemoryProposal[] = [];
 
-    for (const candidate of buildTraceCandidates(request.summaries, request.boxes)) {
+    for (const candidate of buildTraceCandidates(
+      request.summaries,
+      request.boxes,
+      request.idNamespace
+    )) {
       if (candidate.continuityTerms.length < 2) {
         skippedCandidates.push({
           title: candidate.title,
@@ -105,7 +111,11 @@ export class DeterministicTraceProposalPlanner implements TraceProposalPlanner {
   }
 }
 
-function buildTraceCandidates(summaries: Summary[], boxes: Box[]): TraceCandidate[] {
+function buildTraceCandidates(
+  summaries: Summary[],
+  boxes: Box[],
+  idNamespace?: string
+): TraceCandidate[] {
   const candidates = new Map<string, TraceCandidate>();
 
   for (let leftIndex = 0; leftIndex < summaries.length; leftIndex += 1) {
@@ -124,7 +134,7 @@ function buildTraceCandidates(summaries: Summary[], boxes: Box[]): TraceCandidat
         .filter((term, index, terms) => terms.indexOf(term) === index)
         .slice(0, 4);
       const title = titleCase(titleTerms.join(" "));
-      const traceId = `trace_${slugify(title)}`;
+      const traceId = scopedId(`trace_${slugify(title)}`, idNamespace);
       const existing = candidates.get(traceId);
       const pairSummaries = [left, right];
       const summariesForCandidate = existing
@@ -143,6 +153,12 @@ function buildTraceCandidates(summaries: Summary[], boxes: Box[]): TraceCandidat
   }
 
   return [...candidates.values()];
+}
+
+function scopedId(baseId: string, namespace?: string): string {
+  if (!namespace) return baseId;
+  const suffix = createHash("sha256").update(namespace).digest("hex").slice(0, 12);
+  return `${baseId}_${suffix}`;
 }
 
 function buildTraceProposal(candidate: TraceCandidate, reviewedAt: string, confidence: number): MemoryProposal {

@@ -118,6 +118,7 @@ export class ProposalReviewer {
       : null;
     const approvedBox: Box = {
       id: payload.boxId,
+      ...(proposal.personId ? { personId: proposal.personId } : {}),
       title: payload.title,
       description: payload.description,
       parentBoxId,
@@ -161,6 +162,9 @@ export class ProposalReviewer {
     if (!child) {
       throw new Error(`Child box ${payload.childBoxId} was not found`);
     }
+    if (parent.personId !== proposal.personId || child.personId !== proposal.personId) {
+      throw new Error("Parent-child proposal crosses a person boundary");
+    }
 
     await this.store.saveBox({
       ...parent,
@@ -196,6 +200,7 @@ export class ProposalReviewer {
     const existing = await this.store.getTrace(payload.traceId);
     const trace: MemoryTrace = {
       id: payload.traceId,
+      ...(proposal.personId ? { personId: proposal.personId } : {}),
       title: payload.title,
       description: payload.description,
       traceType: payload.traceType,

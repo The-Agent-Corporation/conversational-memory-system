@@ -3,11 +3,14 @@ import {
   ParentChildProposalPayloadSchema,
   TraceProposalPayloadSchema,
   type Box,
+  type BoxProposalPayload,
   type MemoryProposal,
   type MemoryTrace,
+  type ParentChildProposalPayload,
   type ProposalState,
   type ProposalType,
-  type Summary
+  type Summary,
+  type TraceProposalPayload
 } from "../domain/types.js";
 import type { ProfileAuthority } from "../mcp/authority.js";
 import {
@@ -70,7 +73,7 @@ export class ScopedProposalReviewer {
     });
     const authorized: MemoryProposal[] = [];
     for (const proposal of candidates) {
-      if (await this.isAuthorized(proposal)) authorized.push(proposal);
+      if (await this.authorizedClosure(proposal)) authorized.push(proposal);
     }
     const limited = authorized.slice(0, request.limit ?? 20);
     return {
@@ -82,7 +85,10 @@ export class ScopedProposalReviewer {
 
   async planDecision(request: ProposalDecisionPlanRequest): Promise<CommitProposalDecisionInput> {
     const proposal = await this.store.getProposal(request.proposalId);
-    if (!proposal || proposal.state !== "proposed" || !await this.isAuthorized(proposal)) {
+    const closure = proposal && proposal.state === "proposed"
+      ? await this.authorizedClosure(proposal)
+      : null;
+    if (!proposal || proposal.state !== "proposed" || !closure) {
       throw new ScopedProposalError();
     }
 
@@ -90,10 +96,9 @@ export class ScopedProposalReviewer {
     const nextTraces: MemoryTrace[] = [];
     if (request.decision === "approve") {
       if (proposal.proposalType === "box") {
-        const payload = BoxProposalPayloadSchema.parse(proposal.payload);
-        const existing = await this.store.getBox(payload.boxId);
-        const parent = payload.candidateParentBoxId ? await this.store.getBox(payload.candidateParentBoxId) : null;
-        if (parent && !await this.authorizeSummaryIds(parent.summaryIds)) throw new ScopedProposalError();
+        const payload: BoxProposalPayload = BoxProposalPayloadSchema.parse(proposal.payload);
+        const existing = closure.boxes.get(payload.boxId) ?? null;
+        const parent = payload.candidateParentBoxId ? closure.boxes.get(payload.candidateParentBoxId) ?? null : null;
         nextBoxes.push({
           id: payload.boxId,
           personId: this.authority.personId,
@@ -112,17 +117,17 @@ export class ScopedProposalReviewer {
           lastActivityAt: request.decidedAt
         });
       } else if (proposal.proposalType === "box_parent_child") {
-        const payload = ParentChildProposalPayloadSchema.parse(proposal.payload);
-        const [parent, child] = await Promise.all([this.store.getBox(payload.parentBoxId), this.store.getBox(payload.childBoxId)]);
-        if (!parent || !child || parent.personId !== this.authority.personId || child.personId !== this.authority.personId ||
-            !await this.authorizeSummaryIds([...parent.summaryIds, ...child.summaryIds])) throw new ScopedProposalError();
+        const payload: ParentChildProposalPayload = ParentChildProposalPayloadSchema.parse(proposal.payload);
+        const parent = closure.boxes.get(payload.parentBoxId) ?? null;
+        const child = closure.boxes.get(payload.childBoxId) ?? null;
+        if (!parent || !child) throw new ScopedProposalError();
         nextBoxes.push(
           { ...parent, childBoxIds: parent.childBoxIds.includes(child.id) ? parent.childBoxIds : [...parent.childBoxIds, child.id], updatedAt: request.decidedAt },
           { ...child, parentBoxId: parent.id, updatedAt: request.decidedAt }
         );
       } else {
-        const payload = TraceProposalPayloadSchema.parse(proposal.payload);
-        const existing = await this.store.getTrace(payload.traceId);
+        const payload: TraceProposalPayload = TraceProposalPayloadSchema.parse(proposal.payload);
+        const existing = closure.traces.get(payload.traceId) ?? null;
         nextTraces.push({
           id: payload.traceId,
           personId: this.authority.personId,
@@ -158,6 +163,10 @@ export class ScopedProposalReviewer {
       operation: "proposal_decision",
       personId: this.authority.personId,
       decision: request.decision,
+      allowedScopeIds: [...this.authority.allowedScopeIds].sort(),
+      expectedSummaries: closure.expectedSummaries,
+      expectedBoxes: closure.expectedBoxes,
+      expectedTraces: closure.expectedTraces,
       expectedProposal: proposal,
       nextProposal,
       nextBoxes,
@@ -175,34 +184,109 @@ export class ScopedProposalReviewer {
     });
   }
 
-  private async isAuthorized(proposal: MemoryProposal): Promise<boolean> {
-    if (proposal.personId !== this.authority.personId) return false;
-    const dependencyIds = new Set(proposal.sourceSummaryIds);
-    for (const boxId of proposal.targetBoxIds) {
-      const box = await this.store.getBox(boxId);
-      if (!box || box.personId !== this.authority.personId) return false;
-      box.summaryIds.forEach((id) => dependencyIds.add(id));
-    }
-    for (const traceId of proposal.targetTraceIds) {
-      const trace = await this.store.getTrace(traceId);
-      if (!trace || trace.personId !== this.authority.personId) return false;
-      trace.summaryIds.forEach((id) => dependencyIds.add(id));
-    }
-    return this.authorizeSummaryIds([...dependencyIds]);
-  }
+  private async authorizedClosure(proposal: MemoryProposal): Promise<{
+    expectedSummaries: Summary[];
+    expectedBoxes: Array<{ id: string; value: Box | null }>;
+    expectedTraces: Array<{ id: string; value: MemoryTrace | null }>;
+    boxes: Map<string, Box>;
+    traces: Map<string, MemoryTrace>;
+  } | null> {
+    if (proposal.personId !== this.authority.personId) return null;
 
-  private async authorizeSummaryIds(summaryIds: readonly string[]): Promise<boolean> {
-    const summaries = new Map((await this.store.listSummaries()).map((summary) => [summary.id, summary]));
-    const allowedScopes = new Set(this.authority.allowedScopeIds);
-    const seen = new Set<string>();
-    const visit = (id: string): boolean => {
-      if (seen.has(id)) return true;
-      const summary: Summary | undefined = summaries.get(id);
-      if (!summary || summary.personId !== this.authority.personId || summary.state === "superseded" ||
-          !(summary.scopeIds ?? []).every((scopeId) => allowedScopes.has(scopeId))) return false;
-      seen.add(id);
-      return summary.sourceSummaryIds.every(visit);
+    const summaryIds = new Set(proposal.sourceSummaryIds);
+    const boxIds = new Set(proposal.targetBoxIds);
+    const traceIds = new Set(proposal.targetTraceIds);
+    const requiredBoxIds = new Set<string>();
+    if (proposal.proposalType === "box") {
+      const payload = BoxProposalPayloadSchema.safeParse(proposal.payload);
+      if (!payload.success) return null;
+      payload.data.sourceSummaryIds.forEach((id) => summaryIds.add(id));
+      boxIds.add(payload.data.boxId);
+      if (payload.data.candidateParentBoxId) {
+        boxIds.add(payload.data.candidateParentBoxId);
+        requiredBoxIds.add(payload.data.candidateParentBoxId);
+      }
+    } else if (proposal.proposalType === "box_parent_child") {
+      const payload = ParentChildProposalPayloadSchema.safeParse(proposal.payload);
+      if (!payload.success) return null;
+      payload.data.sourceSummaryIds.forEach((id) => summaryIds.add(id));
+      boxIds.add(payload.data.parentBoxId);
+      boxIds.add(payload.data.childBoxId);
+      requiredBoxIds.add(payload.data.parentBoxId);
+      requiredBoxIds.add(payload.data.childBoxId);
+    } else {
+      const payload = TraceProposalPayloadSchema.safeParse(proposal.payload);
+      if (!payload.success) return null;
+      payload.data.summaryIds.forEach((id) => summaryIds.add(id));
+      payload.data.boxIds.forEach((id) => {
+        boxIds.add(id);
+        requiredBoxIds.add(id);
+      });
+      traceIds.add(payload.data.traceId);
+    }
+
+    const allSummaries = new Map((await this.store.listSummaries()).map((item) => [item.id, item]));
+    const allBoxes = new Map((await this.store.listBoxes()).map((item) => [item.id, item]));
+    const allTraces = new Map((await this.store.listTraces()).map((item) => [item.id, item]));
+    const visitedBoxes = new Set<string>();
+    const visitBox = (id: string): boolean => {
+      if (visitedBoxes.has(id)) return !requiredBoxIds.has(id) || allBoxes.has(id);
+      visitedBoxes.add(id);
+      const box = allBoxes.get(id);
+      if (!box) return !requiredBoxIds.has(id);
+      if (box.personId !== this.authority.personId) return false;
+      box.summaryIds.forEach((summaryId) => summaryIds.add(summaryId));
+      if (box.parentBoxId) {
+        boxIds.add(box.parentBoxId);
+        requiredBoxIds.add(box.parentBoxId);
+        if (!visitBox(box.parentBoxId)) return false;
+      }
+      for (const childId of box.childBoxIds) {
+        boxIds.add(childId);
+        requiredBoxIds.add(childId);
+        if (!visitBox(childId)) return false;
+      }
+      return true;
     };
-    return summaryIds.every(visit);
+    for (const id of [...boxIds]) if (!visitBox(id)) return null;
+
+    for (const id of [...traceIds]) {
+      const trace = allTraces.get(id);
+      if (!trace) continue;
+      if (trace.personId !== this.authority.personId) return null;
+      trace.summaryIds.forEach((summaryId) => summaryIds.add(summaryId));
+      for (const boxId of trace.boxIds) {
+        boxIds.add(boxId);
+        requiredBoxIds.add(boxId);
+        if (!visitBox(boxId)) return null;
+      }
+    }
+
+    const allowedScopes = new Set(this.authority.allowedScopeIds);
+    const visitedSummaries = new Set<string>();
+    const visitSummary = (id: string): boolean => {
+      if (visitedSummaries.has(id)) return true;
+      const summary = allSummaries.get(id);
+      if (!summary || summary.personId !== this.authority.personId || summary.state === "superseded" ||
+          summary.scopeIds === undefined || summary.scopeIds.some((scopeId) => !allowedScopes.has(scopeId))) return false;
+      visitedSummaries.add(id);
+      for (const sourceId of summary.sourceSummaryIds) {
+        summaryIds.add(sourceId);
+        if (!visitSummary(sourceId)) return false;
+      }
+      return true;
+    };
+    for (const id of [...summaryIds]) if (!visitSummary(id)) return null;
+
+    const sortedSummaryIds = [...summaryIds].sort();
+    const sortedBoxIds = [...boxIds].sort();
+    const sortedTraceIds = [...traceIds].sort();
+    return {
+      expectedSummaries: sortedSummaryIds.map((id) => allSummaries.get(id)!),
+      expectedBoxes: sortedBoxIds.map((id) => ({ id, value: allBoxes.get(id) ?? null })),
+      expectedTraces: sortedTraceIds.map((id) => ({ id, value: allTraces.get(id) ?? null })),
+      boxes: allBoxes,
+      traces: allTraces
+    };
   }
 }

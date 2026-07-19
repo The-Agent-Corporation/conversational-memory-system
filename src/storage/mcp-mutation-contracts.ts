@@ -13,7 +13,11 @@ import {
   JsonObjectSchema,
   MemoryProposalSchema,
   MemoryTraceSchema,
-  SummarySchema
+  SummarySchema,
+  type Box,
+  type MemoryProposal,
+  type MemoryTrace,
+  type Summary
 } from "../domain/types.js";
 import { ImportCheckpointSchema } from "../imports/types.js";
 
@@ -44,6 +48,35 @@ const ProposalEffectsSchema = z.object({
   boxIds: IdListSchema,
   traceIds: IdListSchema
 }).strict();
+
+export const ExpectedBoxStateSchema = z.object({
+  id: IdSchema,
+  value: BoxSchema.nullable()
+}).strict().superRefine((state, context) => {
+  if (state.value !== null && state.value.id !== state.id) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Expected Box state ID mismatch", path: ["value", "id"] });
+  }
+});
+
+export const ExpectedTraceStateSchema = z.object({
+  id: IdSchema,
+  value: MemoryTraceSchema.nullable()
+}).strict().superRefine((state, context) => {
+  if (state.value !== null && state.value.id !== state.id) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Expected Trace state ID mismatch", path: ["value", "id"] });
+  }
+});
+
+export const ProposalDependencyClosureSchema = z.object({
+  allowedScopeIds: IdListSchema,
+  expectedSummaries: z.array(SummarySchema),
+  expectedBoxes: z.array(ExpectedBoxStateSchema),
+  expectedTraces: z.array(ExpectedTraceStateSchema)
+}).strict();
+
+export type ExpectedBoxState = z.infer<typeof ExpectedBoxStateSchema>;
+export type ExpectedTraceState = z.infer<typeof ExpectedTraceStateSchema>;
+export type ProposalDependencyClosure = z.infer<typeof ProposalDependencyClosureSchema>;
 
 export const SourceDeletionEffectsSchema = z.object({
   sourceIds: IdListSchema,
@@ -82,6 +115,177 @@ const assertIdsEqual = (
   if (new Set(value).size !== value.length || stableJson([...value].sort()) !== stableJson([...expected].sort())) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Exact effect IDs do not match supplied objects", path });
   }
+};
+
+const sortedUnique = (ids: readonly string[]): string[] => [...new Set(ids)].sort();
+const isSortedUnique = (ids: readonly string[]): boolean =>
+  ids.length === new Set(ids).size && stableJson(ids) === stableJson([...ids].sort());
+
+interface ProposalAuthorizationSnapshot extends ProposalDependencyClosure {
+  personId: string;
+  expectedProposal: MemoryProposal;
+  nextBoxes: Box[];
+  nextTraces: MemoryTrace[];
+}
+
+const proposalPayloadReferences = (proposal: MemoryProposal): {
+  summaryIds: string[];
+  boxIds: string[];
+  traceIds: string[];
+  requiredBoxIds: string[];
+} => {
+  if (proposal.proposalType === "box") {
+    const payload = z.object({
+      boxId: IdSchema,
+      sourceSummaryIds: IdListSchema,
+      candidateParentBoxId: IdSchema.nullable()
+    }).passthrough().parse(proposal.payload);
+    return {
+      summaryIds: payload.sourceSummaryIds,
+      boxIds: [payload.boxId, ...(payload.candidateParentBoxId ? [payload.candidateParentBoxId] : [])],
+      traceIds: [],
+      requiredBoxIds: payload.candidateParentBoxId ? [payload.candidateParentBoxId] : []
+    };
+  }
+  if (proposal.proposalType === "box_parent_child") {
+    const payload = z.object({
+      parentBoxId: IdSchema,
+      childBoxId: IdSchema,
+      sourceSummaryIds: IdListSchema
+    }).passthrough().parse(proposal.payload);
+    return {
+      summaryIds: payload.sourceSummaryIds,
+      boxIds: [payload.parentBoxId, payload.childBoxId],
+      traceIds: [],
+      requiredBoxIds: [payload.parentBoxId, payload.childBoxId]
+    };
+  }
+  const payload = z.object({
+    traceId: IdSchema,
+    summaryIds: IdListSchema,
+    boxIds: IdListSchema
+  }).passthrough().parse(proposal.payload);
+  return {
+    summaryIds: payload.summaryIds,
+    boxIds: payload.boxIds,
+    traceIds: [payload.traceId],
+    requiredBoxIds: payload.boxIds
+  };
+};
+
+/** Pure authorization and dependency-coverage validator shared by schema parsing and both stores. */
+export const proposalDecisionAuthorizationIssues = (input: ProposalAuthorizationSnapshot): string[] => {
+  const issues: string[] = [];
+  if (!isSortedUnique(input.allowedScopeIds)) issues.push("Allowed scopes must be unique and sorted");
+  const summaryIds = input.expectedSummaries.map((item) => item.id);
+  const boxIds = input.expectedBoxes.map((item) => item.id);
+  const traceIds = input.expectedTraces.map((item) => item.id);
+  if (!isSortedUnique(summaryIds)) issues.push("Expected Summary IDs must be unique and sorted");
+  if (!isSortedUnique(boxIds)) issues.push("Expected Box IDs must be unique and sorted");
+  if (!isSortedUnique(traceIds)) issues.push("Expected Trace IDs must be unique and sorted");
+
+  const allowedScopes = new Set(input.allowedScopeIds);
+  const summaries = new Map(input.expectedSummaries.map((item) => [item.id, item]));
+  const boxes = new Map(input.expectedBoxes.map((item) => [item.id, item.value]));
+  const traces = new Map(input.expectedTraces.map((item) => [item.id, item.value]));
+  for (const summary of input.expectedSummaries) {
+    if (summary.personId !== input.personId || summary.state === "superseded" ||
+        summary.scopeIds === undefined || summary.scopeIds.some((scopeId) => !allowedScopes.has(scopeId))) {
+      issues.push(`Unauthorized Summary snapshot: ${summary.id}`);
+    }
+  }
+  for (const state of input.expectedBoxes) {
+    if (state.value !== null && state.value.personId !== input.personId) issues.push(`Unauthorized Box snapshot: ${state.id}`);
+  }
+  for (const state of input.expectedTraces) {
+    if (state.value !== null && state.value.personId !== input.personId) issues.push(`Unauthorized Trace snapshot: ${state.id}`);
+  }
+
+  const payload = proposalPayloadReferences(input.expectedProposal);
+  const neededSummaries = new Set([...input.expectedProposal.sourceSummaryIds, ...payload.summaryIds]);
+  const neededBoxes = new Set([...input.expectedProposal.targetBoxIds, ...payload.boxIds]);
+  const neededTraces = new Set([...input.expectedProposal.targetTraceIds, ...payload.traceIds]);
+  const requiredBoxes = new Set(payload.requiredBoxIds);
+
+  for (const box of input.nextBoxes) {
+    neededBoxes.add(box.id);
+    box.summaryIds.forEach((id) => neededSummaries.add(id));
+    if (box.parentBoxId) {
+      neededBoxes.add(box.parentBoxId);
+      requiredBoxes.add(box.parentBoxId);
+    }
+    box.childBoxIds.forEach((id) => {
+      neededBoxes.add(id);
+      requiredBoxes.add(id);
+    });
+  }
+  for (const trace of input.nextTraces) {
+    neededTraces.add(trace.id);
+    trace.summaryIds.forEach((id) => neededSummaries.add(id));
+    trace.boxIds.forEach((id) => {
+      neededBoxes.add(id);
+      requiredBoxes.add(id);
+    });
+  }
+
+  const visitedBoxes = new Set<string>();
+  const visitBox = (id: string): void => {
+    if (visitedBoxes.has(id)) {
+      if (requiredBoxes.has(id) && (boxes.get(id) ?? null) === null) {
+        issues.push(`Required Box is absent: ${id}`);
+      }
+      return;
+    }
+    visitedBoxes.add(id);
+    if (!boxes.has(id)) return;
+    const box = boxes.get(id) ?? null;
+    if (box === null) {
+      if (requiredBoxes.has(id)) issues.push(`Required Box is absent: ${id}`);
+      return;
+    }
+    box.summaryIds.forEach((summaryId) => neededSummaries.add(summaryId));
+    if (box.parentBoxId) {
+      neededBoxes.add(box.parentBoxId);
+      requiredBoxes.add(box.parentBoxId);
+      visitBox(box.parentBoxId);
+    }
+    box.childBoxIds.forEach((childId) => {
+      neededBoxes.add(childId);
+      requiredBoxes.add(childId);
+      visitBox(childId);
+    });
+  };
+  for (const id of [...neededBoxes]) visitBox(id);
+
+  for (const id of [...neededTraces]) {
+    if (!traces.has(id)) continue;
+    const trace = traces.get(id) ?? null;
+    if (trace === null) continue;
+    trace.summaryIds.forEach((summaryId) => neededSummaries.add(summaryId));
+    trace.boxIds.forEach((boxId) => {
+      neededBoxes.add(boxId);
+      requiredBoxes.add(boxId);
+      visitBox(boxId);
+    });
+  }
+
+  const visitedSummaries = new Set<string>();
+  const visitSummary = (id: string): void => {
+    if (visitedSummaries.has(id)) return;
+    visitedSummaries.add(id);
+    const summary = summaries.get(id);
+    if (!summary) return;
+    summary.sourceSummaryIds.forEach((sourceId) => {
+      neededSummaries.add(sourceId);
+      visitSummary(sourceId);
+    });
+  };
+  for (const id of [...neededSummaries]) visitSummary(id);
+
+  if (stableJson(summaryIds) !== stableJson(sortedUnique([...neededSummaries]))) issues.push("Summary dependency closure is incomplete or contains extras");
+  if (stableJson(boxIds) !== stableJson(sortedUnique([...neededBoxes]))) issues.push("Box dependency closure is incomplete or contains extras");
+  if (stableJson(traceIds) !== stableJson(sortedUnique([...neededTraces]))) issues.push("Trace dependency closure is incomplete or contains extras");
+  return issues;
 };
 
 export const CommitHistoryImportInputSchema = z.object({
@@ -130,6 +334,7 @@ export const CommitProposalDecisionInputSchema = z.object({
   operation: z.literal("proposal_decision"),
   personId: IdSchema,
   decision: z.enum(["approve", "reject"]),
+  ...ProposalDependencyClosureSchema.shape,
   expectedProposal: MemoryProposalSchema,
   nextProposal: MemoryProposalSchema,
   nextBoxes: z.array(BoxSchema),
@@ -144,12 +349,41 @@ export const CommitProposalDecisionInputSchema = z.object({
       input.nextProposal.state !== (input.decision === "approve" ? "approved" : "rejected")) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Proposal decision state mismatch" });
   }
+  for (const issue of proposalDecisionAuthorizationIssues(input)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: issue });
+  }
   if (input.effectsFingerprint !== mutationEffectsFingerprint(input.effects)) context.addIssue({ code: z.ZodIssueCode.custom, message: "Proposal effects fingerprint mismatch" });
   assertIdsEqual([input.nextProposal.id], input.effects.proposalIds, context, ["effects", "proposalIds"]);
   assertIdsEqual(input.nextBoxes.map((item) => item.id), input.effects.boxIds, context, ["effects", "boxIds"]);
   assertIdsEqual(input.nextTraces.map((item) => item.id), input.effects.traceIds, context, ["effects", "traceIds"]);
   if (input.receipt.operation !== input.operation || input.receipt.personId !== input.personId || input.receipt.targetId !== input.expectedProposal.id) context.addIssue({ code: z.ZodIssueCode.custom, message: "Proposal receipt binding mismatch", path: ["receipt"] });
 });
+
+export const proposalDecisionStateMatches = (
+  input: CommitProposalDecisionInput,
+  current: {
+    proposal: MemoryProposal | null;
+    summaries: Summary[];
+    boxes: ExpectedBoxState[];
+    traces: ExpectedTraceState[];
+  }
+): boolean => {
+  if (stableJson(current.proposal) !== stableJson(input.expectedProposal) ||
+      stableJson(current.summaries) !== stableJson(input.expectedSummaries) ||
+      stableJson(current.boxes) !== stableJson(input.expectedBoxes) ||
+      stableJson(current.traces) !== stableJson(input.expectedTraces)) return false;
+  if (current.proposal === null) return false;
+  return proposalDecisionAuthorizationIssues({
+    personId: input.personId,
+    allowedScopeIds: input.allowedScopeIds,
+    expectedProposal: current.proposal,
+    expectedSummaries: current.summaries,
+    expectedBoxes: current.boxes,
+    expectedTraces: current.traces,
+    nextBoxes: input.nextBoxes,
+    nextTraces: input.nextTraces
+  }).length === 0;
+};
 
 export const CommitSourceRevocationInputSchema = z.object({
   operation: z.literal("source_revocation"),

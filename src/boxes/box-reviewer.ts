@@ -57,7 +57,11 @@ export class BoxReviewer {
     const updatedSummaries: Summary[] = [];
 
     for (const summary of summaries) {
-      if (!box.summaryIds.includes(summary.id) || summary.boxIds.includes(box.id)) {
+      if (
+        summary.personId !== box.personId ||
+        !box.summaryIds.includes(summary.id) ||
+        summary.boxIds.includes(box.id)
+      ) {
         continue;
       }
 

@@ -14,6 +14,11 @@ import type {
   MutationCommitReceipt
 } from "../storage/mcp-mutation-contracts.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import {
+  planConfiguredHistoryImport,
+  type ConfiguredHistoryImportRequest
+} from "../imports/history-import-command.js";
+import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
 
 export type MutationApplicationErrorCode =
   | "UNAUTHORIZED_OR_NOT_FOUND"
@@ -45,7 +50,7 @@ type StoredPlan =
   | { kind: "proposal_approve" | "proposal_reject"; input: CommitProposalDecisionInput }
   | { kind: "source_revoke"; input: CommitSourceRevocationInput }
   | { kind: "source_delete"; input: CommitSourceDeletionInput }
-  | { kind: "history_ingest"; input: CommitHistoryImportInput };
+  | { kind: "history_ingest"; input: CommitHistoryImportInput; request: ConfiguredHistoryImportRequest };
 
 interface ProposalMutationRequest extends Omit<ProposalDecisionPlanRequest, "decision"> {}
 interface SourceRevocationRequest { candidateId: string; actor: string; revokedAt: string }
@@ -63,6 +68,44 @@ export class MemoryMutationApplication {
 
   async previewProposalApproval(request: ProposalMutationRequest) {
     return this.previewProposal("approve", request);
+  }
+
+  async previewHistoryIngest(request: ConfiguredHistoryImportRequest) {
+    let input: CommitHistoryImportInput;
+    try {
+      input = await planConfiguredHistoryImport(this.options.store, this.options.authority, request);
+    } catch {
+      throw new MutationApplicationError("UNAUTHORIZED_OR_NOT_FOUND");
+    }
+    const targetIds = [input.candidateId, ...input.targetCanonicalEventIds];
+    const confirmation = this.options.confirmations.issue(this.intent("history_ingest", targetIds, input.normalizedParameters, input.effectsFingerprint));
+    this.plans.set(confirmation.token, { kind: "history_ingest", input, request });
+    return {
+      ...confirmation,
+      targetIds: [...targetIds].sort(),
+      candidateId: input.candidateId,
+      effects: input.effects,
+      effectsFingerprint: input.effectsFingerprint
+    };
+  }
+
+  async executeHistoryIngest(request: ConfiguredHistoryImportRequest & { token: string }): Promise<MutationCommitReceipt> {
+    const plan = this.takePlan(request.token, "history_ingest");
+    const history = plan?.kind === "history_ingest" ? plan : undefined;
+    const targetIds = history ? [history.input.candidateId, ...history.input.targetCanonicalEventIds] : [];
+    const normalized = { sourceAlias: request.sourceAlias, source: request.source, ingestScopeId: this.options.authority.ingestScopeId };
+    this.consume(request.token, "history_ingest", targetIds, normalized, history?.input.effectsFingerprint ?? "");
+    if (!history) throw new ConfirmationError("CONFIRMATION_MISMATCH");
+    let fresh: CommitHistoryImportInput;
+    try {
+      fresh = await planConfiguredHistoryImport(this.options.store, this.options.authority, request);
+    } catch {
+      return this.stateChanged(history.input.receipt);
+    }
+    if (mutationEffectsFingerprint(this.historyBinding(fresh)) !== mutationEffectsFingerprint(this.historyBinding(history.input))) {
+      return this.stateChanged(history.input.receipt);
+    }
+    return this.options.store.commitHistoryImport(fresh);
   }
 
   async executeProposalApproval(request: ProposalMutationRequest & { token: string }) {
@@ -176,5 +219,21 @@ export class MemoryMutationApplication {
 
   private sourceDeletionParameters(request: SourceDeletionRequest): Record<string, unknown> {
     return { actor: request.actor, deletedAt: request.deletedAt };
+  }
+
+  private historyBinding(input: CommitHistoryImportInput): Record<string, unknown> {
+    return {
+      candidateId: input.candidateId,
+      normalizedParameters: input.normalizedParameters,
+      expectedSourceStateFingerprint: input.expectedSourceStateFingerprint,
+      expectedCheckpoint: input.expectedCheckpoint,
+      expectedGrant: input.expectedGrant,
+      targetCanonicalEventIds: input.targetCanonicalEventIds,
+      effectsFingerprint: input.effectsFingerprint
+    };
+  }
+
+  private stateChanged(receipt: MutationCommitReceipt): MutationCommitReceipt {
+    return { ...receipt, status: "STATE_CHANGED", effectCounts: {} };
   }
 }

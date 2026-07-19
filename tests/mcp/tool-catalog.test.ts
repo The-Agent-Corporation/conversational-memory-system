@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { createMemoryMcpServer, type MemoryMcpApplication } from "../../src/mcp/server.js";
+import { createSyntheticMcpFixture, type SyntheticMcpFixture } from "./fixtures.js";
 import {
   MemoryExpandSubjectInputSchema,
   MemoryExpandSubjectOutputSchema,
@@ -81,6 +85,15 @@ export const REQUIRED_MCP_TOOL_CONTRACTS: readonly ToolContract[] = [
 ]);
 
 describe("MCP explicit tool catalog contract", () => {
+  let fixture: SyntheticMcpFixture | undefined;
+  let application: MemoryMcpApplication | undefined;
+  let client: Client | undefined;
+
+  afterEach(async () => {
+    await client?.close();
+    await application?.close();
+    await fixture?.cleanup();
+  });
   it("reserves six reads and ten preview or execute mutations with unique task-specific names", () => {
     const names = REQUIRED_MCP_TOOL_CONTRACTS.map((tool) => tool.name);
     expect(names).toHaveLength(16);
@@ -218,6 +231,80 @@ describe("MCP explicit tool catalog contract", () => {
       Object.fromEntries(REQUIRED_MCP_TOOL_CONTRACTS.slice(6).map((tool) => [tool.name, tool.annotations]))
     );
   });
-  it.todo("05-08 Task 1 composes the complete catalog without duplicate or umbrella tools");
-  it.todo("05-08 Task 1 keeps every capability available while daemon status is offline");
+  it("05-08 Task 1 composes the complete catalog without duplicate or umbrella tools", async () => {
+    fixture = await createSyntheticMcpFixture();
+    application = await createMemoryMcpServer({
+      configPath: fixture.configPath,
+      profileName: "alpha-expanded",
+      now: fixture.clock.now
+    });
+    client = new Client({ name: "synthetic-catalog-client", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await application.server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const catalog = await client.listTools();
+    expect(catalog.tools.map((tool) => tool.name)).toEqual(
+      REQUIRED_MCP_TOOL_CONTRACTS.map((tool) => tool.name)
+    );
+    expect(catalog.tools.map((tool) => tool.annotations)).toEqual(
+      REQUIRED_MCP_TOOL_CONTRACTS.map((tool) => tool.annotations)
+    );
+    expect(new Set(catalog.tools.map((tool) => tool.name)).size).toBe(16);
+  });
+
+  it("05-08 Task 1 keeps every capability available while daemon status is offline", async () => {
+    fixture = await createSyntheticMcpFixture();
+    application = await createMemoryMcpServer({
+      configPath: fixture.configPath,
+      profileName: "alpha-expanded",
+      now: fixture.clock.now
+    });
+    client = new Client({ name: "synthetic-offline-client", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await application.server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const status = await client.callTool({ name: "source_status", arguments: {} });
+    expect(status.structuredContent).toEqual(expect.objectContaining({
+      synchronization: { online: false, state: "stopped" }
+    }));
+    await expect(client.callTool({
+      name: "memory_search",
+      arguments: { query: "Synthetic alpha", limit: 20 }
+    })).resolves.not.toMatchObject({ isError: true });
+    await expect(client.callTool({
+      name: "memory_recall",
+      arguments: { task: "Synthetic alpha decision", tokenBudget: 100 }
+    })).resolves.not.toMatchObject({ isError: true });
+    await expect(client.callTool({
+      name: "memory_review",
+      arguments: { limit: 10 }
+    })).resolves.not.toMatchObject({ isError: true });
+
+    const preview = await client.callTool({
+      name: "proposal_reject_preview",
+      arguments: {
+        proposalId: "proposal-mixed",
+        decidedAt: "2026-07-18T12:01:00.000Z",
+        reviewer: "synthetic-reviewer"
+      }
+    });
+    expect(preview.isError).not.toBe(true);
+    const token = (preview.structuredContent as { token?: string } | undefined)?.token;
+    expect(token).toBeTypeOf("string");
+    const execute = await client.callTool({
+      name: "proposal_reject_execute",
+      arguments: {
+        proposalId: "proposal-mixed",
+        decidedAt: "2026-07-18T12:01:00.000Z",
+        reviewer: "synthetic-reviewer",
+        token
+      }
+    });
+    expect(execute.structuredContent).toEqual(expect.objectContaining({
+      operation: "proposal_decision",
+      status: "COMMITTED"
+    }));
+  });
 });

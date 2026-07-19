@@ -10,7 +10,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 2: Consentful Bootstrap Importers** — Import Codex, Claude Code, OpenClaw, and Hermes histories through metadata-first approval and resumable checkpoints.
 - [x] **Phase 3: Source Lifecycle Control Plane** — Make approval durable and add revocation, attributable deletion, quarantine/replay, and retrieval boundaries.
 - [x] **Phase 4: Continuous Local Daemon** — Keep approved sources synchronized and incrementally contract new history offline. (completed 2026-07-18)
-- [ ] **Phase 5: Generic MCP Interface** — Expose safe host-neutral memory tools to Codex, OpenClaw, Claude-compatible clients, and future agents. (verification gaps found)
+- [x] **Phase 5: Generic MCP Interface** — Expose safe host-neutral memory tools to Codex, OpenClaw, Claude-compatible clients, and future agents. (completed 2026-07-19)
 - [ ] **Phase 6: Zero-Knowledge Multi-Device Sync** — Add encrypted device convergence after threat-model and protocol approval.
 - [ ] **Phase 7: Onboarding and Operational Readiness** — Package the product with first-run consent, audit, migration, backup, and performance surfaces.
 
@@ -113,8 +113,8 @@ Plans:
 
 **Goal**: Let any supported local agent use the same personal memory safely.
 **Requirements**: REQ-023, REQ-025, REQ-027, REQ-028, REQ-029
-**Status**: Gaps Found (10/11 must-haves verified)
-**Plans:** 8/8 implementation plans complete; targeted gap closure required
+**Status**: Gap Closure Planned (10/11 must-haves verified)
+**Plans:** 9/9 plans complete
 
 Plans:
 **Wave 1**
@@ -146,11 +146,41 @@ Plans:
 
 - [x] 05-08-PLAN.md — Compose and verify the clean explicit-profile STDIO server.
 
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [x] 05-09-PLAN.md — Close proposal payload authorization and exact execute-state revalidation across both storage adapters.
+
 ### Phase 6: Zero-Knowledge Multi-Device Sync
 
 **Goal**: Synchronize memory without giving the relay decryption capability.
 **Requirements**: REQ-031, REQ-032, REQ-033, REQ-034, REQ-035, REQ-036
-**Status**: Research-gated
+**Status**: Planned — protocol approval gated
+**Plans:** 8 plans
+
+Plans:
+
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — Benchmark padding, specify/trace ADR 0047, and obtain independent composed-protocol approval.
+
+**Wave 2** *(blocked on Wave 1 approval)*
+
+- [ ] 06-02-PLAN.md — Install audited packages and implement strict protocol schemas, synthetic fixtures, and approved envelope cryptography.
+- [ ] 06-03-PLAN.md — Implement host-neutral DeviceSecretStore, deterministic fake, and macOS Keychain adapter.
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 06-04-PLAN.md — Add backend-equivalent atomic local outbox, immutable pre-upload envelope sealing, remote apply, replay, tombstone, conflict, quarantine, and affected-range storage.
+- [ ] 06-05-PLAN.md — Implement the account-provider boundary, opaque append-only relay storage/service, and bounded versioned HTTP/HTTPS server.
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 06-06-PLAN.md — Implement complete-history enrollment, recovery, revocation, future-key/recovery rotation, and production HttpSyncRelay client/control-flow proof.
+- [ ] 06-07-PLAN.md — Materialize convergence, wire every authoritative producer including BoxReviewer, propagate revocation/deletion, and enforce both quarantine resolutions.
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 06-08-PLAN.md — Implement immutable sealed-byte push/pull, replay defense, production daemon transport selection, complete loopback convergence, structural validation, and blocking real-Keychain UAT.
 
 ### Phase 7: Onboarding and Operational Readiness
 

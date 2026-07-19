@@ -78,6 +78,13 @@ export class TopicMonitor {
   current(hostSessionId: string): RollingTopicState | null {
     return this.states.get(hostSessionId) ?? null;
   }
+
+  restore(state: RollingTopicState): void {
+    this.states.set(state.hostSessionId, {
+      ...state,
+      sourceTurnRange: { ...state.sourceTurnRange }
+    });
+  }
 }
 
 function closesCurrentTopic(signal: ControlSignalEvent["signal"]): boolean {

@@ -3,8 +3,10 @@ import { IsoDateTimeSchema, JsonObjectSchema, RoleSchema } from "./types.js";
 
 export const HostNameSchema = z.enum([
   "roscoe-hermes",
+  "claude-code",
   "pi",
   "openclaw",
+  "hermes",
   "codex",
   "cursor",
   "unknown"
@@ -17,9 +19,12 @@ export const ConversationTurnEventSchema = z.object({
   hostSessionId: z.string().min(1),
   sequence: z.number().int().nonnegative(),
   type: z.literal("conversation_turn"),
+  eventKind: z.enum(["message", "tool_call"]).optional(),
+  nativeEventId: z.string().min(1).optional(),
   role: RoleSchema,
   content: z.string(),
   createdAt: IsoDateTimeSchema,
+  nativeParentEventId: z.string().min(1).nullable().optional(),
   metadata: JsonObjectSchema
 });
 

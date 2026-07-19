@@ -18,6 +18,35 @@ const baseArgs = (fixture: SyntheticMcpFixture, profile = "alpha-expanded") => [
   "--profile",
   profile
 ];
+const hostArgs = (fixture: SyntheticMcpFixture) => [
+  "--silent",
+  "--prefix",
+  ROOT,
+  "run",
+  "memory:mcp",
+  "--",
+  "--config",
+  fixture.configPath,
+  "--profile",
+  "alpha-expanded"
+];
+const codexRegistration = (fixture: SyntheticMcpFixture) => ({
+  command: "npm",
+  args: hostArgs(fixture),
+  cwd: ROOT,
+  stderr: "pipe" as const,
+  env: { NODE_NO_WARNINGS: "1" }
+});
+const openClawRegistration = (fixture: SyntheticMcpFixture) => ({
+  mcpServers: {
+    memory: {
+      command: "npm",
+      args: hostArgs(fixture),
+      cwd: ROOT,
+      env: { NODE_NO_WARNINGS: "1" }
+    }
+  }
+});
 
 describe("MCP SDK-driven STDIO lifecycle contract", () => {
   let fixture: SyntheticMcpFixture | undefined;
@@ -37,14 +66,13 @@ describe("MCP SDK-driven STDIO lifecycle contract", () => {
 
   it("05-08 Task 2 initializes a separate explicit-profile child and lists the complete catalog", async () => {
     fixture = await createSyntheticMcpFixture();
+    const registration = codexRegistration(fixture);
+    expect(registration.args).toEqual(expect.arrayContaining([
+      "--config", fixture.configPath, "--profile", "alpha-expanded"
+    ]));
     const stderr: string[] = [];
     const protocolErrors: Error[] = [];
-    transport = new StdioClientTransport({
-      command: process.execPath,
-      args: baseArgs(fixture),
-      cwd: ROOT,
-      stderr: "pipe"
-    });
+    transport = new StdioClientTransport(registration);
     transport.stderr?.on("data", (chunk) => stderr.push(String(chunk)));
     transport.onerror = (error) => protocolErrors.push(error);
     client = new Client({ name: "synthetic-codex-registration", version: "1.0.0" });
@@ -61,16 +89,23 @@ describe("MCP SDK-driven STDIO lifecycle contract", () => {
 
   it("05-08 Task 2 supports offline reads and an exact preview-confirmed execute over STDIO", async () => {
     fixture = await createSyntheticMcpFixture();
+    const registration = openClawRegistration(fixture);
+    expect(registration.mcpServers.memory.args).toEqual(codexRegistration(fixture).args);
     transport = new StdioClientTransport({
-      command: process.execPath,
-      args: baseArgs(fixture),
-      cwd: ROOT,
+      ...registration.mcpServers.memory,
       stderr: "pipe"
     });
     client = new Client({ name: "synthetic-openclaw-registration", version: "1.0.0" });
     await client.connect(transport);
 
-    const status = await client.callTool({ name: "source_status", arguments: {} });
+    const [status] = await Promise.all([
+      client.callTool({ name: "source_status", arguments: {} }),
+      fixture.store.savePerson({
+        id: "person-concurrent-writer",
+        displayName: "Synthetic Concurrent Writer",
+        createdAt: "2026-07-18T12:00:00.000Z"
+      })
+    ]);
     expect(status.structuredContent).toEqual(expect.objectContaining({
       synchronization: { online: false, state: "stopped" }
     }));
@@ -122,6 +157,7 @@ describe("MCP SDK-driven STDIO lifecycle contract", () => {
     fixture = await createSyntheticMcpFixture();
     const child = spawn(process.execPath, baseArgs(fixture), {
       cwd: ROOT,
+      env: { ...process.env, NODE_NO_WARNINGS: "1" },
       stdio: ["pipe", "pipe", "pipe"]
     });
     const stdout: string[] = [];
@@ -155,7 +191,11 @@ describe("MCP SDK-driven STDIO lifecycle contract", () => {
 });
 
 const runRejected = async (args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> => {
-  const child = spawn(process.execPath, args, { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, args, {
+    cwd: ROOT,
+    env: { ...process.env, NODE_NO_WARNINGS: "1" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
   const stdout: string[] = [];
   const stderr: string[] = [];
   child.stdout.on("data", (chunk) => stdout.push(String(chunk)));

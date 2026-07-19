@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Anchor, Box, MemoryProposal, Summary } from "../domain/types.js";
 import {
   dedupeTurnRanges,
@@ -11,6 +12,7 @@ import {
 
 export interface BoxProposalPlanningRequest {
   reviewedAt: string;
+  idNamespace?: string;
   summaries: Summary[];
   boxes: Box[];
   anchors: Anchor[];
@@ -76,7 +78,7 @@ export class DeterministicBoxProposalPlanner implements BoxProposalPlanner {
         continue;
       }
 
-      const boxId = `box_topic_${slugify(group.title)}`;
+      const boxId = scopedId(`box_topic_${slugify(group.title)}`, request.idNamespace);
       const proposalId = `proposal_box_${boxId}`;
       if (hasDuplicateBox(request.boxes, request.proposals, boxId, group.title, proposalId)) {
         skippedCandidates.push({
@@ -88,7 +90,7 @@ export class DeterministicBoxProposalPlanner implements BoxProposalPlanner {
       }
 
       const parent = findCandidateParent(group, request.boxes);
-      proposals.push(buildBoxProposal(group, request.reviewedAt, confidence, parent));
+      proposals.push(buildBoxProposal(group, request.reviewedAt, confidence, parent, request.idNamespace));
       if (parent) {
         proposals.push(buildParentChildProposal(parent.id, boxId, group, request.reviewedAt, confidence));
       }
@@ -146,9 +148,10 @@ function buildBoxProposal(
   group: CandidateGroup,
   reviewedAt: string,
   confidence: number,
-  parent: Box | null
+  parent: Box | null,
+  idNamespace?: string
 ): MemoryProposal {
-  const boxId = `box_topic_${slugify(group.title)}`;
+  const boxId = scopedId(`box_topic_${slugify(group.title)}`, idNamespace);
   const sourceSummaryIds = group.summaries.map((summary) => summary.id);
   const sourceTurnRanges = dedupeTurnRanges(group.summaries.flatMap((summary) => summary.sourceTurnRanges));
   const payload = {
@@ -185,6 +188,12 @@ function buildBoxProposal(
     targetTraceIds: [],
     payload
   };
+}
+
+function scopedId(baseId: string, namespace?: string): string {
+  if (!namespace) return baseId;
+  const suffix = createHash("sha256").update(namespace).digest("hex").slice(0, 12);
+  return `${baseId}_${suffix}`;
 }
 
 function buildParentChildProposal(

@@ -1,150 +1,135 @@
 ---
 phase: 05-generic-mcp-interface
-verified: 2026-07-19T00:40:07Z
-status: gaps_found
-score: 10/11 must-haves verified
+verified: 2026-07-19T02:25:41Z
+status: passed
+score: 11/11 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
-gaps:
-  - truth: "Proposal decisions authorize every payload and recursive dependency under the fixed profile and revalidate the exact affected state at execute, with zero writes on drift."
-    status: failed
-    reason: "ScopedProposalReviewer authorizes proposal.sourceSummaryIds and declared target objects, but approval constructs boxes/traces from payload dependency IDs that are not included in that authorization closure. The atomic proposal commit then revalidates only the proposal row, not dependency scopes or affected boxes/traces. A synthetic alpha-only profile successfully planned a trace containing the unauthorized summary-beta dependency."
-    artifacts:
-      - path: "src/proposals/scoped-proposal-reviewer.ts"
-        issue: "Box/trace payload summary IDs and trace payload box IDs are copied into durable objects without complete profile authorization; authorization occurs only at preview."
-      - path: "src/storage/mcp-mutation-contracts.ts"
-        issue: "CommitProposalDecisionInput has no expected dependency or expected affected-object state to bind preview to execute."
-      - path: "src/storage/sqlite-store.ts"
-        issue: "commitProposalDecision re-reads only expectedProposal before writing next boxes/traces/proposal."
-      - path: "src/storage/in-memory-store.ts"
-        issue: "The in-memory parity implementation likewise revalidates only expectedProposal."
-      - path: "tests/mcp/mutation-tools.test.ts"
-        issue: "Tests cover matching proposal/payload dependencies and grant/import drift, but not payload-only unauthorized dependencies or proposal dependency/target drift."
-    missing:
-      - "Authorize the complete payload-derived summary/box/trace dependency closure before preview and again inside execute revalidation."
-      - "Bind expected dependency and affected box/trace state into CommitProposalDecisionInput and reject any drift with STATE_CHANGED and zero writes in both adapters."
-      - "Add synthetic adversarial tests for proposal-vs-payload dependency mismatch and post-preview dependency/target drift across in-memory and SQLite adapters."
+re_verification:
+  previous_status: gaps_found
+  previous_score: 10/11
+  gaps_closed:
+    - "Proposal decisions now authorize the complete stored-payload and recursive Summary/Box/Trace dependency closure, bind exact affected state, and atomically reject drift in both adapters."
+  gaps_remaining: []
+  regressions: []
 ---
 
 # Phase 5: Generic MCP Interface Verification Report
 
 **Phase Goal:** Let any supported local agent use the same personal memory safely.
-**Verified:** 2026-07-19T00:40:07Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-07-19T02:25:41Z
+**Status:** passed
+**Re-verification:** Yes — after Plan 05-09 gap closure
 
 ## Goal Achievement
 
-The host-neutral STDIO server and almost all safety boundaries are substantive, wired, and behaviorally tested. The goal is not yet achieved because a confirmed proposal approval can persist a derived object containing a dependency outside the startup-fixed profile scopes. This is a must-have isolation failure, not a documentation or Git-metadata issue.
+The prior proposal-decision isolation blocker is closed in the implementation, not merely in the summary. Proposal payloads are parsed before authorization; the reviewer closes all declared, payload, recursive Summary, Box, Trace, and next-effect dependencies under the startup-fixed person and scopes; the confirmed plan binds exact dependency and present-or-absent affected-object state; and both storage adapters re-read and validate that state before their first write. Synthetic tests prove drift produces `STATE_CHANGED`, empty effect counts, no additional writes, and a consumed confirmation that cannot be replayed.
 
 ### Observable Truths
 
 | # | Truth | Status | Evidence |
 |---|---|---|---|
-| 1 | One local STDIO facade is spawned for an explicit profile and uses the official MCP SDK. | ✓ VERIFIED | `server-command.ts` resolves profile before `StdioServerTransport`; real child-process initialize/list/call/EOF tests pass. |
-| 2 | Profile startup fixes database, person, complete scopes, ingest scope, roots, and aliases; missing/unknown authority fails closed and tools cannot alter it. | ✓ VERIFIED | `profile-loader.ts`, `authority.ts`, strict schemas, and profile/tool-catalog tests. |
-| 3 | Search, recall, review, expansion, status, and proposal listing are semantically read-only and remain usable while the daemon is stopped. | ✓ VERIFIED | Long-lived `SqliteStore(..., {readOnly:true})`; semantic snapshots remain byte-equivalent; offline status tests pass. |
-| 4 | Search/recall/review return bounded assistive context with confidence, timestamps, provenance, scopes, disclosure, and continuation/budget facts. | ✓ VERIFIED | `MemoryQueryService`, shared response envelope, read-tool schemas, and 12 read-tool tests. |
-| 5 | Whole-subject expansion is profile-authorized, source-linked, budget-bounded, deterministically ordered, and resumes through authenticated continuation without gaps or duplicates. | ✓ VERIFIED | `SubjectExpansionService`, HMAC cursor codec, and 9 expansion tests. |
-| 6 | The complete required capability catalog is explicit and host-neutral, with six read tools and five separate preview/execute mutation pairs. | ✓ VERIFIED | `tool-catalog.ts`; exact 16-name SDK `tools/list` assertions. |
-| 7 | Tool schemas are bounded and authority-free, and safety annotations accurately distinguish pure reads, ticket previews, additive ingest, and destructive decisions/lifecycle operations. | ✓ VERIFIED | `read-tools.ts`, `mutation-tools.ts`, and catalog assertions. |
-| 8 | Every mutation requires a short-lived exact single-use server confirmation bound to profile, tool, targets, normalized parameters, effects, and expiry; failures consume it. | ✓ VERIFIED | `ConfirmationService`; 10 binding/expiry/replay/consume-before-write tests. |
-| 9 | Configured-alias history ingest uses existing read-only importers and atomically revalidates source, checkpoint, grant, parameters, event set, and effects; drift writes nothing. | ✓ VERIFIED | Import planner/application, task-specific store commit, grant/event drift tests, and adapter rollback proof. |
-| 10 | Proposal decisions authorize all dependencies and revalidate exact affected state at execute with zero writes on drift. | ✗ FAILED | Payload-only dependency bypass reproduced synthetically; proposal commit revalidates only the proposal row. |
-| 11 | Revocation and deletion remain separate confirmed operations; deletion requires exact prior revocation and atomically preserves audit/native-source semantics. | ✓ VERIFIED | Separate tools/application methods, lifecycle service, deletion effect revalidation, and rollback tests. |
+| 1 | One local STDIO facade is spawned for an explicit profile and uses the official MCP SDK. | ✓ VERIFIED | `server-command.ts` resolves profile authority before transport; SDK child-process initialize/list/call/EOF tests pass. |
+| 2 | Profile startup fixes database, person, complete scopes, ingest scope, roots, and aliases; missing or unknown authority fails closed and tools cannot alter it. | ✓ VERIFIED | Profile/schema/catalog tests pass, including pre-transport rejection and authority-free tool schemas. |
+| 3 | Search, recall, review, expansion, status, and proposal listing are semantically read-only and usable while synchronization is stopped. | ✓ VERIFIED | Read-only SQLite and semantic snapshot contracts pass in the 73-test MCP suite. |
+| 4 | Search and recall return bounded assistive context with confidence, timestamps, provenance, scopes, disclosure, continuation, and budget facts. | ✓ VERIFIED | Read service/output schemas and 12 read-tool tests pass. |
+| 5 | Whole-subject expansion is profile-authorized, source-linked, budget-bounded, deterministic, and resumes without gaps or duplicates. | ✓ VERIFIED | Nine subject-expansion tests pass, including authorization, ordering, budget, cursor, provenance, and purity. |
+| 6 | The capability catalog contains six reads and five separate preview/execute mutation pairs. | ✓ VERIFIED | SDK `tools/list` asserts exactly 16 unique task-specific tools. |
+| 7 | Tool schemas are bounded and authority-free, with annotations matching read, preview, additive, and destructive behavior. | ✓ VERIFIED | Catalog and mutation routing/annotation assertions pass. |
+| 8 | Every mutation requires a short-lived exact single-use confirmation bound to profile, tool, targets, parameters, effects, and expiry; failed attempts consume it. | ✓ VERIFIED | Confirmation contracts pass for mismatch, expiry, drift, fault, and replay. |
+| 9 | Configured-alias history ingest revalidates source, checkpoint, grant, parameters, event set, and effects atomically with zero writes on drift. | ✓ VERIFIED | Existing import drift, rollback, and adapter parity checks remain green. |
+| 10 | Proposal decisions authorize every stored-payload and recursive dependency and revalidate exact affected state at execute with zero writes on drift. | ✓ VERIFIED | `ScopedProposalReviewer.authorizedClosure` parses type-specific payloads and closes Summary/Box/Trace dependencies; `CommitProposalDecisionInputSchema` binds scopes and exact snapshots; both stores call `proposalDecisionStateMatches` before the first fault/write seam. The focused 31-test suite proves payload-only denial, authorized proposal/payload mismatch, recursive closure, dependency/target drift, absence drift, parity, rollback, and confirmation replay rejection. |
+| 11 | Revocation and deletion remain separate confirmed operations; deletion requires exact prior revocation and preserves audit/native-source semantics atomically. | ✓ VERIFIED | Lifecycle mutation and rollback contracts remain green. |
 
-**Score:** 10/11 truths verified (0 present-but-behavior-unverified)
+**Score:** 11/11 truths verified (0 present-but-behavior-unverified)
 
-## Required Artifacts
+## Prior Gap Closure — Three-Level Verification
 
-| Artifact | Expected | Status | Details |
-|---|---|---|---|
-| `src/mcp/profile-loader.ts`, `authority.ts` | Explicit immutable startup authority | ✓ VERIFIED | Strict versioned config, absolute paths, named profile, fixed person/scopes/roots/aliases. |
-| `src/retrieval/memory-query-service.ts` | Pure scoped search/recall/review/status | ✓ VERIFIED | Substantive filtering, ranking, budgets, pagination, disclosure, and offline status. |
-| `src/retrieval/subject-expansion-service.ts`, `src/mcp/continuation-cursor.ts` | Bounded source-linked subject expansion | ✓ VERIFIED | Complete dependency closure, whole-event packing, HMAC policy/authority binding. |
-| `src/mcp/confirmation-service.ts` | Exact single-use confirmation | ✓ VERIFIED | Process-local hashed tickets, bounded TTL, consume-before-result, timing-safe digest compare. |
-| `src/storage/mcp-mutation-contracts.ts` | Exact atomic mutation contracts | ⚠️ PARTIAL | Import/revoke/delete contracts are exact; proposal contract lacks dependency/affected-state expectations. |
-| `src/storage/in-memory-store.ts`, `src/storage/sqlite-store.ts` | Adapter-parity atomic commits | ⚠️ PARTIAL | Rollback/fault behavior exists, but proposal execute revalidates only the proposal row. |
-| `src/proposals/scoped-proposal-reviewer.ts` | Profile-authorized proposal list/decision planning | ✗ FAILED | Does not authorize payload-derived dependencies before constructing durable box/trace effects. |
-| `src/mcp/tools/read-tools.ts`, `mutation-tools.ts` | Explicit bounded tool registrations | ✓ VERIFIED | Six reads and ten mutation tools, strict schemas, controlled envelopes/errors/annotations. |
-| `src/mcp/server.ts`, `server-command.ts`, `tool-catalog.ts` | SDK application and clean STDIO command | ✓ VERIFIED | Startup-bound closure, read-only connection, short-lived atomic writers, SDK-owned stdout. |
-| `scripts/verify-phase-05-signoff.mjs` | Fail-closed structural signoff | ✓ VERIFIED | Self-test, Vitest JSON, and validation-table modes all passed independently. |
-| `docs/integrations/local-mcp-clients.md` | Host registration guidance | ✓ VERIFIED | Codex/OpenClaw explicit-profile examples and safety notes exist. |
+### Required Artifacts
 
-## Key Link Verification
+| Artifact | Exists | Substantive | Wired | Status | Details |
+|---|---|---|---|---|---|
+| `src/proposals/scoped-proposal-reviewer.ts` | Yes | Yes | Yes | ✓ VERIFIED | Parses stored payload via type-specific schemas, rejects malformed/unauthorized closure, captures sorted exact snapshots, then constructs effects. |
+| `src/storage/mcp-mutation-contracts.ts` | Yes | Yes | Yes | ✓ VERIFIED | Defines expected Box/Trace absence-aware states, closure schema, exact authorization/coverage checks, and shared current-state validator. |
+| `src/storage/in-memory-store.ts` | Yes | Yes | Yes | ✓ VERIFIED | Re-reads proposal, Summaries, Boxes, and Traces; validates before staging and before `proposal_decision_before_write`; swaps only after all fault seams pass. |
+| `src/storage/sqlite-store.ts` | Yes | Yes | Yes | ✓ VERIFIED | Starts `BEGIN IMMEDIATE`, re-reads complete bound state, validates before `proposal_decision_before_write`, and rolls back drift/faults. |
+| `tests/mcp/mutation-tools.test.ts` | Yes | Yes | Yes | ✓ VERIFIED | Runs payload-bypass, closure, drift, adapter-parity, zero-write, rollback, and replay cases using synthetic stores only. |
+
+The automated artifact query passed all five artifacts. Its key-link query reported 3/4 because the regex expected `consume.*commitProposalDecision` on one line; manual inspection verifies the fourth link at `mutation-application.ts`: the plan is removed, confirmation is consumed, and only then `commitProposalDecision(plan.input)` is called.
+
+### Key Link Verification
 
 | From | To | Via | Status | Details |
 |---|---|---|---|---|
-| `server-command.ts` | `profile-loader.ts` | Required `--config` and `--profile` before transport | ✓ WIRED | Missing/unknown selection exits before protocol startup. |
-| `server.ts` | `tool-catalog.ts` | SDK `McpServer` registration | ✓ WIRED | Complete catalog registered once with captured application services. |
-| Read tools | Query/expansion/scoped proposal services | One strict service operation per handler | ✓ WIRED | SDK list/call tests and semantic snapshots pass. |
-| Mutation tools | `MemoryMutationApplication` | One fixed preview/execute method per handler | ✓ WIRED | Exact routing tests pass. |
-| Mutation application | Store commits | Four task-specific atomic methods | ⚠️ PARTIAL | Wiring exists; proposal exact-state revalidation is incomplete. |
-| Scoped proposal reviewer | Payload dependencies | Authorization before effect construction | ✗ NOT WIRED | Payload summary/box dependencies are not added to the authorization closure. |
+| Scoped reviewer | Mutation contract | Exact scopes/Summary/Box/Trace snapshots passed into schema | ✓ WIRED | Lines 162-175 build the complete commit input only after closure authorization. |
+| Mutation application | Store commit | Retained process-local plan plus consume-before-write | ✓ WIRED | Lines 171-176 take the plan, consume exact confirmation, then call the sole proposal commit seam. |
+| Shared contract | In-memory store | `proposalDecisionStateMatches` before staging/fault seam | ✓ WIRED | Drift exits at lines 312-317; staging begins afterward. |
+| Shared contract | SQLite store | `BEGIN IMMEDIATE`, re-read, validator, rollback before write | ✓ WIRED | Drift rolls back at lines 406-413; first write/fault seam follows at line 415. |
 
-## Data-Flow Trace (Level 4)
+### Data-Flow Trace
 
-| Artifact | Data | Source | Produces Real Data | Status |
+| Data | Source | Authorization/Binding | Execute Revalidation | Status |
 |---|---|---|---|---|
-| Read tools | Search/recall/review/status DTOs | Read-only SQLite through scoped services | Yes, synthetic database-backed | ✓ FLOWING |
-| Subject expansion | Canonical events | Person-scoped canonical store plus authorized derived ranges | Yes | ✓ FLOWING |
-| History ingest | Previewed events/checkpoint/grant/effects | Existing four source importers staged in memory, then atomic store commit | Yes | ✓ FLOWING |
-| Proposal approval | Durable box/trace effects | Stored proposal payload | Yes, but authorization closure is incomplete | ✗ UNSAFE FLOW |
-| Revocation/deletion | Exact lifecycle effects and audits | Source lifecycle service plus store-owned effect inspection | Yes | ✓ FLOWING |
+| Declared proposal references | Stored proposal | Included in union | Exact proposal row compared | ✓ FLOWING |
+| Payload-only Summary/Box/Trace references | Parsed stored payload | Included before DTO/effect construction | Exact dependency records compared | ✓ FLOWING |
+| Recursive Summary and Box/Trace relationships | Store records reached cycle-safely | Person, active state, and complete scope allow-list checked | Shared validator recomputes closure against current records | ✓ FLOWING |
+| New or existing affected Box/Trace targets | Exact `{id, value}` snapshots | `null` binds expected absence | Insertion, deletion, or mutation causes `STATE_CHANGED` | ✓ FLOWING |
 
 ## Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |---|---|---|---|
-| Complete MCP focused suite | `npx vitest run tests/mcp --reporter=verbose` | 7 files, 68 tests passed | ✓ PASS |
-| Full workspace regression | `npm test` | 56 files, 380 tests passed | ✓ PASS |
+| Proposal closure, drift, parity, and rollback | `npx vitest run tests/mcp/mutation-tools.test.ts tests/storage/sqlite-store.test.ts --reporter=verbose` | 2 files, 31 tests passed | ✓ PASS |
+| Confirmation, catalog, and STDIO regression | `npx vitest run tests/mcp/confirmation-service.test.ts tests/mcp/tool-catalog.test.ts tests/mcp/stdio-server.test.ts --reporter=verbose` | 3 files, 24 tests passed | ✓ PASS |
+| Complete MCP regression | `npx vitest run tests/mcp --reporter=dot` | 7 files, 73 tests passed; no skipped/todo tests | ✓ PASS |
+| Full workspace regression | `npm test -- --reporter=dot` | 56 files, 385 tests passed | ✓ PASS |
 | Type safety | `npm run typecheck` | Exit 0 | ✓ PASS |
 | Diff hygiene | `git diff --check` | Exit 0 | ✓ PASS |
-| Synthetic out-of-scope proposal payload | `npx tsx -e <synthetic fixture reproduction>` | Alpha-only authority returned a commit plan creating a trace with `summary-beta` | ✗ FAIL |
 
 ## Probe Execution
 
 | Probe | Command | Result | Status |
 |---|---|---|---|
-| Signoff self-test | `node scripts/verify-phase-05-signoff.mjs --self-test` | `PHASE_05_SIGNOFF_OK` | ✓ PASS |
-| Machine-readable MCP test result | Vitest JSON reporter followed by `--vitest-json` | 68 passed, zero failed/pending/todo | ✓ PASS |
-| Structural phase validation | `--validation .planning/phases/05-generic-mcp-interface/05-VALIDATION.md` | Exactly five green requirement rows and approved frontmatter/signoff | ✓ PASS |
+| Signoff parser self-test | `node scripts/verify-phase-05-signoff.mjs --self-test` | `PHASE_05_SIGNOFF_OK` | ✓ PASS |
+| Structural Phase 5 validation | `node scripts/verify-phase-05-signoff.mjs --validation .planning/phases/05-generic-mcp-interface/05-VALIDATION.md` | `PHASE_05_SIGNOFF_OK`; exactly five green requirement rows | ✓ PASS |
 
 ## Requirements Coverage
 
 | Requirement | Source Plans | Status | Evidence |
 |---|---|---|---|
-| REQ-023 — Layered expansion | 05-01, 05-03, 05-06 | ✓ SATISFIED | Authorized whole-subject source-event expansion, explicit budgets, HMAC continuation, exact pagination tests. |
-| REQ-025 — Assistive memory | 05-01, 05-02, 05-03, 05-06 | ✓ SATISFIED | Disclosure, confidence, timestamps, sources/provenance, scopes, budgets, and dual output are enforced and tested. |
-| REQ-027 — MCP server | 05-01, 05-08 | ✓ SATISFIED | Local STDIO server uses official SDK and passes real child-process lifecycle tests. |
-| REQ-028 — MCP capabilities | 05-01 through 05-08 | ✗ BLOCKED | All required tools exist, but proposal approval can persist an unauthorized payload dependency. |
-| REQ-029 — Tool safety metadata/approval | 05-01, 05-04, 05-05, 05-07, 05-08 | ✓ SATISFIED | Accurate annotations and server-enforced exact confirmations are verified independently of host prompts. |
+| REQ-023 — Layered expansion | 05-01, 05-03, 05-06, 05-09 regression | ✓ SATISFIED | Authorized source-linked whole-subject expansion and deterministic bounded continuation tests pass. |
+| REQ-025 — Assistive memory | 05-01, 05-02, 05-03, 05-06, 05-09 regression | ✓ SATISFIED | Disclosure, confidence, timestamps, provenance, scopes, budgets, and semantic read purity are enforced and tested. |
+| REQ-027 — MCP server | 05-01, 05-08, 05-09 regression | ✓ SATISFIED | Official SDK STDIO server passes real child-process lifecycle, clean-channel, and explicit-profile tests. |
+| REQ-028 — MCP capabilities | 05-01 through 05-09 | ✓ SATISFIED | All 16 tools exist; proposal decisions now enforce payload-complete authorization and exact atomic execute revalidation. |
+| REQ-029 — Tool safety metadata/approval | 05-01, 05-04, 05-05, 05-07, 05-08, 05-09 regression | ✓ SATISFIED | Accurate annotations and server-enforced exact single-use confirmations pass protocol and adversarial tests. |
 
-No Phase 5 requirement is orphaned from the plans. Phase 6 synchronization and Phase 7 onboarding do not specifically cover the proposal authorization/revalidation gap, so it is not deferred.
+No Phase 5 requirement is orphaned from the plans.
 
 ## Anti-Patterns and Disconfirmation Pass
 
-| File | Pattern | Severity | Impact |
-|---|---|---|---|
-| `src/proposals/scoped-proposal-reviewer.ts` | Authorization checks declared proposal dependencies but writes payload dependencies | 🛑 BLOCKER | Fixed-profile scope can be bypassed by a mismatched stored proposal payload. |
-| `src/storage/sqlite-store.ts`, `in-memory-store.ts` | Proposal transaction revalidates only proposal row | 🛑 BLOCKER | Dependency or affected-object drift can commit stale preview effects. |
-| `tests/mcp/mutation-tools.test.ts` | Passing scoped-proposal test uses matching fields and only rejects a mixed proposal before a rejection path | ⚠️ WARNING | The green test name overstates approval-path dependency coverage. |
+No unreferenced `TBD`, `FIXME`, or `XXX`, production placeholder, skipped/todo MCP test, empty implementation, or stdout contamination was found in the scoped files.
 
-No unreferenced `TBD`, `FIXME`, or `XXX`, no remaining skipped/todo MCP tests, and no production placeholder implementation were found. The uncovered error path is a payload mismatch or dependency/target change between proposal preview and execute.
+Disconfirmation checks:
+
+- The older matching-field proposal test alone did not prove payload authorization; the 05-09 tests independently exercise payload-only Summary and Box dependencies and an authorized declared/payload mismatch.
+- A green schema test alone would not prove transaction-time behavior; the adapter matrix mutates Summary scope/state/recursive edges, Box/Trace values, and expected-absent targets after preview, then compares complete pre/post durable snapshots.
+- The shared key-link regex missed consume-before-commit because the calls are on separate lines; source inspection and the drift/replay behavioral test prove the ordering.
+
+No blocking uncovered error path remains in the verified proposal flow. Malformed stored payloads and unavailable/unauthorized dependencies collapse to the content-free scoped error before a decision plan is issued.
 
 ## Human Verification Required
 
-None required to establish this verdict. The official SDK child-process lifecycle is automated with synthetic data. Optional real Codex/OpenClaw registration UX can be exercised after the blocker is fixed, without using personal histories.
+None required for the phase verdict. Real host registration UX remains an optional synthetic UAT exercise; the product behavior relevant to the goal is covered by official SDK child-process tests using Codex/OpenClaw registration shapes without reading personal histories or changing host configuration.
 
 ## Gaps Summary
 
-One grouped blocker prevents safe completion: proposal approval is not dependency-closed over the actual payload that becomes durable, and its execute transaction is not exact-state-bound beyond the proposal row. Fix the reviewer, proposal commit contract, both adapters, and adversarial tests before proceeding.
+No remaining gaps. The prior proposal authorization and TOCTOU blocker is closed, and no regression was found in the previously verified MCP surface.
 
 ## Repository State Note
 
-The worktree was substantially dirty before verification and remains so. Verification changed only this report. Intermittent inability to create `.git/index.lock` prevented some executor/metadata commits, but that environment limitation is separate from product correctness and does not cause this verdict.
+The worktree was substantially dirty before re-verification and remains so. This run changed only this report. The known inability to create `.git/index.lock` explains missing Plan 05-09 commits but is an environment/metadata limitation, not a product-correctness failure. Verification used only synthetic temporary in-memory/SQLite fixtures and inspected no personal histories or external systems.
 
 ---
 
-_Verified: 2026-07-19T00:40:07Z_
+_Verified: 2026-07-19T02:25:41Z_
 _Verifier: the agent (gsd-verifier)_

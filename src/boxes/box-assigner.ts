@@ -25,6 +25,7 @@ export class BoxAssigner {
 function bestMatchingBox(summary: Summary, boxes: Box[]): Box | null {
   const summaryTokens = significantTokens(summary.summaryText);
   const matches = boxes
+    .filter((box) => box.personId === summary.personId)
     .filter((box) => isAssignableState(box.state))
     .filter((box) => titleTokens(box).every((token) => summaryTokens.has(token)))
     .sort((left, right) => titleTokens(right).length - titleTokens(left).length || left.id.localeCompare(right.id));

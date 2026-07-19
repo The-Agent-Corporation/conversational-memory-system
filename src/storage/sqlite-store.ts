@@ -72,6 +72,7 @@ import {
   CommitProposalDecisionInputSchema,
   CommitSourceDeletionInputSchema,
   CommitSourceRevocationInputSchema,
+  proposalDecisionStateMatches,
   type CommitHistoryImportInput,
   type CommitProposalDecisionInput,
   type CommitSourceDeletionInput,
@@ -389,7 +390,25 @@ export class SqliteStore implements MemoryStore {
     this.database.exec("begin immediate");
     try {
       const current = await this.getProposal(parsed.expectedProposal.id);
-      if (!this.sameRecord(current, parsed.expectedProposal)) {
+      const summaries = new Map((await this.listSummaries()).map((item) => [item.id, item]));
+      const currentSummaries = parsed.expectedSummaries.flatMap((expected) => {
+        const value = summaries.get(expected.id);
+        return value ? [value] : [];
+      });
+      const currentBoxes = await Promise.all(parsed.expectedBoxes.map(async ({ id }) => ({
+        id,
+        value: await this.getBox(id)
+      })));
+      const currentTraces = await Promise.all(parsed.expectedTraces.map(async ({ id }) => ({
+        id,
+        value: await this.getTrace(id)
+      })));
+      if (!proposalDecisionStateMatches(parsed, {
+        proposal: current,
+        summaries: currentSummaries,
+        boxes: currentBoxes,
+        traces: currentTraces
+      })) {
         this.database.exec("rollback");
         return this.stateChanged(parsed.receipt);
       }

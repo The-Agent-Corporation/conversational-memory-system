@@ -22,16 +22,24 @@ interface RankedMemory {
 export class MemoryRetriever {
   constructor(
     private readonly store: MemoryStore,
-    private readonly options: { embedder?: Embedder } = {}
+    private readonly options: { embedder?: Embedder; allowLegacyUnscoped?: boolean } = {}
   ) {}
 
   async prepareInjection(request: InjectionRequest): Promise<InjectionPacket | null> {
-    const [summaries, anchors, traces, boxes] = await Promise.all([
+    const [allSummaries, allAnchors, allTraces, allBoxes] = await Promise.all([
       this.store.listSummaries(),
       this.store.listAnchors(),
       this.store.listTraces({ state: "approved" }),
       this.store.listBoxes()
     ]);
+    const { summaries, anchors, traces, boxes, allowedScopeIds } = applyRetrievalBoundary(
+      request,
+      allSummaries,
+      allAnchors,
+      allTraces,
+      allBoxes,
+      this.options.allowLegacyUnscoped ?? false
+    );
     const topicEmbedding = this.options.embedder
       ? await this.options.embedder.embed(request.currentTopicSummary)
       : null;
@@ -54,6 +62,8 @@ export class MemoryRetriever {
     const selectedTokenCount = selected.reduce((sum, memory) => sum + memory.tokenCount, 0);
     const packet: InjectionPacket = {
       id: injectionId(request, selected, createdAt),
+      ...(request.personId ? { personId: request.personId } : {}),
+      ...(allowedScopeIds ? { allowedScopeIds } : {}),
       hostSessionId: request.hostSessionId,
       currentTopicSummary: request.currentTopicSummary,
       selectedMemory: selected.map((memory) => memory.text).join("\n\n"),
@@ -98,6 +108,62 @@ export class MemoryRetriever {
       });
     }
   }
+}
+
+function applyRetrievalBoundary(
+  request: InjectionRequest,
+  summaries: Summary[],
+  anchors: Anchor[],
+  traces: MemoryTrace[],
+  boxes: Box[],
+  allowLegacyUnscoped: boolean
+): {
+  summaries: Summary[];
+  anchors: Anchor[];
+  traces: MemoryTrace[];
+  boxes: Box[];
+  allowedScopeIds: string[] | null;
+} {
+  const hasPerson = request.personId !== undefined;
+  const hasScopes = request.allowedScopeIds !== undefined;
+  if (hasPerson !== hasScopes) {
+    throw new Error("Scoped retrieval requires both personId and allowedScopeIds");
+  }
+  if (!hasPerson || !hasScopes) {
+    if (!allowLegacyUnscoped) {
+      throw new Error("Unscoped retrieval is disabled; provide personId and allowedScopeIds");
+    }
+    return { summaries, anchors, traces, boxes, allowedScopeIds: null };
+  }
+
+  const personId = request.personId!;
+  const allowedScopeIds = [...new Set(request.allowedScopeIds!)].sort();
+  const allowed = new Set(allowedScopeIds);
+  const scopedSummaries = summaries.filter((summary) =>
+    summary.personId === personId &&
+    (summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId))
+  );
+  const summaryIds = new Set(scopedSummaries.map((summary) => summary.id));
+  const scopedAnchors = anchors.filter((anchor) =>
+    anchor.personId === personId && allowed.has(anchor.scopeId ?? "personal")
+  );
+  const scopedTraces = traces.filter((trace) =>
+    trace.personId === personId &&
+    trace.summaryIds.length > 0 &&
+    trace.summaryIds.every((summaryId) => summaryIds.has(summaryId))
+  );
+  const scopedBoxes = boxes.filter((box) =>
+    box.personId === personId &&
+    box.summaryIds.length > 0 &&
+    box.summaryIds.every((summaryId) => summaryIds.has(summaryId))
+  );
+  return {
+    summaries: scopedSummaries,
+    anchors: scopedAnchors,
+    traces: scopedTraces,
+    boxes: scopedBoxes,
+    allowedScopeIds
+  };
 }
 
 function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): RankedMemory[] {
@@ -475,6 +541,8 @@ function injectionId(request: InjectionRequest, selected: RankedMemory[], create
   const hash = createHash("sha256")
     .update(request.hostSessionId)
     .update(request.currentTopicSummary)
+    .update(request.personId ?? "legacy-unscoped")
+    .update((request.allowedScopeIds ?? []).slice().sort().join("|"))
     .update(createdAt)
     .update(selected.map((memory) => memory.id).join("|"))
     .digest("hex")

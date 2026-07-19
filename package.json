@@ -20,6 +20,7 @@
     "memory:daemon": "tsx src/daemon/daemon-command.ts",
     "memory:daemon:launch-agent-uat": "zsh scripts/macos-launch-agent-uat.zsh",
     "memory:daemon:notification-smoke": "tsx src/daemon/macos/notification-smoke-command.ts",
+    "memory:mcp": "tsx src/mcp/server-command.ts",
     "memory:source:revoke": "tsx src/imports/source-revoke-command.ts",
     "memory:source:delete": "tsx src/imports/source-delete-command.ts",
     "memory:quarantine": "tsx src/imports/quarantine-command.ts",

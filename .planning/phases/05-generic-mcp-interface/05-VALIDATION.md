@@ -1,10 +1,10 @@
 ---
 phase: 05
 slug: generic-mcp-interface
-status: draft
-nyquist_compliant: false
+status: complete
+nyquist_compliant: true
 wave_0_complete: true
-final_sign_off: pending
+final_sign_off: approved
 created: 2026-07-18
 ---
 
@@ -39,11 +39,11 @@ created: 2026-07-18
 
 | Task ID | Plan | Wave | Green-status owner | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|--------------------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 05-01-02, 05-03-01, 05-03-02 | 05-01, 05-03 | 1, 3 | 05-03 Task 2 | REQ-023 | T-05-SCOPE / T-05-CURSOR | Expansion returns only authorized events, stays within budget, and resumes without gaps or duplicates. | unit + SQLite integration | `npx vitest run tests/mcp/subject-expansion.test.ts` | ✅ created | ⬜ pending |
-| 05-01-02, 05-02-02, 05-03-01, 05-06-02 | 05-01, 05-02, 05-03, 05-06 | 1, 2, 3, 5 | 05-06 Task 2 | REQ-025 | T-05-DISCLOSURE / T-05-READ-WRITE | Structured and rendered reads preserve disclosure and provenance while causing zero semantic writes. | unit + snapshot | `npx vitest run tests/mcp/read-tools.test.ts` | ✅ created | ⬜ pending |
-| 05-01-03, 05-08-02 | 05-01, 05-08 | 1, 7 | 05-08 Task 2 | REQ-027 | T-05-STDIO / T-05-PROFILE | A real child process completes initialize/list/call/shutdown, emits clean stdout, and rejects missing or unknown profiles. | protocol integration | `npx vitest run tests/mcp/stdio-server.test.ts` | ✅ created | ⬜ pending |
-| 05-01-03, 05-02-02, 05-05-02, 05-05-03, 05-06-02, 05-07-02, 05-08-01 | 05-01, 05-02, 05-05, 05-06, 05-07, 05-08 | 1, 2, 4, 5, 6, 7 | 05-08 Task 1 | REQ-028 | T-05-ROUTING / T-05-OFFLINE | Every required capability is discoverable, explicitly routed, and remains usable with daemon status reported offline. | integration | `npx vitest run tests/mcp/tool-catalog.test.ts tests/mcp/mutation-tools.test.ts` | ✅ created | ⬜ pending |
-| 05-01-03, 05-04-01, 05-04-02, 05-05-01, 05-07-02, 05-08-01, 05-08-02 | 05-01, 05-04, 05-05, 05-07, 05-08 | 1, 3, 4, 6, 7 | 05-08 Task 2 | REQ-029 | T-05-CONFIRM / T-05-ATOMIC | Tool annotations match behavior; confirmations reject missing, expired, replayed, cross-profile, changed-input, and drifted-state use. | protocol + adversarial | `npx vitest run tests/mcp/confirmation-service.test.ts tests/mcp/stdio-server.test.ts` | ✅ created | ⬜ pending |
+| 05-01-02, 05-03-01, 05-03-02 | 05-01, 05-03 | 1, 3 | 05-03 Task 2 | REQ-023 | T-05-SCOPE / T-05-CURSOR | Expansion returns only authorized events, stays within budget, and resumes without gaps or duplicates. | unit + SQLite integration | `npx vitest run tests/mcp/subject-expansion.test.ts` | ✅ created | ✅ green |
+| 05-01-02, 05-02-02, 05-03-01, 05-06-02 | 05-01, 05-02, 05-03, 05-06 | 1, 2, 3, 5 | 05-06 Task 2 | REQ-025 | T-05-DISCLOSURE / T-05-READ-WRITE | Structured and rendered reads preserve disclosure and provenance while causing zero semantic writes. | unit + snapshot | `npx vitest run tests/mcp/read-tools.test.ts` | ✅ created | ✅ green |
+| 05-01-03, 05-08-02 | 05-01, 05-08 | 1, 7 | 05-08 Task 2 | REQ-027 | T-05-STDIO / T-05-PROFILE | A real child process completes initialize/list/call/shutdown, emits clean stdout, and rejects missing or unknown profiles. | protocol integration | `npx vitest run tests/mcp/stdio-server.test.ts` | ✅ created | ✅ green |
+| 05-01-03, 05-02-02, 05-05-02, 05-05-03, 05-06-02, 05-07-02, 05-08-01, 05-09-01, 05-09-02 | 05-01, 05-02, 05-05, 05-06, 05-07, 05-08, 05-09 | 1, 2, 4, 5, 6, 7, 8 | 05-09 Task 2 | REQ-028 | T-05-ROUTING / T-05-OFFLINE / T-05-09-SCOPE / T-05-09-TOCTOU / T-05-09-ROLLBACK / T-05-09-CONFIRM | Every required capability is discoverable and explicitly routed; proposal decisions authorize the complete payload-derived closure and atomically reject dependency or affected-object drift with zero writes. | integration + adversarial + SQLite parity | `npx vitest run tests/mcp/mutation-tools.test.ts tests/storage/sqlite-store.test.ts && npx vitest run tests/mcp/confirmation-service.test.ts tests/mcp/tool-catalog.test.ts tests/mcp/stdio-server.test.ts` | ✅ created | ✅ green |
+| 05-01-03, 05-04-01, 05-04-02, 05-05-01, 05-07-02, 05-08-01, 05-08-02 | 05-01, 05-04, 05-05, 05-07, 05-08 | 1, 3, 4, 6, 7 | 05-08 Task 2 | REQ-029 | T-05-CONFIRM / T-05-ATOMIC | Tool annotations match behavior; confirmations reject missing, expired, replayed, cross-profile, changed-input, and drifted-state use. | protocol + adversarial | `npx vitest run tests/mcp/confirmation-service.test.ts tests/mcp/stdio-server.test.ts` | ✅ created | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -75,13 +75,13 @@ Plan 05-01 Tasks 2 and 3 own creation and compilation of these contract modules.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s for focused MCP tests
-- [ ] `nyquist_compliant: true` set in frontmatter
-- [ ] All five requirement rows are `✅ green` with no pending/red/flaky state
-- [ ] `status: complete` and `final_sign_off: approved` set by 05-08 Task 2
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s for focused MCP tests
+- [x] `nyquist_compliant: true` set in frontmatter
+- [x] All five requirement rows are `✅ green` with no pending/red/flaky state
+- [x] `status: complete` and `final_sign_off: approved` set by 05-08 Task 2
 
-**Approval:** pending
+**Approval:** approved

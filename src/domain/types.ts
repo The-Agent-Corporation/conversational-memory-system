@@ -103,8 +103,12 @@ export const TurnSchema = z.object({
 
 export const SummarySchema = z.object({
   id: z.string().min(1),
+  personId: z.string().min(1).optional(),
+  scopeIds: z.array(z.string().min(1)).optional(),
+  origin: z.enum(["host_session", "historical_bootstrap"]).optional(),
   summaryText: z.string().min(1),
   sourceTurnRanges: z.array(TurnRangeSchema),
+  sourceCanonicalEventIds: z.array(z.string().min(1)).optional(),
   sourceSummaryIds: z.array(z.string().min(1)),
   boxIds: z.array(z.string().min(1)),
   embedding: EmbeddingSchema.nullable(),
@@ -126,6 +130,7 @@ export const SummarySchema = z.object({
 
 export const BoxSchema = z.object({
   id: z.string().min(1),
+  personId: z.string().min(1).optional(),
   title: z.string().min(1),
   description: z.string(),
   parentBoxId: z.string().min(1).nullable(),
@@ -143,6 +148,9 @@ export const BoxSchema = z.object({
 
 export const AnchorSchema = z.object({
   id: z.string().min(1),
+  personId: z.string().min(1).optional(),
+  scopeId: z.string().min(1).optional(),
+  canonicalEventId: z.string().min(1).optional(),
   turnId: z.string().min(1),
   threadId: z.string().min(1),
   boxId: z.string().min(1).nullable(),
@@ -156,6 +164,8 @@ export const AnchorSchema = z.object({
 
 export const InjectionPacketSchema = z.object({
   id: z.string().min(1),
+  personId: z.string().min(1).optional(),
+  allowedScopeIds: z.array(z.string().min(1)).optional(),
   hostSessionId: z.string().min(1),
   currentTopicSummary: z.string().min(1),
   selectedMemory: z.string().min(1),
@@ -215,6 +225,7 @@ export const TraceProposalPayloadSchema = z.object({
 
 export const MemoryProposalSchema = z.object({
   id: z.string().min(1),
+  personId: z.string().min(1).optional(),
   proposalType: ProposalTypeSchema,
   state: ProposalStateSchema,
   title: z.string().min(1),
@@ -248,6 +259,7 @@ export const MemoryProposalSchema = z.object({
 
 export const MemoryTraceSchema = z.object({
   id: z.string().min(1),
+  personId: z.string().min(1).optional(),
   title: z.string().min(1),
   description: z.string(),
   traceType: TraceTypeSchema,

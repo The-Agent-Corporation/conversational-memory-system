@@ -68,15 +68,20 @@ describe("MCP read application contract", () => {
     return client;
   };
 
-  const expectEquivalentToolEnvelope = (result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> => {
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toBeDefined();
-    const text = result.content.find((item) => item.type === "text");
+  const expectEquivalentToolEnvelope = (result: unknown): Record<string, unknown> => {
+    const parsed = result as {
+      isError?: boolean;
+      structuredContent?: Record<string, unknown>;
+      content?: Array<{ type: string; text?: string }>;
+    };
+    expect(parsed.isError).not.toBe(true);
+    expect(parsed.structuredContent).toBeDefined();
+    const text = parsed.content?.find((item) => item.type === "text");
     expect(text?.type).toBe("text");
-    if (text?.type === "text") {
-      expect(text.text).toContain(JSON.stringify(result.structuredContent, null, 2));
+    if (text?.type === "text" && text.text) {
+      expect(text.text).toContain(JSON.stringify(parsed.structuredContent, null, 2));
     }
-    return result.structuredContent as Record<string, unknown>;
+    return parsed.structuredContent ?? {};
   };
 
   it("snapshots every semantic fixture table deterministically without reading host history", async () => {
@@ -259,6 +264,14 @@ describe("MCP read application contract", () => {
       profileName: "alpha-workspace"
     })).review({ limit: 100 });
     expect([...(first.items as unknown[]), ...(second.items as unknown[])]).toEqual(direct.items);
+    const invalidCursor = "synthetic-raw-restricted-cursor";
+    const rejected = await protocol.callTool({
+      name: "memory_review",
+      arguments: { limit: 1, cursor: invalidCursor }
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain("INVALID_CONTINUATION");
+    expect(JSON.stringify(rejected)).not.toContain(invalidCursor);
     expect(await snapshotSemanticMemory(fixture!.store)).toBe(before);
   });
 

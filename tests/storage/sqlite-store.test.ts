@@ -2,6 +2,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { CanonicalEvent, MemorySource, Person } from "../../src/domain/canonical.js";
+import type { ImportCheckpoint } from "../../src/imports/types.js";
+import type { HistoricalBootstrapCheckpoint } from "../../src/bootstrap/types.js";
 import type { Anchor, Box, InjectionPacket, MemoryProposal, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
@@ -16,6 +19,92 @@ const makeTurn = (overrides: Partial<Turn> = {}): Turn => ({
   trustLevel: "high",
   metadata: { sourceMetadata: { channel: "telegram" } },
   contentHash: "hash_1",
+  ...overrides
+});
+
+const makePerson = (overrides: Partial<Person> = {}): Person => ({
+  id: "person_1",
+  displayName: "Test Person",
+  createdAt: "2026-07-16T10:00:00.000Z",
+  ...overrides
+});
+
+const makeSource = (overrides: Partial<MemorySource> = {}): MemorySource => ({
+  id: "source_1",
+  personId: "person_1",
+  application: "codex",
+  profileId: "default",
+  instanceId: "default",
+  createdAt: "2026-07-16T10:00:00.000Z",
+  lastImportedAt: "2026-07-16T10:01:00.000Z",
+  ...overrides
+});
+
+const makeCanonicalEvent = (
+  overrides: Partial<CanonicalEvent> = {}
+): CanonicalEvent => ({
+  id: "event_1",
+  personId: "person_1",
+  sourceId: "source_1",
+  sourceApplication: "codex",
+  sourceProfileId: "default",
+  nativeSessionId: "session_1",
+  nativeEventId: "native_1",
+  nativeSequence: 1,
+  causalParentId: null,
+  role: "user",
+  content: "Build the universal memory system.",
+  occurredAt: "2026-07-16T10:00:00.000Z",
+  importedAt: "2026-07-16T10:01:00.000Z",
+  provenance: "direct_user_input",
+  trustLevel: "high",
+  contentHash: "hash_1",
+  parserVersion: "codex-jsonl/v1",
+  metadata: {},
+  ...overrides
+});
+
+const makeImportCheckpoint = (
+  overrides: Partial<ImportCheckpoint> = {}
+): ImportCheckpoint => ({
+  id: "checkpoint_1",
+  personId: "person_1",
+  candidateId: "codex_candidate_1",
+  resourcePath: "sessions/2026/07/16/rollout-session-1.jsonl",
+  fileIdentity: "1:2",
+  byteOffset: 120,
+  recordIndex: 4,
+  nativeSessionId: "session_1",
+  parserVersion: "codex-rollout/v1",
+  updatedAt: "2026-07-16T10:01:00.000Z",
+  ...overrides
+});
+
+const makeBootstrapCheckpoint = (
+  overrides: Partial<HistoricalBootstrapCheckpoint> = {}
+): HistoricalBootstrapCheckpoint => ({
+  id: "bootstrap_person_1",
+  personId: "person_1",
+  processorVersion: "historical-bootstrap/v1",
+  processedEventCount: 2,
+  lastCanonicalEventId: "event_2",
+  rollingPrefixHash: "prefix_hash",
+  activeTopic: {
+    host: "unknown",
+    profileId: "person_1",
+    hostSessionId: "person:person_1",
+    topicLabel: "Universal Memory",
+    currentTopicSummary: "Universal Memory (2 turns, seq 1-2)",
+    sourceTurnRange: {
+      threadId: "person:person_1",
+      startSequence: 1,
+      endSequence: 2
+    },
+    turnCount: 2,
+    lastEventId: "event_2",
+    updatedAt: "2026-07-16T10:01:00.000Z"
+  },
+  updatedAt: "2026-07-16T10:01:00.000Z",
   ...overrides
 });
 
@@ -153,6 +242,95 @@ describe("SqliteStore", () => {
   afterEach(async () => {
     store.close();
     await rm(tempDir, { force: true, recursive: true });
+  });
+
+  it("persists person-scoped sources and canonical events across store instances", async () => {
+    await store.savePerson(makePerson());
+    await store.saveSource(makeSource());
+    await store.saveCanonicalEvent(makeCanonicalEvent());
+    store.close();
+
+    store = new SqliteStore(databasePath);
+
+    await expect(store.getPerson("person_1")).resolves.toEqual(makePerson());
+    await expect(store.listSources("person_1")).resolves.toEqual([makeSource()]);
+    await expect(store.listCanonicalEvents("person_1")).resolves.toEqual([
+      makeCanonicalEvent()
+    ]);
+  });
+
+  it("persists import checkpoints and protects their person ownership", async () => {
+    await store.saveImportCheckpoint(makeImportCheckpoint());
+    store.close();
+
+    store = new SqliteStore(databasePath);
+
+    await expect(store.getImportCheckpoint("checkpoint_1")).resolves.toEqual(
+      makeImportCheckpoint()
+    );
+    await expect(store.listImportCheckpoints("person_1")).resolves.toEqual([
+      makeImportCheckpoint()
+    ]);
+    await expect(store.listImportCheckpoints("person_2")).resolves.toEqual([]);
+    await expect(store.saveImportCheckpoint(makeImportCheckpoint({ personId: "person_2" })))
+      .rejects.toThrow("different person");
+  });
+
+  it("persists historical bootstrap checkpoints and protects person ownership", async () => {
+    await store.saveBootstrapCheckpoint(makeBootstrapCheckpoint());
+    store.close();
+
+    store = new SqliteStore(databasePath);
+    await expect(store.getBootstrapCheckpoint("bootstrap_person_1")).resolves.toEqual(
+      makeBootstrapCheckpoint()
+    );
+    await expect(
+      store.saveBootstrapCheckpoint(makeBootstrapCheckpoint({ personId: "person_2" }))
+    ).rejects.toThrow(/different person/i);
+  });
+
+  it("orders the personal timeline globally and keeps people isolated", async () => {
+    await store.saveCanonicalEvent(makeCanonicalEvent({
+      id: "event_later",
+      nativeSequence: 1,
+      occurredAt: "2026-07-16T10:05:00.000Z"
+    }));
+    await store.saveCanonicalEvent(makeCanonicalEvent({
+      id: "event_same_time_later_sequence",
+      nativeSequence: 9,
+      occurredAt: "2026-07-16T10:00:00.000Z"
+    }));
+    await store.saveCanonicalEvent(makeCanonicalEvent({
+      id: "event_same_time_earlier_sequence",
+      nativeSequence: 2,
+      occurredAt: "2026-07-16T10:00:00.000Z"
+    }));
+    await store.saveCanonicalEvent(makeCanonicalEvent({
+      id: "event_other_person",
+      personId: "person_2",
+      sourceId: "source_2",
+      occurredAt: "2026-07-16T09:00:00.000Z"
+    }));
+
+    const events = await store.listCanonicalEvents("person_1");
+    expect(events.map((event) => event.id)).toEqual([
+      "event_same_time_earlier_sequence",
+      "event_same_time_later_sequence",
+      "event_later"
+    ]);
+    await expect(store.listCanonicalEvents("person_2")).resolves.toEqual([
+      expect.objectContaining({ id: "event_other_person", personId: "person_2" })
+    ]);
+  });
+
+  it("rejects reassignment of source and event identities across people", async () => {
+    await store.saveSource(makeSource());
+    await store.saveCanonicalEvent(makeCanonicalEvent());
+
+    await expect(store.saveSource(makeSource({ personId: "person_2" })))
+      .rejects.toThrow("different person");
+    await expect(store.saveCanonicalEvent(makeCanonicalEvent({ personId: "person_2" })))
+      .rejects.toThrow("different person");
   });
 
   it("persists turns across store instances", async () => {

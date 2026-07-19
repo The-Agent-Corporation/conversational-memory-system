@@ -80,13 +80,116 @@ const makeTrace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
   ...overrides
 });
 
+const legacyRetriever = (
+  store: InMemoryStore,
+  options: { embedder?: Embedder } = {}
+): MemoryRetriever => new MemoryRetriever(store, { ...options, allowLegacyUnscoped: true });
+
 describe("MemoryRetriever", () => {
+  it("enforces exact person and allowed-scope boundaries across derived memory", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_allowed",
+      personId: "person_1",
+      scopeIds: ["case_alpha"],
+      summaryText: "Alpha deadline strategy",
+      boxIds: ["box_allowed"]
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_denied",
+      personId: "person_1",
+      scopeIds: ["case_beta"],
+      summaryText: "Beta deadline strategy"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_mixed",
+      personId: "person_1",
+      scopeIds: ["case_alpha", "case_beta"],
+      summaryText: "Mixed Alpha Beta deadline strategy"
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_other_person",
+      personId: "person_2",
+      scopeIds: ["case_alpha"],
+      summaryText: "Other person Alpha deadline strategy"
+    }));
+    await store.saveAnchor(makeAnchor({
+      id: "anchor_allowed",
+      personId: "person_1",
+      scopeId: "case_alpha",
+      content: "Alpha filing deadline"
+    }));
+    await store.saveAnchor(makeAnchor({
+      id: "anchor_denied",
+      personId: "person_1",
+      scopeId: "case_beta",
+      content: "Beta filing deadline"
+    }));
+    await store.saveTrace(makeTrace({
+      id: "trace_mixed",
+      personId: "person_1",
+      summaryIds: ["summary_allowed", "summary_denied"],
+      title: "Alpha Beta deadline",
+      description: "Mixed scope trace"
+    }));
+    await store.saveBox(makeBox({
+      id: "box_allowed",
+      personId: "person_1",
+      summaryIds: ["summary_allowed"],
+      summary: "Allowed parent context"
+    }));
+
+    const packet = await new MemoryRetriever(store).prepareInjection({
+      host: "codex",
+      profileId: "default",
+      hostSessionId: "consumer",
+      currentTopicSummary: "Alpha deadline strategy",
+      personId: "person_1",
+      allowedScopeIds: ["case_alpha"],
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    expect(packet).toMatchObject({
+      personId: "person_1",
+      allowedScopeIds: ["case_alpha"]
+    });
+    expect(packet?.selectedMemory).toContain("Alpha deadline strategy");
+    expect(packet?.selectedMemory).toContain("Alpha filing deadline");
+    expect(packet?.selectedMemory).not.toContain("Beta deadline strategy");
+    expect(packet?.selectedMemory).not.toContain("Other person");
+    expect(packet?.sourceTraceIds).not.toContain("trace_mixed");
+  });
+
+  it("fails closed when only half of the scoped retrieval context is supplied", async () => {
+    const retriever = new MemoryRetriever(new InMemoryStore());
+    await expect(retriever.prepareInjection({
+      host: "codex",
+      profileId: "default",
+      hostSessionId: "consumer",
+      currentTopicSummary: "deadline"
+    })).rejects.toThrow(/Unscoped retrieval is disabled/);
+    await expect(retriever.prepareInjection({
+      host: "codex",
+      profileId: "default",
+      hostSessionId: "consumer",
+      currentTopicSummary: "deadline",
+      personId: "person_1"
+    })).rejects.toThrow(/both personId and allowedScopeIds/);
+    await expect(retriever.prepareInjection({
+      host: "codex",
+      profileId: "default",
+      hostSessionId: "consumer",
+      currentTopicSummary: "deadline",
+      allowedScopeIds: ["case_alpha"]
+    })).rejects.toThrow(/both personId and allowedScopeIds/);
+  });
+
   it("returns and audits a ranked injection packet for matching memory", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary());
     await store.saveAnchor(makeAnchor());
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -117,7 +220,7 @@ describe("MemoryRetriever", () => {
       summaryText: "Jones BI coverage limits."
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -134,7 +237,7 @@ describe("MemoryRetriever", () => {
     const store = new InMemoryStore();
     await store.saveSummary(makeSummary());
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const first = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -172,7 +275,7 @@ describe("MemoryRetriever", () => {
       tokenCount: 12
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -201,7 +304,7 @@ describe("MemoryRetriever", () => {
       content: "Smith PIP demand deadline is June 1."
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -227,7 +330,7 @@ describe("MemoryRetriever", () => {
       tokenCount: 10
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -249,7 +352,7 @@ describe("MemoryRetriever", () => {
       tokenCount: 14
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -279,7 +382,7 @@ describe("MemoryRetriever", () => {
       retrievedAt: "2026-05-04T09:00:00.000Z"
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -311,7 +414,7 @@ describe("MemoryRetriever", () => {
       strength: 0.3
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -347,7 +450,7 @@ describe("MemoryRetriever", () => {
       retrievedAt: "2026-05-01T10:00:00.000Z"
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -408,7 +511,7 @@ describe("MemoryRetriever", () => {
       }
     };
 
-    const retriever = new MemoryRetriever(store, { embedder });
+    const retriever = legacyRetriever(store, { embedder });
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -455,7 +558,7 @@ describe("MemoryRetriever", () => {
       }
     };
 
-    const retriever = new MemoryRetriever(store, { embedder });
+    const retriever = legacyRetriever(store, { embedder });
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -479,7 +582,7 @@ describe("MemoryRetriever", () => {
     }));
     await store.saveTrace(makeTrace());
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -513,7 +616,7 @@ describe("MemoryRetriever", () => {
       rationale: "The provider bill issue recurred across separated turns and should stay linked. ".repeat(10)
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -542,7 +645,7 @@ describe("MemoryRetriever", () => {
       state: "rejected"
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -579,7 +682,7 @@ describe("MemoryRetriever", () => {
       tokenCount: 10
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -614,7 +717,7 @@ describe("MemoryRetriever", () => {
       tokenCount: 5
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",
@@ -647,7 +750,7 @@ describe("MemoryRetriever", () => {
       rationale: "The same Smith case provider bill issue recurred across separated turns."
     }));
 
-    const retriever = new MemoryRetriever(store);
+    const retriever = legacyRetriever(store);
     const packet = await retriever.prepareInjection({
       host: "roscoe-hermes",
       profileId: "default",

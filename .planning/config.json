@@ -1,0 +1,8 @@
+{
+  "mode": "autonomous",
+  "commit_docs": true,
+  "workflow": {
+    "_auto_chain_active": false
+  },
+  "granularity": "standard"
+}

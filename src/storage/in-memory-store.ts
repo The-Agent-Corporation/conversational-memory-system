@@ -69,6 +69,7 @@ import {
   CommitProposalDecisionInputSchema,
   CommitSourceDeletionInputSchema,
   CommitSourceRevocationInputSchema,
+  proposalDecisionStateMatches,
   type CommitHistoryImportInput,
   type CommitProposalDecisionInput,
   type CommitSourceDeletionInput,
@@ -296,7 +297,24 @@ export class InMemoryStore implements MemoryStore {
   async commitProposalDecision(input: CommitProposalDecisionInput): Promise<MutationCommitReceipt> {
     const parsed = CommitProposalDecisionInputSchema.parse(input);
     const current = this.proposals.find((item) => item.id === parsed.expectedProposal.id) ?? null;
-    if (!this.sameRecord(current, parsed.expectedProposal)) return this.stateChanged(parsed.receipt);
+    const currentSummaries = parsed.expectedSummaries.flatMap((expected) => {
+      const value = this.summaries.find((item) => item.id === expected.id);
+      return value ? [structuredClone(value)] : [];
+    });
+    const currentBoxes = parsed.expectedBoxes.map(({ id }) => ({
+      id,
+      value: structuredClone(this.boxes.find((item) => item.id === id) ?? null)
+    }));
+    const currentTraces = parsed.expectedTraces.map(({ id }) => ({
+      id,
+      value: structuredClone(this.traces.find((item) => item.id === id) ?? null)
+    }));
+    if (!proposalDecisionStateMatches(parsed, {
+      proposal: current,
+      summaries: currentSummaries,
+      boxes: currentBoxes,
+      traces: currentTraces
+    })) return this.stateChanged(parsed.receipt);
     const staged = { boxes: structuredClone(this.boxes), traces: structuredClone(this.traces), proposals: structuredClone(this.proposals) };
     this.faultInjector?.reach("proposal_decision_before_write");
     for (const item of parsed.nextBoxes) this.stageDerivedUpsert(staged.boxes, item, parsed.personId);

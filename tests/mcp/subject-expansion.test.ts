@@ -95,8 +95,85 @@ describe("MCP whole-subject expansion contract", () => {
     await expect(service.expand({ subject: "Synthetic other-person summary", tokenBudget: 500 }))
       .rejects.toThrow("Subject is unavailable");
   });
-  it.todo("05-03 Task 2 authenticates continuation against profile, subject, order key, estimator, and expiry");
-  it.todo("05-03 Task 2 resumes deterministic expansion with no gaps or duplicate canonical events");
-  it.todo("05-03 Task 2 rejects changed subjects, profiles, budgets, and tampered continuation state");
-  it.todo("05-03 Task 2 completes every page with byte-equivalent semantic tables before and after");
+  it("05-03 Task 2 authenticates continuation against profile, subject, order key, estimator, and expiry", async () => {
+    fixture = await createSyntheticMcpFixture();
+    const { service } = createService(fixture);
+    const full = await service.expand({ subject: "Synthetic alpha summary", tokenBudget: 500 });
+    const tokenBudget = full.events[0]?.estimatedTokens ?? 1;
+    const first = await service.expand({ subject: "Synthetic alpha summary", tokenBudget });
+    const cursor = first.continuation;
+    expect(cursor).toEqual(expect.any(String));
+
+    const serializedEnvelope = Buffer.from(cursor ?? "", "base64url").toString("utf8");
+    expect(serializedEnvelope).toContain("authorityFingerprint");
+    expect(serializedEnvelope).toContain("subjectHash");
+    expect(serializedEnvelope).toContain("next");
+    expect(serializedEnvelope).toContain("estimatorVersion");
+    expect(serializedEnvelope).toContain("expiresAt");
+    expect(serializedEnvelope).not.toContain("Synthetic alpha subject");
+    expect(serializedEnvelope).not.toContain("scope-alpha");
+    expect(serializedEnvelope).not.toContain(fixture.tempDir);
+
+    fixture.clock.advance(5 * 60 * 1000 + 1);
+    await expect(service.expand({ subject: "Synthetic alpha summary", tokenBudget, cursor: cursor ?? "" }))
+      .rejects.toThrow("Invalid continuation cursor");
+  });
+
+  it("05-03 Task 2 resumes deterministic expansion with no gaps or duplicate canonical events", async () => {
+    fixture = await createSyntheticMcpFixture();
+    const { service } = createService(fixture);
+    const full = await service.expand({ subject: "Synthetic alpha summary", tokenBudget: 500 });
+    const tokenBudget = full.events[0]?.estimatedTokens ?? 1;
+    const first = await service.expand({ subject: "Synthetic alpha summary", tokenBudget });
+    const second = await service.expand({
+      subject: "Synthetic alpha summary",
+      tokenBudget,
+      cursor: first.continuation ?? ""
+    });
+
+    expect([...first.events, ...second.events].map((event) => event.id)).toEqual([
+      "event-alpha-1",
+      "event-alpha-2"
+    ]);
+    expect(new Set([...first.events, ...second.events].map((event) => event.id)).size).toBe(2);
+    expect(second.continuation).toBeNull();
+  });
+
+  it("05-03 Task 2 rejects changed subjects, profiles, budgets, and tampered continuation state", async () => {
+    fixture = await createSyntheticMcpFixture();
+    const { service } = createService(fixture);
+    const { service: expandedProfileService } = createService(fixture, "alpha-expanded");
+    const full = await service.expand({ subject: "Synthetic alpha summary", tokenBudget: 500 });
+    const tokenBudget = full.events[0]?.estimatedTokens ?? 1;
+    const first = await service.expand({ subject: "Synthetic alpha summary", tokenBudget });
+    const cursor = first.continuation ?? "";
+    const tampered = `${cursor[0] === "A" ? "B" : "A"}${cursor.slice(1)}`;
+
+    await expect(service.expand({ subject: "Synthetic alpha box", tokenBudget, cursor }))
+      .rejects.toThrow("Invalid continuation cursor");
+    await expect(expandedProfileService.expand({ subject: "Synthetic alpha summary", tokenBudget, cursor }))
+      .rejects.toThrow("Invalid continuation cursor");
+    await expect(service.expand({ subject: "Synthetic alpha summary", tokenBudget: tokenBudget + 1, cursor }))
+      .rejects.toThrow("Invalid continuation cursor");
+    await expect(service.expand({ subject: "Synthetic alpha summary", tokenBudget, cursor: tampered }))
+      .rejects.toThrow("Invalid continuation cursor");
+  });
+
+  it("05-03 Task 2 completes every page with byte-equivalent semantic tables before and after", async () => {
+    fixture = await createSyntheticMcpFixture();
+    const before = await snapshotSemanticMemory(fixture.store);
+    const { service } = createService(fixture);
+    const full = await service.expand({ subject: "Synthetic alpha summary", tokenBudget: 500 });
+    const tokenBudget = full.events[0]?.estimatedTokens ?? 1;
+    let cursor: string | null | undefined;
+    const ids: string[] = [];
+    do {
+      const page = await service.expand({ subject: "Synthetic alpha summary", tokenBudget, ...(cursor ? { cursor } : {}) });
+      ids.push(...page.events.map((event) => event.id));
+      cursor = page.continuation;
+    } while (cursor);
+
+    expect(ids).toEqual(["event-alpha-1", "event-alpha-2"]);
+    expect(await snapshotSemanticMemory(fixture.store)).toBe(before);
+  });
 });

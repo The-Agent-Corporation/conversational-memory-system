@@ -48,8 +48,14 @@ function detectAnchorTypes(content: string): Anchor["anchorType"][] {
 }
 
 function buildAnchor(turn: Turn, anchorType: Anchor["anchorType"]): Anchor {
+  const personId = stringMetadata(turn, "personId");
+  const canonicalEventId = stringMetadata(turn, "canonicalEventId");
+  const scopeId = stringMetadata(turn, "scopeId");
   return {
     id: `anchor_${turn.id}_${anchorType}`,
+    ...(personId ? { personId } : {}),
+    ...(canonicalEventId ? { canonicalEventId } : {}),
+    ...(scopeId ? { scopeId } : {}),
     turnId: turn.id,
     threadId: turn.threadId,
     boxId: null,
@@ -60,4 +66,9 @@ function buildAnchor(turn: Turn, anchorType: Anchor["anchorType"]): Anchor {
     trustLevel: turn.trustLevel,
     source: turn.provenance
   };
+}
+
+function stringMetadata(turn: Turn, key: string): string | null {
+  const value = turn.metadata[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }

@@ -1,5 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { createResponseEnvelope } from "../response-envelope.js";
+import type { ScopedProposalReviewer } from "../../proposals/scoped-proposal-reviewer.js";
+import type { MemoryQueryService } from "../../retrieval/memory-query-service.js";
+import type { SubjectExpansionService } from "../../retrieval/subject-expansion-service.js";
 
 const IdentifierSchema = z.string().min(1).max(512);
 const BoundedTextSchema = z.string().max(65_536);
@@ -171,6 +176,134 @@ export const ProposalListOutputSchema = z.object({
   disclosure: z.string().min(1).max(2_000)
 }).strict();
 
-// Registration is implemented after the schema gate so tool routing remains a thin,
-// separately verified protocol layer.
-export const registerMemoryReadTools = (_server: McpServer): void => {};
+export const MEMORY_READ_TOOL_NAMES = [
+  "memory_search",
+  "memory_recall",
+  "memory_review",
+  "memory_expand_subject",
+  "source_status",
+  "proposal_list"
+] as const;
+
+export const MEMORY_READ_TOOL_ANNOTATIONS: Readonly<ToolAnnotations> = Object.freeze({
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false
+});
+
+export interface MemoryReadToolApplication {
+  readonly queries: MemoryQueryService;
+  readonly expansion: SubjectExpansionService;
+  readonly proposals: ScopedProposalReviewer;
+  readonly now?: () => string;
+}
+
+const DISCLOSURE = "Assistive memory only; verify against current sources.";
+
+export const registerMemoryReadTools = (
+  server: McpServer,
+  application: MemoryReadToolApplication
+): void => {
+  server.registerTool(
+    "memory_search",
+    {
+      title: "Search scoped memory",
+      description: "Return ranked inspectable candidates from the startup-authorized memory profile.",
+      inputSchema: MemorySearchInputSchema,
+      outputSchema: MemorySearchOutputSchema,
+      annotations: MEMORY_READ_TOOL_ANNOTATIONS
+    },
+    async (input) => safeRead(() => application.queries.search(input))
+  );
+
+  server.registerTool(
+    "memory_recall",
+    {
+      title: "Recall scoped context",
+      description: "Return a compact assistive context packet for a task and explicit token budget.",
+      inputSchema: MemoryRecallInputSchema,
+      outputSchema: MemoryRecallOutputSchema,
+      annotations: MEMORY_READ_TOOL_ANNOTATIONS
+    },
+    async (input) => safeRead(() => application.queries.recall(input))
+  );
+
+  server.registerTool(
+    "memory_review",
+    {
+      title: "Review durable memory",
+      description: "Page through authorized summaries, anchors, boxes, and traces in deterministic order.",
+      inputSchema: MemoryReviewInputSchema,
+      outputSchema: MemoryReviewOutputSchema,
+      annotations: MEMORY_READ_TOOL_ANNOTATIONS
+    },
+    async (input) => safeRead(() => application.queries.review(input))
+  );
+
+  server.registerTool(
+    "memory_expand_subject",
+    {
+      title: "Expand a remembered subject",
+      description: "Return authorized whole canonical events for one subject under an explicit budget.",
+      inputSchema: MemoryExpandSubjectInputSchema,
+      outputSchema: MemoryExpandSubjectOutputSchema,
+      annotations: MEMORY_READ_TOOL_ANNOTATIONS
+    },
+    async (input) => safeRead(() => application.expansion.expand(input))
+  );
+
+  server.registerTool(
+    "source_status",
+    {
+      title: "Inspect memory synchronization status",
+      description: "Return profile-scoped source and memory counts, including an explicit offline daemon state.",
+      inputSchema: SourceStatusInputSchema,
+      outputSchema: SourceStatusOutputSchema,
+      annotations: MEMORY_READ_TOOL_ANNOTATIONS
+    },
+    async () => safeRead(() => application.queries.status(application.now?.()))
+  );
+
+  server.registerTool(
+    "proposal_list",
+    {
+      title: "List review proposals",
+      description: "Return a bounded dependency-authorized proposal page without proposal payloads.",
+      inputSchema: ProposalListInputSchema,
+      outputSchema: ProposalListOutputSchema,
+      annotations: MEMORY_READ_TOOL_ANNOTATIONS
+    },
+    async (input) => safeRead(async () => ({
+      ...await application.proposals.listProposals(input),
+      disclosure: DISCLOSURE
+    }))
+  );
+};
+
+const safeRead = async <T extends object>(
+  operation: () => Promise<T>
+): Promise<CallToolResult> => {
+  try {
+    const structuredContent: Record<string, unknown> = Object.assign({}, await operation());
+    const envelope = createResponseEnvelope(structuredContent);
+    return {
+      structuredContent: envelope.structuredContent,
+      content: envelope.content.map((item) => ({ ...item }))
+    };
+  } catch (error) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: `Memory read failed: ${sanitizedErrorCode(error)}` }]
+    };
+  }
+};
+
+const sanitizedErrorCode = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : "";
+  if (message === "Subject is unavailable") return "UNAVAILABLE";
+  if (message.includes("cursor")) return "INVALID_CONTINUATION";
+  if (message.includes("too small")) return "BUDGET_TOO_SMALL";
+  if (message === "UNAUTHORIZED_OR_NOT_FOUND") return "UNAUTHORIZED_OR_NOT_FOUND";
+  return "INVALID_REQUEST";
+};

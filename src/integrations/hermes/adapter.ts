@@ -57,7 +57,10 @@ export class HermesMemoryAdapter {
   private readonly resumer: ConversationResumer;
 
   constructor(store: MemoryStore, options: HermesMemoryAdapterOptions = {}) {
-    this.service = new MemoryService(store, { embedder: options.embedder });
+    this.service = new MemoryService(store, {
+      embedder: options.embedder,
+      allowLegacyUnscopedRetrieval: true
+    });
     this.anchorDetector = new AnchorDetector(store);
     this.preCompactor = new PreCompactor(
       store,

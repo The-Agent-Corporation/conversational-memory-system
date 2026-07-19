@@ -10,6 +10,9 @@ import {
   CommitProposalDecisionInputSchema,
   CommitSourceDeletionInputSchema,
   CommitSourceRevocationInputSchema,
+  ExpectedBoxStateSchema,
+  ExpectedTraceStateSchema,
+  ProposalDependencyClosureSchema,
   mutationEffectsFingerprint
 } from "../../src/storage/mcp-mutation-contracts.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
@@ -27,7 +30,7 @@ import {
   registerMemoryMutationTools,
   type MemoryMutationToolApplication
 } from "../../src/mcp/tools/mutation-tools.js";
-import type { MemoryProposal } from "../../src/domain/types.js";
+import type { Box, MemoryProposal, MemoryTrace, Summary } from "../../src/domain/types.js";
 import type { SourceGrant, SourceLifecycleAuditEvent } from "../../src/domain/source-lifecycle.js";
 import {
   createSyntheticMcpFixture,
@@ -65,14 +68,27 @@ describe("MCP mutation application contract", () => {
     } as const;
     const nextProposal = { ...expectedProposal, state: "rejected" as const, decidedAt: "2026-07-18T12:01:00.000Z" };
     const effects = { proposalIds: ["proposal-1"], boxIds: [], traceIds: [] };
+    const expectedSummaries = [atomicSummary("summary-1"), atomicSummary("summary-2")];
     const parsed = CommitProposalDecisionInputSchema.parse({
       operation: "proposal_decision", personId: "person-alpha", decision: "reject",
+      allowedScopeIds: ["scope-alpha"], expectedSummaries, expectedBoxes: [],
+      expectedTraces: [{ id: "trace-1", value: null }],
       expectedProposal, nextProposal, nextBoxes: [], nextTraces: [], effects,
       effectsFingerprint: mutationEffectsFingerprint(effects),
       receipt: { operation: "proposal_decision", status: "COMMITTED", personId: "person-alpha", targetId: "proposal-1", effectCounts: { proposals: 1, boxes: 0, traces: 0 }, committedAt: "2026-07-18T12:01:00.000Z" }
     });
     expect(parsed.operation).toBe("proposal_decision");
+    expect(ProposalDependencyClosureSchema.parse({
+      allowedScopeIds: parsed.allowedScopeIds,
+      expectedSummaries: parsed.expectedSummaries,
+      expectedBoxes: parsed.expectedBoxes,
+      expectedTraces: parsed.expectedTraces
+    })).toBeDefined();
+    expect(ExpectedBoxStateSchema.parse({ id: "box-absent", value: null }).value).toBeNull();
+    expect(ExpectedTraceStateSchema.parse({ id: "trace-1", value: null }).value).toBeNull();
     expect(() => CommitProposalDecisionInputSchema.parse({ ...parsed, personId: "person-other" })).toThrow();
+    expect(() => CommitProposalDecisionInputSchema.parse({ ...parsed, expectedSummaries: parsed.expectedSummaries.slice(1) })).toThrow();
+    expect(() => CommitProposalDecisionInputSchema.parse({ ...parsed, expectedSummaries: [...parsed.expectedSummaries, parsed.expectedSummaries[0]] })).toThrow();
   });
 
   it("05-04 Task 1 exposes exact atomic source revoke and delete store contracts with rollback", () => {
@@ -146,6 +162,97 @@ describe("MCP mutation application contract", () => {
       } finally {
         await memory.cleanup(); await sqlite.cleanup();
       }
+    }
+  });
+
+  it("05-09 Task 2 rejects complete proposal dependency and affected-state drift atomically in both adapters", async () => {
+    const driftCases = [
+      ["summary scope", async (harness: ProposalDecisionHarness) => {
+        const value = harness.plan.expectedSummaries.find((item) => item.id === "summary-1")!;
+        await harness.store.saveSummary({ ...value, scopeIds: ["scope-beta"] });
+      }],
+      ["summary state", async (harness: ProposalDecisionHarness) => {
+        const value = harness.plan.expectedSummaries.find((item) => item.id === "summary-1")!;
+        await harness.store.saveSummary({ ...value, state: "superseded" });
+      }],
+      ["summary recursive edge", async (harness: ProposalDecisionHarness) => {
+        const value = harness.plan.expectedSummaries.find((item) => item.id === "summary-1")!;
+        await harness.store.saveSummary({ ...value, sourceSummaryIds: ["summary-recursive-drift"] });
+      }],
+      ["parent box", async (harness: ProposalDecisionHarness) => {
+        const value = harness.plan.expectedBoxes.find((item) => item.id === "box-parent")!.value!;
+        await harness.store.saveBox({ ...value, title: "Drifted synthetic parent" });
+      }],
+      ["child box", async (harness: ProposalDecisionHarness) => {
+        const value = harness.plan.expectedBoxes.find((item) => item.id === "box-child")!.value!;
+        await harness.store.saveBox({ ...value, summary: "Drifted synthetic child" });
+      }],
+      ["existing trace", async (harness: ProposalDecisionHarness) => {
+        const value = harness.plan.expectedTraces.find((item) => item.id === "trace-decision")!.value!;
+        await harness.store.saveTrace({ ...value, description: "Drifted synthetic trace" });
+      }]
+    ] as const;
+
+    for (const backend of ["memory", "sqlite"] as const) {
+      for (const [name, drift] of driftCases) {
+        const harness = await proposalDecisionHarness(backend, true);
+        try {
+          await drift(harness);
+          const beforeExecute = await mutationSnapshot(harness.store);
+          await expect(harness.store.commitProposalDecision(harness.plan), `${backend}: ${name}`)
+            .resolves.toMatchObject({ status: "STATE_CHANGED", effectCounts: {} });
+          await harness.reopen();
+          await expect(mutationSnapshot(harness.store), `${backend}: ${name}`).resolves.toBe(beforeExecute);
+        } finally {
+          await harness.cleanup();
+        }
+      }
+
+      const absent = await proposalDecisionHarness(backend, false);
+      try {
+        expect(absent.plan.expectedTraces).toEqual([{ id: "trace-decision", value: null }]);
+        await absent.store.saveTrace(absent.plan.nextTraces[0]!);
+        const beforeExecute = await mutationSnapshot(absent.store);
+        await expect(absent.store.commitProposalDecision(absent.plan))
+          .resolves.toMatchObject({ status: "STATE_CHANGED", effectCounts: {} });
+        await absent.reopen();
+        await expect(mutationSnapshot(absent.store)).resolves.toBe(beforeExecute);
+      } finally {
+        await absent.cleanup();
+      }
+    }
+  });
+
+  it("05-09 Task 2 consumes a proposal confirmation when dependency drift returns STATE_CHANGED", async () => {
+    const harness = await proposalDecisionHarness("memory", true);
+    try {
+      const request = { proposalId: "proposal-decision", decidedAt: LATER, reviewer: "synthetic-reviewer" };
+      const preview = await harness.app.previewProposalApproval(request);
+      const summary = harness.plan.expectedSummaries.find((item) => item.id === "summary-1")!;
+      await harness.store.saveSummary({ ...summary, version: summary.version + 1 });
+      const beforeExecute = await mutationSnapshot(harness.store);
+      await expect(harness.app.executeProposalApproval({ ...request, token: preview.token }))
+        .resolves.toMatchObject({ status: "STATE_CHANGED", effectCounts: {} });
+      await expect(mutationSnapshot(harness.store)).resolves.toBe(beforeExecute);
+      await expect(harness.app.executeProposalApproval({ ...request, token: preview.token }))
+        .rejects.toMatchObject({ code: "CONFIRMATION_REPLAYED" });
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("05-09 Task 2 commits byte-equivalent clean proposal approval after SQLite reopen", async () => {
+    const memory = await proposalDecisionHarness("memory", true);
+    const sqlite = await proposalDecisionHarness("sqlite", true);
+    try {
+      const memoryReceipt = await memory.store.commitProposalDecision(memory.plan);
+      const sqliteReceipt = await sqlite.store.commitProposalDecision(sqlite.plan);
+      expect(sqliteReceipt).toEqual(memoryReceipt);
+      await sqlite.reopen();
+      expect(await proposalStateSnapshot(sqlite.store)).toBe(await proposalStateSnapshot(memory.store));
+    } finally {
+      await memory.cleanup();
+      await sqlite.cleanup();
     }
   });
   it("05-05 Task 3 previews history ingestion without opening an unconfigured source root", async () => {
@@ -222,6 +329,112 @@ describe("MCP mutation application contract", () => {
     await expect(app.executeProposalRejection({ token: preview.token, proposalId: "proposal-mixed", decidedAt: LATER, reviewer: "synthetic-reviewer" }))
       .resolves.toMatchObject({ operation: "proposal_decision", status: "COMMITTED", targetId: "proposal-mixed" });
     await expect(fixture.store.getProposal("proposal-mixed")).resolves.toMatchObject({ state: "rejected", decidedBy: "synthetic-reviewer" });
+  });
+
+  it("05-09 Task 1 rejects proposal payload-only unauthorized dependencies before issuing a plan", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(atomicSummary("summary-declared"));
+    await store.saveSummary(atomicSummary("summary-payload-denied", {
+      scopeIds: ["scope-beta"]
+    }));
+    const payloadMismatch = {
+      ...proposal(),
+      id: "proposal-payload-denied",
+      sourceSummaryIds: ["summary-declared"],
+      targetTraceIds: ["trace-payload-denied"],
+      payload: {
+        ...proposal().payload,
+        traceId: "trace-payload-denied",
+        summaryIds: ["summary-declared", "summary-payload-denied"]
+      }
+    };
+    await store.saveProposal(payloadMismatch);
+    const reviewer = new ScopedProposalReviewer(store, testAuthority());
+
+    await expect(reviewer.listProposals()).resolves.toEqual({ ok: true, proposals: [], count: 0 });
+    await expect(reviewer.planDecision({
+      proposalId: payloadMismatch.id,
+      decision: "approve",
+      decidedAt: LATER
+    })).rejects.toMatchObject({ code: "UNAUTHORIZED_OR_NOT_FOUND" });
+
+    const allowedSecond = atomicSummary("summary-allowed-second");
+    await store.saveSummary(allowedSecond);
+    await store.saveBox({
+      id: "box-payload-denied",
+      personId: "person-alpha",
+      title: "Synthetic denied dependency box",
+      description: "Synthetic",
+      parentBoxId: null,
+      childBoxIds: [],
+      summaryIds: ["summary-payload-denied"],
+      turnRanges: [],
+      state: "approved",
+      createdAt: NOW,
+      updatedAt: NOW,
+      caseId: null,
+      boxType: "project",
+      summary: "Synthetic",
+      lastActivityAt: NOW
+    });
+    const boxMismatch = {
+      ...proposal(),
+      id: "proposal-payload-box-denied",
+      sourceSummaryIds: ["summary-declared", allowedSecond.id],
+      targetBoxIds: [],
+      targetTraceIds: ["trace-payload-box-denied"],
+      payload: {
+        ...proposal().payload,
+        traceId: "trace-payload-box-denied",
+        summaryIds: ["summary-declared", allowedSecond.id],
+        boxIds: ["box-payload-denied"]
+      }
+    };
+    await store.saveProposal(boxMismatch);
+    await expect(reviewer.planDecision({
+      proposalId: boxMismatch.id,
+      decision: "approve",
+      decidedAt: LATER
+    })).rejects.toMatchObject({ code: "UNAUTHORIZED_OR_NOT_FOUND" });
+  });
+
+  it("05-09 Task 1 binds the authorized proposal payload union and recursive closure", async () => {
+    const store = new InMemoryStore();
+    const recursive = atomicSummary("summary-recursive");
+    const declared = atomicSummary("summary-declared", { sourceSummaryIds: [recursive.id] });
+    const payloadOnly = atomicSummary("summary-payload-only");
+    await store.saveSummary(recursive);
+    await store.saveSummary(declared);
+    await store.saveSummary(payloadOnly);
+    const mismatch = {
+      ...proposal(),
+      id: "proposal-authorized-mismatch",
+      sourceSummaryIds: [declared.id],
+      targetTraceIds: ["trace-new"],
+      payload: {
+        ...proposal().payload,
+        traceId: "trace-new",
+        summaryIds: [declared.id, payloadOnly.id]
+      }
+    };
+    await store.saveProposal(mismatch);
+
+    const plan = await new ScopedProposalReviewer(store, testAuthority()).planDecision({
+      proposalId: mismatch.id,
+      decision: "approve",
+      decidedAt: LATER,
+      reviewer: "synthetic-reviewer"
+    });
+
+    expect(plan.allowedScopeIds).toEqual(["scope-alpha"]);
+    expect(plan.expectedSummaries.map((item) => item.id)).toEqual([
+      "summary-declared", "summary-payload-only", "summary-recursive"
+    ]);
+    expect(plan.expectedBoxes).toEqual([]);
+    expect(plan.expectedTraces).toEqual([{ id: "trace-new", value: null }]);
+    expect(plan.nextTraces).toEqual([
+      expect.objectContaining({ id: "trace-new", summaryIds: ["summary-declared", "summary-payload-only"] })
+    ]);
   });
 
   it("05-05 Task 2 keeps source revocation distinct from source deletion", async () => {
@@ -456,6 +669,34 @@ const receipt = (operation: "history_import" | "proposal_decision" | "source_rev
   operation, status: "COMMITTED" as const, personId: "person-alpha", targetId, effectCounts, committedAt: LATER
 });
 
+const atomicSummary = (id: string, overrides: Partial<Summary> = {}): Summary => ({
+  id,
+  personId: "person-alpha",
+  scopeIds: ["scope-alpha"],
+  origin: "historical_bootstrap",
+  summaryText: `Synthetic summary ${id}`,
+  sourceTurnRanges: [],
+  sourceCanonicalEventIds: [],
+  sourceSummaryIds: [],
+  boxIds: [],
+  embedding: null,
+  createdAt: NOW,
+  model: "synthetic-local",
+  promptVersion: "synthetic/v1",
+  confidence: 0.8,
+  state: "active",
+  detailLevel: "brief",
+  tokenCount: 8,
+  lastAccessedAt: null,
+  version: 1,
+  strength: 0.5,
+  retrievalCount: 0,
+  retrievedAt: null,
+  halfLifeHours: 168,
+  outcomeScore: null,
+  ...overrides
+});
+
 const proposal = (): MemoryProposal => ({
   id: "proposal-atomic", personId: "person-alpha", proposalType: "trace", state: "proposed",
   title: "Synthetic proposal", rationale: "Synthetic atomic proposal", confidence: 0.8,
@@ -478,7 +719,7 @@ const proposalInput = () => {
   const expectedProposal = proposal();
   const nextProposal = { ...expectedProposal, state: "rejected" as const, decidedAt: LATER, decidedBy: "synthetic-reviewer" };
   const effects = { proposalIds: [expectedProposal.id], boxIds: [], traceIds: [] };
-  return CommitProposalDecisionInputSchema.parse({ operation: "proposal_decision", personId: "person-alpha", decision: "reject", expectedProposal, nextProposal, nextBoxes: [], nextTraces: [], effects, effectsFingerprint: mutationEffectsFingerprint(effects), receipt: receipt("proposal_decision", expectedProposal.id, { proposals: 1, boxes: 0, traces: 0 }) });
+  return CommitProposalDecisionInputSchema.parse({ operation: "proposal_decision", personId: "person-alpha", decision: "reject", allowedScopeIds: ["scope-alpha"], expectedSummaries: [atomicSummary("summary-1"), atomicSummary("summary-2")], expectedBoxes: [], expectedTraces: [{ id: "trace-atomic", value: null }], expectedProposal, nextProposal, nextBoxes: [], nextTraces: [], effects, effectsFingerprint: mutationEffectsFingerprint(effects), receipt: receipt("proposal_decision", expectedProposal.id, { proposals: 1, boxes: 0, traces: 0 }) });
 };
 
 const revocationInput = (expectedGrant = grant("approved")) => {
@@ -499,6 +740,84 @@ interface MutationHarness {
   reopen(): Promise<void>;
   cleanup(): Promise<void>;
 }
+
+interface ProposalDecisionHarness extends MutationHarness {
+  plan: Awaited<ReturnType<ScopedProposalReviewer["planDecision"]>>;
+  app: MemoryMutationApplication;
+}
+
+const proposalDecisionHarness = async (
+  backend: "memory" | "sqlite",
+  existingTrace: boolean
+): Promise<ProposalDecisionHarness> => {
+  let store: MemoryStore;
+  let tempDir: string | undefined;
+  let databasePath: string | undefined;
+  if (backend === "memory") {
+    store = new InMemoryStore();
+  } else {
+    tempDir = await mkdtemp(join(tmpdir(), "mcp-proposal-drift-"));
+    databasePath = join(tempDir, "memory.sqlite");
+    store = new SqliteStore(databasePath, { busyTimeoutMs: 250 });
+  }
+  const recursive = atomicSummary("summary-recursive");
+  const first = atomicSummary("summary-1", { sourceSummaryIds: [recursive.id] });
+  const second = atomicSummary("summary-2");
+  const child: Box = {
+    id: "box-child", personId: "person-alpha", title: "Synthetic child", description: "Synthetic",
+    parentBoxId: "box-parent", childBoxIds: [], summaryIds: [second.id], turnRanges: [], state: "approved",
+    createdAt: NOW, updatedAt: NOW, caseId: null, boxType: "project", summary: "Synthetic child", lastActivityAt: NOW
+  };
+  const parent: Box = {
+    id: "box-parent", personId: "person-alpha", title: "Synthetic parent", description: "Synthetic",
+    parentBoxId: null, childBoxIds: [child.id], summaryIds: [first.id], turnRanges: [], state: "approved",
+    createdAt: NOW, updatedAt: NOW, caseId: null, boxType: "project", summary: "Synthetic parent", lastActivityAt: NOW
+  };
+  const trace: MemoryTrace = {
+    id: "trace-decision", personId: "person-alpha", title: "Existing synthetic trace", description: "Synthetic",
+    traceType: "task_thread", state: "proposed", summaryIds: [first.id, second.id], boxIds: [parent.id],
+    turnRanges: [{ threadId: "synthetic-thread", startSequence: 1, endSequence: 2 }], createdAt: NOW,
+    updatedAt: NOW, lastActivityAt: NOW, confidence: 0.8, rationale: "Synthetic"
+  };
+  const decisionProposal: MemoryProposal = {
+    ...proposal(), id: "proposal-decision", sourceSummaryIds: [first.id], targetBoxIds: [],
+    targetTraceIds: [trace.id], payload: { ...proposal().payload, traceId: trace.id,
+      summaryIds: [first.id, second.id], boxIds: [parent.id] }
+  };
+  for (const summary of [recursive, first, second]) await store.saveSummary(summary);
+  await store.saveBox(parent);
+  await store.saveBox(child);
+  if (existingTrace) await store.saveTrace(trace);
+  await store.saveProposal(decisionProposal);
+  const authority = testAuthority();
+  const app = new MemoryMutationApplication({
+    store,
+    authority,
+    confirmations: new ConfirmationService({ clock: () => NOW })
+  });
+  const plan = await new ScopedProposalReviewer(store, authority).planDecision({
+    proposalId: decisionProposal.id,
+    decision: "approve",
+    decidedAt: LATER,
+    reviewer: "synthetic-reviewer"
+  });
+  const harness: ProposalDecisionHarness = {
+    store,
+    plan,
+    app,
+    async reopen() {
+      if (!databasePath) return;
+      (harness.store as SqliteStore).close();
+      harness.store = new SqliteStore(databasePath, { busyTimeoutMs: 250 });
+    },
+    async cleanup() {
+      if (!tempDir) return;
+      (harness.store as SqliteStore).close();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  };
+  return harness;
+};
 
 const mutationHarness = async (backend: "memory" | "sqlite", failingBoundary: string): Promise<MutationHarness> => {
   const faultInjector = { reach(boundary: string) { if (boundary === failingBoundary) throw new Error(`Synthetic fault at ${boundary}`); } };
@@ -523,7 +842,12 @@ const mutationHarness = async (backend: "memory" | "sqlite", failingBoundary: st
 
 const seedMutation = async (store: MemoryStore, operation: "history" | "proposal" | "revocation" | "deletion") => {
   if (operation === "history") { await store.saveSourceGrant(grant("approved")); return historyInput(); }
-  if (operation === "proposal") { const input = proposalInput(); await store.saveProposal(input.expectedProposal); return input; }
+  if (operation === "proposal") {
+    const input = proposalInput();
+    for (const summary of input.expectedSummaries) await store.saveSummary(summary);
+    await store.saveProposal(input.expectedProposal);
+    return input;
+  }
   if (operation === "revocation") { await store.saveSourceGrant(grant("approved")); return revocationInput(); }
   await store.saveSourceGrant(grant("revoked"));
   await store.saveSource({ id: "source-delete", personId: "person-alpha", application: "synthetic", profileId: "profile", instanceId: "candidate-atomic", scopeId: "scope-alpha", createdAt: NOW, lastImportedAt: NOW });
@@ -542,3 +866,10 @@ const mutationSnapshot = async (store: MemoryStore): Promise<string> => JSON.str
   store.listSourceGrants("person-alpha"), store.listSourceLifecycleAuditEvents("person-alpha"), store.listProposals(),
   store.listSummaries(), store.listBoxes(), store.listAnchors(), store.listTraces()
 ]));
+
+const proposalStateSnapshot = async (store: MemoryStore): Promise<string> => JSON.stringify({
+  proposal: await store.getProposal("proposal-decision"),
+  summaries: (await store.listSummaries()).sort((left, right) => left.id.localeCompare(right.id)),
+  boxes: (await store.listBoxes()).sort((left, right) => left.id.localeCompare(right.id)),
+  traces: (await store.listTraces()).sort((left, right) => left.id.localeCompare(right.id))
+});
