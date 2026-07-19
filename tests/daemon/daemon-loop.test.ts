@@ -1,11 +1,14 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DaemonLoop, type DaemonLoopDependencies } from "../../src/daemon/daemon.js";
+import { resolveProductionSyncReplicationDependency } from "../../src/daemon/daemon-command.js";
 import { DaemonScheduler } from "../../src/daemon/scheduler.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { InMemoryDeviceSecretStore } from "../../src/sync/secrets/in-memory-device-secret-store.js";
+import { LibsodiumCryptoProvider } from "../../src/sync/crypto/libsodium-crypto-provider.js";
 import {
   FIXED_NOW,
   FakeDaemonClock,
@@ -372,6 +375,158 @@ describe("DaemonLoop", () => {
   );
 });
 
+describe("DaemonLoop: optional bounded sync replication cycle (Task 06-08-02)", () => {
+  it("runs the sync cycle under the same captured writer authority as every other work item", async () => {
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    const observedAuthorities: unknown[] = [];
+    const harness = loopHarness(store, clock, "owner-sync", 501, {
+      syncReplication: {
+        runCycle: async (authority) => { observedAuthorities.push(authority); return { pushed: 0, applied: 0 }; }
+      }
+    });
+    await harness.loop.drainOne();
+    expect(observedAuthorities).toEqual([{ kind: "daemon", databaseId: "memory-db", ownerToken: "owner-sync" }]);
+    await harness.loop.requestStop();
+    await harness.loop.drainOne();
+  });
+
+  it("never blocks local proposal/MCP-relevant work or loses writer-lease authority when the sync cycle throws every cycle (offline/misconfigured relay)", async () => {
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    await store.savePerson({ id: "person-sync-offline", displayName: null, createdAt: FIXED_NOW });
+    let proposalRuns = 0;
+    const harness = loopHarness(store, clock, "owner-sync-offline", 502, {
+      runProposals: async () => { proposalRuns += 1; return { proposals: 0 }; },
+      syncReplication: {
+        runCycle: async () => { throw new Error("simulated relay offline/misconfigured"); }
+      }
+    });
+
+    for (let index = 0; index < 3; index += 1) await harness.loop.drainOne();
+    expect(proposalRuns).toBe(3);
+    // Writer-lease authority must remain intact despite every sync-cycle throw.
+    const lease = await store.getDaemonLease("memory-db");
+    expect(lease?.ownerToken).toBe("owner-sync-offline");
+
+    await harness.loop.requestStop();
+    await harness.loop.drainOne();
+    expect(await store.getDaemonLease("memory-db")).toBeNull();
+  });
+
+  it("is a complete no-op when unconfigured (undefined) -- identical to Phase 05 daemon behavior", async () => {
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    const harness = loopHarness(store, clock, "owner-no-sync", 503);
+    await expect(harness.loop.drainOne()).resolves.toBeDefined();
+    await harness.loop.requestStop();
+    await harness.loop.drainOne();
+  });
+});
+
+describe("resolveProductionSyncReplicationDependency: production daemon transport selection (Task 06-08-02)", () => {
+  const ENV_KEYS = [
+    "MEMORY_SYNC_RELAY_BASE_URL",
+    "MEMORY_SYNC_RELAY_ALLOW_INSECURE_LOOPBACK",
+    "MEMORY_SYNC_RELAY_TOKEN_PATH",
+    "MEMORY_SYNC_PERSON_ID",
+    "MEMORY_SYNC_ID",
+    "MEMORY_SYNC_DEVICE_ID",
+    "MEMORY_SYNC_EPOCH"
+  ] as const;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  function resetEnv() {
+    for (const key of ENV_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
+  }
+
+  afterEach(() => {
+    resetEnv();
+  });
+
+  it("is undefined (a documented no-op) when MEMORY_SYNC_RELAY_BASE_URL is unset -- identical to Phase 05", () => {
+    for (const key of ENV_KEYS) delete process.env[key];
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    expect(resolveProductionSyncReplicationDependency(store, clock, undefined)).toBeUndefined();
+  });
+
+  it("rejects a plaintext HTTP base URL without the explicit loopback acknowledgement", () => {
+    for (const key of ENV_KEYS) delete process.env[key];
+    process.env.MEMORY_SYNC_RELAY_BASE_URL = "http://relay.example.test";
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    expect(() => resolveProductionSyncReplicationDependency(store, clock, undefined)).toThrow(/https/i);
+  });
+
+  it("fails closed when the base URL is configured but token/device identity configuration is missing", () => {
+    for (const key of ENV_KEYS) delete process.env[key];
+    process.env.MEMORY_SYNC_RELAY_BASE_URL = "https://relay.example.test";
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    expect(() => resolveProductionSyncReplicationDependency(store, clock, undefined)).toThrow(/MEMORY_SYNC/);
+  });
+
+  it("stays a documented no-op when fully configured but no DeviceSecretStore is injected", () => {
+    for (const key of ENV_KEYS) delete process.env[key];
+    process.env.MEMORY_SYNC_RELAY_BASE_URL = "https://relay.example.test";
+    process.env.MEMORY_SYNC_RELAY_TOKEN_PATH = "/nonexistent/token";
+    process.env.MEMORY_SYNC_PERSON_ID = "person-1";
+    process.env.MEMORY_SYNC_ID = "sync-1";
+    process.env.MEMORY_SYNC_DEVICE_ID = "device-1";
+    process.env.MEMORY_SYNC_EPOCH = "1";
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    expect(resolveProductionSyncReplicationDependency(store, clock, undefined)).toBeUndefined();
+  });
+
+  it("constructs a real HttpSyncRelay-backed cycle when fully configured with an injected DeviceSecretStore, reusing the exact SyncControlService secret-binding convention", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "daemon-sync-token-"));
+    cleanup.push(directory);
+    const tokenPath = join(directory, "token");
+    await writeFile(tokenPath, "synthetic-bearer-token\n", "utf8");
+
+    for (const key of ENV_KEYS) delete process.env[key];
+    process.env.MEMORY_SYNC_RELAY_BASE_URL = "https://relay.example.test";
+    process.env.MEMORY_SYNC_RELAY_TOKEN_PATH = tokenPath;
+    process.env.MEMORY_SYNC_PERSON_ID = "person-1";
+    process.env.MEMORY_SYNC_ID = "sync-1";
+    process.env.MEMORY_SYNC_DEVICE_ID = "device-1";
+    process.env.MEMORY_SYNC_EPOCH = "1";
+
+    const crypto = new LibsodiumCryptoProvider();
+    const secrets = new InMemoryDeviceSecretStore();
+    const binding = { personId: "person-1", syncId: "sync-1", deviceId: "device-1" };
+    const signing = crypto.generateSigningKeyPair();
+    await secrets.create({
+      binding,
+      kind: "device_signing_seed",
+      secretId: "device-1",
+      bytes: Buffer.concat([Buffer.from(signing.publicKey), Buffer.from(signing.secretKey)])
+    });
+    await secrets.create({
+      binding: { ...binding, epoch: 1 },
+      kind: "epoch_key",
+      secretId: "epoch:1",
+      bytes: crypto.randomBytes(32)
+    });
+
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    const dependency = resolveProductionSyncReplicationDependency(store, clock, secrets);
+    expect(dependency).toBeDefined();
+
+    // The relay host is unreachable in this test (no real network); runCycle must throw a
+    // content-free error rather than hang or crash -- proving DaemonLoop's own try/catch (above)
+    // is what keeps this failure from ever affecting writer-lease authority in production.
+    await expect(dependency!.runCycle({ kind: "daemon", databaseId: "memory-db", ownerToken: "owner-x" }))
+      .rejects.toBeDefined();
+  });
+});
+
 function loopHarness(
   store: InMemoryStore | SqliteStore,
   clock: FakeDaemonClock,
@@ -381,6 +536,7 @@ function loopHarness(
     runSource: (personId: string, candidateId: string, authority: unknown) => Promise<{ importedEvents: number }>;
     runContraction: (personId: string, jobId: string, authority: unknown) => Promise<{ complete: boolean }>;
     runProposals: (personId: string, authority: unknown) => Promise<{ proposals: number }>;
+    syncReplication: DaemonLoopDependencies["syncReplication"];
   }> = {}
 ): { loop: DaemonLoop; watchers: FakeWatcherFactory; timers: FakeTimerQueue } {
   const timers = new FakeTimerQueue(clock);
@@ -406,7 +562,8 @@ function loopHarness(
     proposalScheduler: {
       runDue: async (personId, captured) =>
         (overrides.runProposals ?? (async () => ({ proposals: 0 })))(personId, captured)
-    }
+    },
+    ...(overrides.syncReplication ? { syncReplication: overrides.syncReplication } : {})
   };
   return {
     loop: new DaemonLoop(dependencies, { databaseId: "memory-db", ownerToken, pid }),

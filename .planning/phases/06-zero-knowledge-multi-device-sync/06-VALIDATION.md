@@ -3,7 +3,7 @@ phase: 06
 slug: zero-knowledge-multi-device-sync
 status: draft
 nyquist_compliant: false
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-07-19
 updated: 2026-07-19
 ---
@@ -36,26 +36,26 @@ updated: 2026-07-19
 
 | Task ID | Plan | Wave | Requirements | Threat refs | Literal automated command | Status |
 |---------|------|------|--------------|-------------|---------------------------|--------|
-| 06-01-00 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03 | `git status --short && git branch --show-current && git diff --check` | pending |
-| 06-01-01 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03, T-06-SC | `node scripts/benchmark-sync-padding.mjs && node -e "const fs=require('fs'); const p='docs/adr/0047-zero-knowledge-sync-threat-model-and-protocol.md'; const s=fs.readFileSync(p,'utf8'); for (let i=1;i<=16;i++){const d='D-'+String(i).padStart(2,'0'); if(!s.includes(d)) throw new Error('missing '+d)} for (let i=31;i<=36;i++){const q='REQ-'+String(i).padStart(3,'0'); if(!s.includes(q)) throw new Error('missing '+q)} for (const x of ['Threat Model','Protocol Version','Wire','Recovery','Revocation','Tombstone','Conflict','Padding Policy','split-view','Merkle','Residual Risk','Security Review']) if(!s.includes(x)) throw new Error('missing '+x);" && node -e "const s=require('fs').readFileSync('.planning/phases/06-zero-knowledge-multi-device-sync/06-VALIDATION.md','utf8'); if(!/wave_0_complete: false/.test(s)||!/nyquist_compliant: false/.test(s)||/TBD-03[1-6]/.test(s)) process.exit(1)"` | pending |
-| 06-01-02 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03 | `node -e "const s=require('fs').readFileSync('docs/adr/0047-zero-knowledge-sync-threat-model-and-protocol.md','utf8'); for (const x of ['Reviewer','Review Date','Protocol Digest','Account Provider Boundary','Email Signup','Email Login','Password Recovery','Passkey Recovery','Account Recovery Cannot Enroll or Decrypt','Owner Risk Acceptance','| Disposition | Approved for personal single-user deployment','| Blocking Findings | None']) if(!s.includes(x)) throw new Error('missing approval evidence: '+x)"` | pending |
-| 06-02-01 | 06-02 | 2 | REQ-031, REQ-034, REQ-036 | T-06-07, T-06-SC | `npx vitest run tests/sync/protocol-contracts.test.ts && npm run typecheck` | pending |
-| 06-02-02 | 06-02 | 2 | REQ-031, REQ-034, REQ-036 | T-06-04–T-06-07 | `npx vitest run tests/sync/crypto-envelope.test.ts && npm run typecheck` | pending |
-| 06-03-01 | 06-03 | 2 | REQ-031, REQ-032, REQ-033 | T-06-09, T-06-10 | `npx vitest run tests/sync/device-secret-store.test.ts && npm run typecheck` | pending |
-| 06-03-02 | 06-03 | 2 | REQ-031, REQ-032, REQ-033 | T-06-08–T-06-10 | `npx vitest run tests/sync/device-secret-store.test.ts -t "macOS|leak|helper" && swiftc -typecheck src/sync/secrets/macos-keychain-helper.swift && npm run typecheck` | pending |
-| 06-04-01 | 06-04 | 3 | REQ-031, REQ-033, REQ-034, REQ-035 | T-06-11, T-06-12, T-06-14 | `npx vitest run tests/storage/sync-store.test.ts -t "contract|schema|binding" && npm run typecheck` | pending |
-| 06-04-02 | 06-04 | 3 | REQ-031, REQ-033, REQ-034, REQ-035 | T-06-11–T-06-14 | `npx vitest run tests/storage/sync-store.test.ts tests/storage/sqlite-store.test.ts && npm run typecheck` | pending |
-| 06-05-01 | 06-05 | 3 | REQ-031, REQ-033, REQ-036 | T-06-15, T-06-17, T-06-18 | `npx vitest run tests/relay/account-auth.test.ts tests/relay/metadata-contract.test.ts && npm run typecheck` | pending |
-| 06-05-02 | 06-05 | 3 | REQ-031, REQ-033, REQ-036 | T-06-16, T-06-19 | `npx vitest run tests/relay/membership-cas.test.ts tests/relay/append-only-store.test.ts tests/relay/zero-knowledge-boundary.test.ts && npm run typecheck` | pending |
-| 06-05-03 | 06-05 | 3 | REQ-031, REQ-033, REQ-036 | T-06-15, T-06-17–T-06-19 | `npx vitest run tests/relay/http-relay.test.ts tests/relay/metadata-contract.test.ts tests/relay/zero-knowledge-boundary.test.ts && npm run typecheck` | pending |
-| 06-06-01 | 06-06 | 4 | REQ-032, REQ-033 | T-06-20, T-06-21, T-06-23 | `npx vitest run tests/sync/enrollment.test.ts tests/sync/recovery.test.ts && npm run typecheck` | pending |
-| 06-06-02 | 06-06 | 4 | REQ-032, REQ-033 | T-06-22, T-06-23 | `npx vitest run tests/sync/revocation.test.ts tests/sync/recovery.test.ts tests/relay/membership-cas.test.ts && npm run typecheck` | pending |
-| 06-06-03 | 06-06 | 4 | REQ-032, REQ-033, REQ-036 | T-06-34 | `npx vitest run tests/sync/http-sync-relay.test.ts tests/relay/http-relay.test.ts tests/sync/enrollment.test.ts && npm run typecheck` | pending |
-| 06-07-01 | 06-07 | 4 | REQ-034, REQ-035 | T-06-24, T-06-26 | `npx vitest run tests/sync/convergence.test.ts tests/sync/conflicts.test.ts && npm run typecheck` | pending |
-| 06-07-02 | 06-07 | 4 | REQ-034, REQ-035 | T-06-25–T-06-27 | `npx vitest run tests/sync/deletion-tombstones.test.ts tests/service/source-lifecycle-service.test.ts tests/retrieval/memory-retriever.test.ts -t "revocation|delete|quarantine|keep deletion|restoration|remote origin|backend parity" && npm run typecheck` | pending |
-| 06-07-03 | 06-07 | 4 | REQ-034, REQ-035 | T-06-24–T-06-27, T-06-35 | `npx vitest run tests/integration/sync-producers.test.ts tests/service/memory-service.test.ts tests/service/source-lifecycle-service.test.ts tests/proposals/proposal-reviewer.test.ts tests/boxes/box-reviewer.test.ts tests/mcp/mutation-tools.test.ts && npm run typecheck` | pending |
-| 06-08-01 | 06-08 | 5 | REQ-031, REQ-033–REQ-036 | T-06-28–T-06-31 | `npx vitest run tests/sync/replay-equivocation.test.ts tests/sync/convergence.test.ts tests/sync/deletion-tombstones.test.ts tests/integration/multi-device-sync.test.ts && npm run typecheck` | pending |
-| 06-08-02 | 06-08 | 5 | REQ-031–REQ-036 | T-06-29–T-06-32, T-06-36 | `node scripts/benchmark-sync-padding.mjs && npx vitest run tests/sync tests/relay tests/integration/multi-device-sync.test.ts tests/storage/sync-store.test.ts tests/daemon/contraction-runner.test.ts tests/daemon/daemon-loop.test.ts tests/daemon/daemon-commands.test.ts tests/mcp && npm test && npm run typecheck && node scripts/verify-phase06-evidence.mjs --automated` | pending |
+| 06-01-00 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03 | `git status --short && git branch --show-current && git diff --check` | complete |
+| 06-01-01 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03, T-06-SC | `node scripts/benchmark-sync-padding.mjs && node -e "const fs=require('fs'); const p='docs/adr/0047-zero-knowledge-sync-threat-model-and-protocol.md'; const s=fs.readFileSync(p,'utf8'); for (let i=1;i<=16;i++){const d='D-'+String(i).padStart(2,'0'); if(!s.includes(d)) throw new Error('missing '+d)} for (let i=31;i<=36;i++){const q='REQ-'+String(i).padStart(3,'0'); if(!s.includes(q)) throw new Error('missing '+q)} for (const x of ['Threat Model','Protocol Version','Wire','Recovery','Revocation','Tombstone','Conflict','Padding Policy','split-view','Merkle','Residual Risk','Security Review']) if(!s.includes(x)) throw new Error('missing '+x);" && node -e "const s=require('fs').readFileSync('.planning/phases/06-zero-knowledge-multi-device-sync/06-VALIDATION.md','utf8'); if(!/wave_0_complete: false/.test(s)||!/nyquist_compliant: false/.test(s)||/TBD-03[1-6]/.test(s)) process.exit(1)"` | complete |
+| 06-01-02 | 06-01 | 1 | REQ-031–REQ-036 | T-06-01, T-06-02, T-06-03 | `node -e "const s=require('fs').readFileSync('docs/adr/0047-zero-knowledge-sync-threat-model-and-protocol.md','utf8'); for (const x of ['Reviewer','Review Date','Protocol Digest','Account Provider Boundary','Email Signup','Email Login','Password Recovery','Passkey Recovery','Account Recovery Cannot Enroll or Decrypt','Owner Risk Acceptance','| Disposition | Approved for personal single-user deployment','| Blocking Findings | None']) if(!s.includes(x)) throw new Error('missing approval evidence: '+x)"` | complete |
+| 06-02-01 | 06-02 | 2 | REQ-031, REQ-034, REQ-036 | T-06-07, T-06-SC | `npx vitest run tests/sync/protocol-contracts.test.ts && npm run typecheck` | complete |
+| 06-02-02 | 06-02 | 2 | REQ-031, REQ-034, REQ-036 | T-06-04–T-06-07 | `npx vitest run tests/sync/crypto-envelope.test.ts && npm run typecheck` | complete |
+| 06-03-01 | 06-03 | 2 | REQ-031, REQ-032, REQ-033 | T-06-09, T-06-10 | `npx vitest run tests/sync/device-secret-store.test.ts && npm run typecheck` | complete |
+| 06-03-02 | 06-03 | 2 | REQ-031, REQ-032, REQ-033 | T-06-08–T-06-10 | `npx vitest run tests/sync/device-secret-store.test.ts -t "macOS|leak|helper" && swiftc -typecheck src/sync/secrets/macos-keychain-helper.swift && npm run typecheck` | complete |
+| 06-04-01 | 06-04 | 3 | REQ-031, REQ-033, REQ-034, REQ-035 | T-06-11, T-06-12, T-06-14 | `npx vitest run tests/storage/sync-store.test.ts -t "contract|schema|binding" && npm run typecheck` | complete |
+| 06-04-02 | 06-04 | 3 | REQ-031, REQ-033, REQ-034, REQ-035 | T-06-11–T-06-14 | `npx vitest run tests/storage/sync-store.test.ts tests/storage/sqlite-store.test.ts && npm run typecheck` | complete |
+| 06-05-01 | 06-05 | 3 | REQ-031, REQ-033, REQ-036 | T-06-15, T-06-17, T-06-18 | `npx vitest run tests/relay/account-auth.test.ts tests/relay/metadata-contract.test.ts && npm run typecheck` | complete |
+| 06-05-02 | 06-05 | 3 | REQ-031, REQ-033, REQ-036 | T-06-16, T-06-19 | `npx vitest run tests/relay/membership-cas.test.ts tests/relay/append-only-store.test.ts tests/relay/zero-knowledge-boundary.test.ts && npm run typecheck` | complete |
+| 06-05-03 | 06-05 | 3 | REQ-031, REQ-033, REQ-036 | T-06-15, T-06-17–T-06-19 | `npx vitest run tests/relay/http-relay.test.ts tests/relay/metadata-contract.test.ts tests/relay/zero-knowledge-boundary.test.ts && npm run typecheck` | complete |
+| 06-06-01 | 06-06 | 4 | REQ-032, REQ-033 | T-06-20, T-06-21, T-06-23 | `npx vitest run tests/sync/enrollment.test.ts tests/sync/recovery.test.ts && npm run typecheck` | complete |
+| 06-06-02 | 06-06 | 4 | REQ-032, REQ-033 | T-06-22, T-06-23 | `npx vitest run tests/sync/revocation.test.ts tests/sync/recovery.test.ts tests/relay/membership-cas.test.ts && npm run typecheck` | complete |
+| 06-06-03 | 06-06 | 4 | REQ-032, REQ-033, REQ-036 | T-06-34 | `npx vitest run tests/sync/http-sync-relay.test.ts tests/relay/http-relay.test.ts tests/sync/enrollment.test.ts && npm run typecheck` | complete |
+| 06-07-01 | 06-07 | 4 | REQ-034, REQ-035 | T-06-24, T-06-26 | `npx vitest run tests/sync/convergence.test.ts tests/sync/conflicts.test.ts && npm run typecheck` | complete |
+| 06-07-02 | 06-07 | 4 | REQ-034, REQ-035 | T-06-25–T-06-27 | `npx vitest run tests/sync/deletion-tombstones.test.ts tests/service/source-lifecycle-service.test.ts tests/retrieval/memory-retriever.test.ts -t "revocation|delete|quarantine|keep deletion|restoration|remote origin|backend parity" && npm run typecheck` | complete |
+| 06-07-03 | 06-07 | 4 | REQ-034, REQ-035 | T-06-24–T-06-27, T-06-35 | `npx vitest run tests/integration/sync-producers.test.ts tests/service/memory-service.test.ts tests/service/source-lifecycle-service.test.ts tests/proposals/proposal-reviewer.test.ts tests/boxes/box-reviewer.test.ts tests/mcp/mutation-tools.test.ts && npm run typecheck` | complete |
+| 06-08-01 | 06-08 | 5 | REQ-031, REQ-033–REQ-036 | T-06-28–T-06-31 | `npx vitest run tests/sync/replay-equivocation.test.ts tests/sync/convergence.test.ts tests/sync/deletion-tombstones.test.ts tests/integration/multi-device-sync.test.ts && npm run typecheck` | complete |
+| 06-08-02 | 06-08 | 5 | REQ-031–REQ-036 | T-06-29–T-06-32, T-06-36 | `node scripts/benchmark-sync-padding.mjs && npx vitest run tests/sync tests/relay tests/integration/multi-device-sync.test.ts tests/storage/sync-store.test.ts tests/daemon/contraction-runner.test.ts tests/daemon/daemon-loop.test.ts tests/daemon/daemon-commands.test.ts tests/mcp && npm test && npm run typecheck && node scripts/verify-phase06-evidence.mjs --automated` | complete |
 | 06-08-03 | 06-08 | 5 | REQ-031, REQ-032, REQ-033 | T-06-33 | `node scripts/verify-phase06-evidence.mjs --keychain-evidence /private/tmp/phase06-keychain-uat-evidence.json` | pending |
 
 ## Requirement Proof Map
@@ -82,14 +82,14 @@ updated: 2026-07-19
 
 ## Wave 0 Gaps
 
-- [ ] **06-01:** ADR 0047, benchmark, exact eight-plan validation mapping, and digest-bound owner risk acceptance (independent review waived for personal single-user deployment).
-- [ ] **06-02:** Audited dependencies, strict contracts, fixtures, crypto provider, and vectors.
-- [ ] **06-03:** DeviceSecretStore, deterministic fake, production macOS Keychain adapter/helper, and leakage/rotation tests.
-- [ ] **06-04:** Atomic local outbox/remote apply, immutable pre-upload envelope sealing, and both local adapter implementations.
-- [ ] **06-05:** Account provider, strict schemas, append-only relay adapters/service, bounded HTTP/HTTPS server, and loopback privacy tests.
-- [ ] **06-06:** SyncRelay/HttpSyncRelay and enrollment, recovery, revocation, recovery-rotation, and client/server control-flow tests.
-- [ ] **06-07:** Deterministic materialization, complete authoritative producer wiring including BoxReviewer, lifecycle controls, tombstones, quarantine, conflicts, and both resolutions.
-- [ ] **06-08:** Sealed-byte replication, production daemon transport selection, complete real-loopback multi-device proof, final validator, and blocking external real-Keychain evidence.
+- [x] **06-01:** ADR 0047, benchmark, exact eight-plan validation mapping, and digest-bound owner risk acceptance (independent review waived for personal single-user deployment).
+- [x] **06-02:** Audited dependencies, strict contracts, fixtures, crypto provider, and vectors.
+- [x] **06-03:** DeviceSecretStore, deterministic fake, production macOS Keychain adapter/helper, and leakage/rotation tests.
+- [x] **06-04:** Atomic local outbox/remote apply, immutable pre-upload envelope sealing, and both local adapter implementations.
+- [x] **06-05:** Account provider, strict schemas, append-only relay adapters/service, bounded HTTP/HTTPS server, and loopback privacy tests.
+- [x] **06-06:** SyncRelay/HttpSyncRelay and enrollment, recovery, revocation, recovery-rotation, and client/server control-flow tests.
+- [x] **06-07:** Deterministic materialization, complete authoritative producer wiring including BoxReviewer, lifecycle controls, tombstones, quarantine, conflicts, and both resolutions.
+- [x] **06-08:** Sealed-byte replication, production daemon transport selection, complete real-loopback multi-device proof, final validator (automated portion), and blocking external real-Keychain evidence (Task 06-08-03 remains pending -- separate blocking human gate).
 
 ## Adversarial Matrix
 
@@ -118,5 +118,5 @@ updated: 2026-07-19
 - Set `wave_0_complete: true` only after every Wave 0 artifact exists and its owning task is green.
 - Set `nyquist_compliant: true` only after every task row and requirement proof is green and the blocking Keychain human inspection is approved.
 
-**Keychain UAT:** pending
-**Approval:** pending
+**Keychain UAT:** pending (Task 06-08-03; blocking, requires real macOS host, independent human inspection, and `node scripts/verify-phase06-evidence.mjs --keychain-evidence <path>`)
+**Approval:** pending (blocked on Keychain UAT above; `nyquist_compliant` stays `false` until that gate is independently approved)

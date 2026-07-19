@@ -34,6 +34,18 @@ export interface DaemonLoopDependencies {
   proposalScheduler: {
     runDue(personId: string, authority: DaemonWriteAuthority): Promise<unknown>;
   };
+  /**
+   * Optional bounded sync push/pull cycle (Task 06-08-02). Absent when no production relay is
+   * configured (`MEMORY_SYNC_RELAY_BASE_URL` unset) or device identity is not yet enrolled --
+   * the daemon runs identically to Phase 05 in that case. When present, a failure (offline,
+   * relay error, misconfiguration) is swallowed exactly like `safePowerState()`/notification
+   * failures: it NEVER loses writer-lease authority, blocks local ingestion/contraction/MCP, or
+   * prevents graceful shutdown. Sync creates no second derived-memory writer -- it reuses the
+   * same captured `DaemonWriteAuthority` as every other work item in this drain cycle.
+   */
+  syncReplication?: {
+    runCycle(authority: DaemonWriteAuthority): Promise<unknown>;
+  };
 }
 
 export interface DaemonLoopOptions {
@@ -149,6 +161,18 @@ export class DaemonLoop {
       }
       this.proposalCursor += 1;
       didWork = didWork || proposalRan(proposal);
+    }
+
+    if (this.dependencies.syncReplication && await this.assertLeaseAuthority()) {
+      try {
+        await this.dependencies.syncReplication.runCycle(this.captureAuthority());
+        // A sync cycle result never gates didWork -- offline/incomplete network state must never
+        // change local scheduling behavior or appear as a stalled drain loop.
+      } catch {
+        // Network failure, relay error, or misconfiguration is content-free and never blocks local
+        // ingestion/contraction/MCP, never loses writer-lease authority, and never prevents
+        // graceful shutdown (T-06-30 "accept": delivery cannot be forced by a malicious/offline relay).
+      }
     }
     return didWork;
   }

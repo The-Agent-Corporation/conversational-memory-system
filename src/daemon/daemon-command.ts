@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { watch } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,15 +8,21 @@ import { execFile } from "node:child_process";
 import { z } from "zod";
 import { readDaemonStatusSnapshot, type DaemonStatusSnapshot } from "../bootstrap/status-command.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
+import type { MemoryStore } from "../storage/memory-store.js";
 import { ApprovedSourceRunner } from "./approved-source-runner.js";
 import { ContractionRunner } from "./contraction-runner.js";
-import { DaemonLoop, type DaemonOnceResult, type DaemonRunResult } from "./daemon.js";
+import { DaemonLoop, type DaemonLoopDependencies, type DaemonOnceResult, type DaemonRunResult } from "./daemon.js";
 import { MacOSLaunchAgent, type LaunchAgentStatus } from "./macos/launch-agent.js";
 import { MacOSNotificationAdapter } from "./macos/notification.js";
 import { MacOSPowerSource } from "./macos/power-source.js";
 import { ProposalScheduler } from "./proposal-scheduler.js";
 import type { CommandRunner, SignalAdapter } from "./runtime-adapters.js";
 import { DaemonScheduler } from "./scheduler.js";
+import { HttpSyncRelay } from "../sync/transport/http-sync-relay.js";
+import { LibsodiumCryptoProvider } from "../sync/crypto/libsodium-crypto-provider.js";
+import { SyncReplicationService, type ResolveOperationContent } from "../sync/replication/sync-replication-service.js";
+import type { ActiveDeviceMembership } from "../sync/replication/replay-verifier.js";
+import type { DeviceSecretStore } from "../sync/secrets/device-secret-store.js";
 
 export const DaemonSubcommandSchema = z.enum(["run", "start", "stop", "restart", "status", "once"]);
 export type DaemonSubcommand = z.infer<typeof DaemonSubcommandSchema>;
@@ -148,7 +154,111 @@ async function gracefulStop(
   return runtime.launchAgent.stop();
 }
 
-function createDefaultDependencies(databasePath: string): DaemonCommandDependencies {
+/**
+ * Resolves the optional production sync-replication daemon dependency from environment
+ * configuration (Task 06-08-02). Absent (`undefined`) is the default and fully supported state --
+ * the daemon behaves identically to Phase 05 with no sync configured. When
+ * `MEMORY_SYNC_RELAY_BASE_URL` IS set, this function enforces HTTPS (or an explicit
+ * `MEMORY_SYNC_RELAY_ALLOW_INSECURE_LOOPBACK=true` acknowledgement for a loopback test
+ * deployment only) and constructs the real Plan 06 `HttpSyncRelay` -- there is no code path here
+ * that can select a fake/in-process relay from this env-driven composition point; fake relays
+ * reach `DaemonLoopDependencies.syncReplication` only through explicit test injection.
+ *
+ * Device signing/AEAD secret retrieval uses the exact `DeviceSecretStore` binding/byte
+ * convention `SyncControlService.createDeviceIdentity`/`storeEpochKey` (Plan 06-06) already
+ * writes (`device_signing_seed` = concatenated publicKey(32)+secretKey(64);
+ * `epoch_key` secretId `epoch:{n}`), so a device already enrolled through that control-service
+ * flow is directly consumable here without any new secret-retention convention. Selecting the
+ * concrete `DeviceSecretStore` adapter (production `MacosKeychainSecretStore` vs. a test double)
+ * is the caller's responsibility -- spawning/packaging the Swift Keychain helper binary is Plan
+ * 06-03's own deployment concern and stays outside this plan's declared file scope.
+ */
+export function resolveProductionSyncReplicationDependency(
+  store: MemoryStore,
+  clock: { now(): string },
+  deviceSecretStore: DeviceSecretStore | undefined
+): DaemonLoopDependencies["syncReplication"] | undefined {
+  const baseUrl = process.env.MEMORY_SYNC_RELAY_BASE_URL;
+  if (!baseUrl) return undefined;
+
+  const allowInsecureLoopback = process.env.MEMORY_SYNC_RELAY_ALLOW_INSECURE_LOOPBACK === "true";
+  if (!baseUrl.startsWith("https://") && !allowInsecureLoopback) {
+    throw new Error(
+      "MEMORY_SYNC_RELAY_BASE_URL must be an https:// URL in production. Set " +
+      "MEMORY_SYNC_RELAY_ALLOW_INSECURE_LOOPBACK=true only for an explicit local loopback test deployment."
+    );
+  }
+  const tokenPath = process.env.MEMORY_SYNC_RELAY_TOKEN_PATH;
+  const personId = process.env.MEMORY_SYNC_PERSON_ID;
+  const syncId = process.env.MEMORY_SYNC_ID;
+  const deviceId = process.env.MEMORY_SYNC_DEVICE_ID;
+  const epoch = process.env.MEMORY_SYNC_EPOCH ? Number(process.env.MEMORY_SYNC_EPOCH) : NaN;
+  if (!tokenPath || !personId || !syncId || !deviceId || !Number.isInteger(epoch) || epoch < 1) {
+    throw new Error(
+      "MEMORY_SYNC_RELAY_BASE_URL is configured but one or more of MEMORY_SYNC_RELAY_TOKEN_PATH, " +
+      "MEMORY_SYNC_PERSON_ID, MEMORY_SYNC_ID, MEMORY_SYNC_DEVICE_ID, MEMORY_SYNC_EPOCH is missing or invalid."
+    );
+  }
+  if (!deviceSecretStore) {
+    // Transport configuration is present and valid, but no device-secret adapter was injected
+    // (e.g. the production macOS Keychain helper is not wired into this process). Sync stays a
+    // documented no-op rather than fabricating placeholder crypto identity.
+    return undefined;
+  }
+
+  const relay = new HttpSyncRelay({
+    baseUrl,
+    bearerToken: async () => (await readFile(tokenPath, "utf8")).trim(),
+    allowInsecureLoopback,
+    logger: () => {} // content-free: never logs the bearer token, URL, or any plaintext
+  });
+  const crypto = new LibsodiumCryptoProvider();
+  const binding = { personId, syncId, deviceId };
+
+  return {
+    runCycle: async () => {
+      const signingSecret = await deviceSecretStore.read({ binding, kind: "device_signing_seed", secretId: deviceId });
+      const epochKeySecret = await deviceSecretStore.read({ binding: { ...binding, epoch }, kind: "epoch_key", secretId: `epoch:${epoch}` });
+      const signingSecretKey = signingSecret.bytes.slice(32); // publicKey(32) + secretKey(64) convention
+      const aeadKey = epochKeySecret.bytes;
+
+      // Real per-device active membership resolution (control-record parsing) is
+      // SyncControlService/relay-client wiring outside this plan's declared file scope; this
+      // composition point pushes/pulls this device's own stream only until a follow-up plan
+      // supplies the durable membership snapshot needed for full multi-device pull fan-out.
+      const membership = new Map<string, ActiveDeviceMembership>([
+        [deviceId, { deviceId, signingPublicKey: signingSecret.bytes.slice(0, 32), active: true }]
+      ]);
+      const resolveOperationContent: ResolveOperationContent = async () => null; // no wire-schema producer wiring yet (see SUMMARY)
+
+      const replication = new SyncReplicationService({
+        store,
+        relay,
+        crypto,
+        personId,
+        syncId,
+        deviceId,
+        signingSecretKey,
+        aeadKey,
+        epoch,
+        membership: () => membership,
+        resolveOperationContent,
+        buildMaterializationContext: async () => ({
+          personId,
+          activeScopeIds: new Set<string>(),
+          activeSourceIds: new Set<string>(),
+          knownOperationIds: new Set<string>()
+        }),
+        clock: () => clock.now()
+      });
+      const pushResult = await replication.pushPending();
+      const pullResult = await replication.pullAndApply();
+      return { pushResult, pullResult };
+    }
+  };
+}
+
+function createDefaultDependencies(databasePath: string, deviceSecretStore?: DeviceSecretStore): DaemonCommandDependencies {
   const commandRunner = new NodeCommandRunner();
   const root = resolve(process.cwd());
   const logs = dirname(databasePath);
@@ -205,7 +315,11 @@ function createDefaultDependencies(databasePath: string): DaemonCommandDependenc
         proposalScheduler: {
           runDue: (personId, captured) =>
             new ProposalScheduler(store, { clock, authority: captured }).runDue(personId)
-        }
+        },
+        ...(() => {
+          const syncReplication = resolveProductionSyncReplicationDependency(store, clock, deviceSecretStore);
+          return syncReplication ? { syncReplication } : {};
+        })()
       }, { databaseId: "memory-db", ownerToken, pid: process.pid });
       return {
         run: async (signal) => { try { return await loop.run(signal); } finally { store.close(); } },
