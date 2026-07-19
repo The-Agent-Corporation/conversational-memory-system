@@ -155,7 +155,7 @@ Plans:
 **Goal**: Synchronize memory without giving the relay decryption capability.
 **Requirements**: REQ-031, REQ-032, REQ-033, REQ-034, REQ-035, REQ-036
 **Status**: Planned — protocol approval gated
-**Plans:** 3/8 plans executed
+**Plans:** 5/8 plans executed
 
 Plans:
 
@@ -170,8 +170,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 06-04-PLAN.md — Add backend-equivalent atomic local outbox, immutable pre-upload envelope sealing, remote apply, replay, tombstone, conflict, quarantine, and affected-range storage.
-- [ ] 06-05-PLAN.md — Implement the account-provider boundary, opaque append-only relay storage/service, and bounded versioned HTTP/HTTPS server.
+- [x] 06-04-PLAN.md — Add backend-equivalent atomic local outbox, immutable pre-upload envelope sealing, remote apply, replay, tombstone, conflict, quarantine, and affected-range storage.
+- [x] 06-05-PLAN.md — Implement the account-provider boundary, opaque append-only relay storage/service, and bounded versioned HTTP/HTTPS server.
 
 **Wave 4** *(blocked on Wave 3)*
 
