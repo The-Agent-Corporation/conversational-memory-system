@@ -1,7 +1,10 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   DeviceSecretError,
   type DeviceSecretStore,
@@ -11,6 +14,7 @@ import { InMemoryDeviceSecretStore } from "../../src/sync/secrets/in-memory-devi
 import {
   MACOS_KEYCHAIN_SERVICE_LABEL,
   MacosKeychainSecretStore,
+  SpawnedKeychainHelperRunner,
   type KeychainHelperRequest,
   type KeychainHelperResult,
   type KeychainHelperRunner
@@ -548,6 +552,96 @@ describe("MacosKeychainSecretStore (helper protocol via synthetic runner)", () =
     // interpolated into it.
     expect(source).not.toMatch(/spawn\([^)]*request\./);
   });
+});
+
+describe("WR-05: Keychain read framing does not deadlock on a large secret payload", () => {
+  const cleanups: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    while (cleanups.length > 0) await cleanups.pop()!();
+  });
+
+  /**
+   * Writes a synthetic "helper" executable that reproduces the exact byte-level ordering
+   * documented in macos-keychain-helper.swift's `handle(...)` "read" case: it writes the secret
+   * frame to fd 6 (synchronously, mirroring `FileHandle.write`'s blocking semantics) before
+   * writing the control-result frame to fd 4 in `serve()`. Any consumer that reads the
+   * control-result frame before starting to drain fd 6 deadlocks once the secret exceeds the OS
+   * pipe buffer -- this is the WR-05 regression fixture.
+   */
+  async function writeFakeHelper(secretByteLength: number): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "keychain-helper-fake-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const helperPath = join(dir, "fake-keychain-helper.mjs");
+    await writeFile(
+      helperPath,
+      `#!/usr/bin/env node
+import { readSync, writeSync } from "node:fs";
+
+function readExact(fd, count) {
+  const buf = Buffer.alloc(count);
+  let offset = 0;
+  while (offset < count) {
+    offset += readSync(fd, buf, offset, count - offset, null);
+  }
+  return buf;
+}
+
+function readFrame(fd) {
+  const prefix = readExact(fd, 4);
+  return readExact(fd, prefix.readUInt32BE(0));
+}
+
+function writeFrame(fd, payload) {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(payload.length, 0);
+  writeSync(fd, length);
+  if (payload.length > 0) writeSync(fd, payload);
+}
+
+const requestBuf = readFrame(3);
+const request = JSON.parse(requestBuf.toString("utf8"));
+const secret = Buffer.alloc(${secretByteLength}, 7);
+
+// Secret frame (fd 6) before control result (fd 4) -- matches the Swift helper's ordering.
+writeFrame(6, secret);
+writeFrame(4, Buffer.from(JSON.stringify({
+  requestId: request.requestId,
+  status: "ok",
+  version: 1,
+  byteLength: secret.length
+})));
+`,
+      "utf8"
+    );
+    chmodSync(helperPath, 0o755);
+    return helperPath;
+  }
+
+  it("round-trips a secret larger than a typical OS pipe buffer within a bounded timeout", async () => {
+    // 1 MiB comfortably exceeds default OS pipe buffers (typically 16-64 KiB) while staying well
+    // under the 16 MiB frame cap.
+    const secretByteLength = 1024 * 1024;
+    const helperPath = await writeFakeHelper(secretByteLength);
+    const runner = new SpawnedKeychainHelperRunner({ helperPath });
+    let received: Uint8Array | undefined;
+
+    const result = await runner.run(
+      {
+        requestId: "req-wr-05",
+        operation: "read",
+        service: MACOS_KEYCHAIN_SERVICE_LABEL,
+        account: "keyring_wrapping_key:wr-05-fixture",
+        hasSecretInput: false,
+        wantsSecretOutput: true
+      },
+      { readSecret: (bytes) => { received = bytes; } }
+    );
+
+    expect(result.status).toBe("ok");
+    expect(result.byteLength).toBe(secretByteLength);
+    expect(received?.length).toBe(secretByteLength);
+    expect(received?.[0]).toBe(7);
+  }, 10_000);
 });
 
 describe("macos-keychain-helper.swift (source contract)", () => {

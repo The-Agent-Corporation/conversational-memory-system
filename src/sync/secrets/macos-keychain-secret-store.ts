@@ -286,10 +286,22 @@ export class SpawnedKeychainHelperRunner implements KeychainHelperRunner {
       if (request.hasSecretInput && secretIo.writeSecret) {
         await writeFrame(secretIn, Buffer.from(secretIo.writeSecret()));
       }
+      // Begin draining the secret-output frame concurrently with the control-result frame
+      // rather than sequentially after it. The helper writes the secret payload to fd 6 inside
+      // handle(...) before writing the result to fd 4 in serve() (macos-keychain-helper.swift);
+      // a secret larger than the OS pipe buffer would otherwise block the helper's write to fd 6
+      // while nothing on this side is reading it yet, deadlocking the read path (WR-05). Starting
+      // both reads here (before either is awaited) keeps the framing contract unchanged.
+      const secretFramePromise = request.wantsSecretOutput ? readFrame(secretOut) : undefined;
+      // A request that ultimately resolves to a non-ok result never receives a secret frame, so
+      // this promise is intentionally left unawaited on that path; attach a no-op handler so that
+      // rejection (e.g. from the pipe closing on child.kill()) never surfaces as an unhandled
+      // rejection.
+      secretFramePromise?.catch(() => {});
       const resultFrame = await readFrame(controlOut);
       const result = JSON.parse(resultFrame.toString("utf8")) as KeychainHelperResult;
       if (request.wantsSecretOutput && result.status === "ok" && secretIo.readSecret) {
-        const secretFrame = await readFrame(secretOut);
+        const secretFrame = await secretFramePromise!;
         secretIo.readSecret(new Uint8Array(secretFrame));
       }
       return result;
