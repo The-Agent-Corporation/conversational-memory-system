@@ -114,6 +114,8 @@ export class MemoryMutationApplication {
     }
     const receipt = await this.options.store.commitHistoryImport(fresh);
     if (receipt.status === "COMMITTED") {
+      // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on
+      // non-COMMITTED status (WR-06); this call site does not throw or branch on it.
       await emitLocalSyncOperation(this.options.store, {
         personId: fresh.personId,
         deviceId: this.syncDeviceId,
@@ -193,6 +195,8 @@ export class MemoryMutationApplication {
     if (!plan || (plan.kind !== "proposal_approve" && plan.kind !== "proposal_reject")) throw new ConfirmationError("CONFIRMATION_MISMATCH");
     const receipt = await this.options.store.commitProposalDecision(plan.input);
     if (receipt.status === "COMMITTED") {
+      // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on
+      // non-COMMITTED status (WR-06); this call site does not throw or branch on it.
       await emitLocalSyncOperation(this.options.store, {
         personId: plan.input.personId,
         deviceId: this.syncDeviceId,

@@ -57,6 +57,8 @@ export class BoxReviewer {
     reviewedAt: string
   ): Promise<void> {
     if (!box.personId) return; // legacy unscoped boxes carry no person to bind a sync operation to
+    // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on non-COMMITTED
+    // status (WR-06); this call site does not throw or branch on the returned status.
     await emitLocalSyncOperation(this.store, {
       personId: box.personId,
       deviceId: this.syncDeviceId,

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import { MemoryService } from "../../src/service/memory-service.js";
 import { BoxReviewer } from "../../src/boxes/box-reviewer.js";
@@ -13,6 +13,11 @@ import { ConfirmationService } from "../../src/mcp/confirmation-service.js";
 import { MemoryMutationApplication } from "../../src/mcp/mutation-application.js";
 import { createProfileAuthority } from "../../src/mcp/authority.js";
 import type { Box, MemoryProposal } from "../../src/domain/types.js";
+import {
+  emitLocalSyncOperation,
+  getNonCommittedLocalSyncEmissionCount,
+  resetNonCommittedLocalSyncEmissionCount
+} from "../../src/sync/materialization/sync-materializer.js";
 
 /**
  * Inventory and adapter-parity proof that every authoritative local producer named in Plan
@@ -182,5 +187,65 @@ describe("Authoritative producer inventory: every local producer emits exactly o
     });
 
     expect(await outboxKinds(store, "person-a")).toEqual(["canonical_append"]);
+  });
+});
+
+describe("WR-06: non-COMMITTED local outbox emissions are surfaced, not silently dropped", () => {
+  it("emitLocalSyncOperation returns the receipt status instead of discarding it", async () => {
+    const store = new InMemoryStore();
+    const status = await emitLocalSyncOperation(store, {
+      personId: "person-a",
+      deviceId: "device-1",
+      operationKind: "canonical_append",
+      targetId: "target-1",
+      effectFingerprint: "a".repeat(64),
+      committedAt: NOW
+    });
+    expect(status).toBe("COMMITTED");
+  });
+
+  it("a racing pair of emissions against the same device sequence surfaces a non-fatal, content-free EQUIVOCATION signal", async () => {
+    resetNonCommittedLocalSyncEmissionCount();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = new InMemoryStore();
+
+    // Both calls read the frontier before either commits, so both compute the same next
+    // device-sequence (and thus the same outboxId) but bind different targets -- the loser of the
+    // race is a non-identical write against an already-occupied device sequence, i.e. EQUIVOCATION,
+    // not a real cross-device conflict.
+    const [first, second] = await Promise.all([
+      emitLocalSyncOperation(store, {
+        personId: "person-a",
+        deviceId: "device-1",
+        operationKind: "canonical_append",
+        targetId: "target-race-1",
+        effectFingerprint: "a".repeat(64),
+        committedAt: NOW
+      }),
+      emitLocalSyncOperation(store, {
+        personId: "person-a",
+        deviceId: "device-1",
+        operationKind: "canonical_append",
+        targetId: "target-race-2",
+        effectFingerprint: "b".repeat(64),
+        committedAt: NOW
+      })
+    ]);
+
+    const statuses = [first, second].sort();
+    expect(statuses).toEqual(["COMMITTED", "EQUIVOCATION"]);
+    expect(getNonCommittedLocalSyncEmissionCount()).toBe(1);
+
+    // The surfaced signal is content-free: it names only the closed status/operation-kind enums,
+    // never a personId, targetId, or any plaintext/semantic field.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const [warnMessage] = warnSpy.mock.calls[0] ?? [];
+    expect(warnMessage).toContain("status=EQUIVOCATION");
+    expect(warnMessage).toContain("operationKind=canonical_append");
+    expect(warnMessage).not.toContain("person-a");
+    expect(warnMessage).not.toContain("target-race-1");
+    expect(warnMessage).not.toContain("target-race-2");
+
+    warnSpy.mockRestore();
   });
 });
