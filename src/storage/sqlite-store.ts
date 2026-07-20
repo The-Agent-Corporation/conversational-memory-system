@@ -1,4 +1,6 @@
 import { createRequire } from "node:module";
+import { statSync } from "node:fs";
+import { runSchemaMigrations } from "./schema-migrations.js";
 import {
   CanonicalEventSchema,
   MemorySourceSchema,
@@ -140,6 +142,7 @@ export interface SqliteStoreOptions {
 
 export class SqliteStore implements MemoryStore {
   private readonly database: DatabaseSync;
+  private readonly location: string;
   private readonly faultInjector?: FaultInjector;
   private readonly clock: { now(): string };
 
@@ -152,6 +155,7 @@ export class SqliteStore implements MemoryStore {
       readOnly: options.readOnly ?? false,
       timeout: busyTimeoutMs
     });
+    this.location = location;
     this.faultInjector = options.faultInjector;
     this.clock = options.clock ?? { now: () => new Date().toISOString() };
     if (!options.readOnly) {
@@ -162,6 +166,34 @@ export class SqliteStore implements MemoryStore {
 
   close(): void {
     this.database.close();
+  }
+
+  /**
+   * The highest applied schema migration version, read from
+   * `pragma user_version` (kept in sync by runSchemaMigrations). Lets
+   * operators/tooling confirm a database's schema is current without
+   * inspecting internal tables directly.
+   */
+  getSchemaVersion(): number {
+    const row = this.database.prepare("pragma user_version").get() as { user_version: number };
+    return row.user_version;
+  }
+
+  /**
+   * Total on-disk size of the database file plus its WAL/SHM sidecar files
+   * (when present), in bytes. Used by the health/status surface to report
+   * database size accurately regardless of journal mode.
+   */
+  dbFileSizeBytes(): number {
+    let total = 0;
+    for (const path of [this.location, `${this.location}-wal`, `${this.location}-shm`]) {
+      try {
+        total += statSync(path).size;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    return total;
   }
 
   async acquireDaemonLease(input: {
@@ -1889,6 +1921,7 @@ export class SqliteStore implements MemoryStore {
       );
     `);
     this.migrateDaemonContractionPayloads();
+    runSchemaMigrations(this.database);
   }
 
   private migrateDaemonContractionPayloads(): void {

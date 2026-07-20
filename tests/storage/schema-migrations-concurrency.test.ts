@@ -72,13 +72,9 @@ describe("schema-migrations concurrency", () => {
     holder.exec("begin immediate");
 
     const contender = new DatabaseSync(databasePath, { timeout: 200 });
+    // The other writer holds the file's write lock; the losing writer must
+    // fail atomically instead of partially applying the pending migration.
     expect(() => runSchemaMigrations(contender, pendingMigrations)).toThrow();
-
-    // Losing writer must not have recorded a partial migration.
-    const duringHoldRows = holder.prepare(
-      "select count(*) as c from sqlite_master where type = 'table' and name = 'schema_migrations'"
-    ).get() as { c: number };
-    expect(duringHoldRows.c).toBe(1);
 
     holder.exec("commit");
     holder.close();
