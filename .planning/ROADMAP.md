@@ -198,7 +198,7 @@ Plans:
 **Goal**: Turn the architecture into a product a user can install, inspect, and trust.
 **Requirements**: REQ-039 (audit surface); REQ-040 constrains every surface to deterministic/local operation.
 **Status**: Planned
-**Plans:** 3/6 plans executed
+**Plans:** 4/6 plans executed
 
 Plans:
 **Wave 1**
@@ -212,7 +212,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 07-03-PLAN.md — REQ-039 audit surface: `memory explain <id>` CLI + 7th read-only `memory_explain` MCP tool + exportable append-only audit log.
+- [x] 07-03-PLAN.md — REQ-039 audit surface: `memory explain <id>` CLI + 7th read-only `memory_explain` MCP tool + exportable append-only audit log.
 
 **Wave 4** *(blocked on Wave 3)*
 
