@@ -64,6 +64,7 @@ import {
   type ImportBatchReceipt
 } from "../daemon/types.js";
 import { daemonSourceStateFromGrant, daemonSourceStateId } from "../daemon/source-state.js";
+import { MAX_RETAINED_GAP_SLOTS } from "../relay/domain/types.js";
 import {
   CommitHistoryImportInputSchema,
   CommitProposalDecisionInputSchema,
@@ -943,6 +944,13 @@ export class InMemoryStore implements MemoryStore {
       const identical = existing !== undefined && existing.envelopeDigest === parsed.envelopeDigest &&
         existing.effectFingerprint === parsed.effectFingerprint;
       return structuredClone({ ...parsed.receipt, status: identical ? "IDEMPOTENT" : "EQUIVOCATION" });
+    }
+    if (parsed.sequence > frontier + MAX_RETAINED_GAP_SLOTS) {
+      // ADR 0047 "Data Plane, Replay, and Equivocation": at most MAX_RETAINED_GAP_SLOTS future
+      // sequence slots (or a maximum jump of that size) are retained per device. A single
+      // validly-signed high-sequence envelope must not drive proportional allocation of one
+      // PendingSyncGap per intervening slot, so classify as bounded and return before the loop.
+      return structuredClone({ ...parsed.receipt, status: "GAP_PENDING" });
     }
     if (parsed.sequence > frontier + 1) {
       const gaps = structuredClone(this.pendingSyncGaps);
