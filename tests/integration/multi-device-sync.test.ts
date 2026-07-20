@@ -258,6 +258,39 @@ describe("Multi-device sync: real HTTP loopback end-to-end proof", () => {
     expect(betaStatus.state).toBe("synced");
   });
 
+  it("converges a >=2-operations-per-device history through the real network boundary (CR-02)", async () => {
+    const alphaStore = new InMemoryStore();
+    const betaStore = new InMemoryStore();
+    const operation1 = canonicalAppendOperation({ originSequence: 1 });
+    const operation2 = canonicalAppendOperation({ originSequence: 2 });
+    await seedOutbox(alphaStore, SYNTHETIC_DEVICE_ALPHA.deviceId, 1, operation1.body.canonicalEventId, null);
+    await seedOutbox(alphaStore, SYNTHETIC_DEVICE_ALPHA.deviceId, 2, operation2.body.canonicalEventId, "a".repeat(64));
+
+    const alphaService = replicationServiceFor(
+      SYNTHETIC_DEVICE_ALPHA.deviceId,
+      SYNTHETIC_DEVICE_ALPHA.signing.secretKey,
+      alphaStore,
+      async (row) => ({ operation: row.deviceSequence === 1 ? operation1 : operation2 })
+    );
+    const pushResult = await alphaService.pushPending();
+    expect(pushResult.pushed).toBe(2);
+
+    const betaService = replicationServiceFor(
+      SYNTHETIC_DEVICE_BETA.deviceId,
+      SYNTHETIC_DEVICE_BETA.signing.secretKey,
+      betaStore,
+      async () => { throw new Error("beta never pushes in this test"); }
+    );
+    const pullResult = await betaService.pullAndApply();
+    expect(pullResult.applied).toBe(2);
+    expect(pullResult.gaps).toBe(0);
+    expect(pullResult.rejected).toBe(0);
+
+    const accepted = await betaStore.listAcceptedSyncOperations(SYNTHETIC_PERSON_ID);
+    expect(accepted).toHaveLength(2);
+    expect(accepted.every((op) => op.outcomeKind === "effect")).toBe(true);
+  });
+
   it("resends byte-identical sealed bytes after a simulated crash/reopen and converges exactly once", async () => {
     const alphaStore = new InMemoryStore();
     const betaStore = new InMemoryStore();
