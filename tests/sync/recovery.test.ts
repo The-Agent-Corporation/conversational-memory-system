@@ -32,6 +32,8 @@ async function seedGenesisWithPassphrasePackage(harness: ReturnType<typeof creat
   });
   const packageId = "cccccccccccccccccccccccccccccccc".slice(0, 32);
   const ciphertextDigest = b64(genesisSigner.hash(wrapped.ciphertext));
+  const recoverySigningSeed = genesisSigner.deriveSubkey(recoverySeed, 1, "CMSRSIG1", 32);
+  const recoverySigningKeyPair = genesisSigner.generateSigningKeyPairFromSeed(recoverySigningSeed);
 
   const genesisCommit = {
     activeDevices: [{ deviceId: owner.deviceId, signingPublicKey: b64(owner.signing.publicKey), wrappingPublicKey: b64(owner.wrapping.publicKey) }],
@@ -62,7 +64,8 @@ async function seedGenesisWithPassphrasePackage(harness: ReturnType<typeof creat
     ciphertextLength: wrapped.ciphertext.length,
     ciphertext: b64(wrapped.ciphertext),
     ciphertextDigest,
-    signature
+    signature,
+    recoverySigningPublicKey: b64(recoverySigningKeyPair.publicKey)
   });
 
   await service.storeEpochKey(PERSON_ID, syncId, owner.deviceId, 1, new Uint8Array(32).fill(9));

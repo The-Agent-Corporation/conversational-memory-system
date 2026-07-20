@@ -401,8 +401,11 @@ export class SyncControlService {
 
     const wrappingSeed = this.crypto.deriveSubkey(seed, 1, "CMSRBOX1", 32);
     const recoveryWrapping = this.crypto.generateWrappingKeyPairFromSeed(wrappingSeed);
+    const signingSeed = this.crypto.deriveSubkey(seed, 1, "CMSRSIG1", 32);
+    const recoverySigning = this.crypto.generateSigningKeyPairFromSeed(signingSeed);
     this.crypto.zero(seed);
     this.crypto.zero(wrappingSeed);
+    this.crypto.zero(signingSeed);
 
     const candidate = await this.createDeviceIdentity(input.personId, input.syncId);
     const challengeNonce = this.crypto.randomBytes(32);
@@ -413,7 +416,11 @@ export class SyncControlService {
       packageId: input.activePackage.packageId,
       syncId: input.syncId
     });
-    const authorizationSignature = toB64(this.crypto.sign(candidate.signing.secretKey, authorizationPreimage));
+    // Authorized with the seed-derived CMSRSIG1 recovery signing key, NOT the
+    // candidate's own freshly generated device key: possession of the relay
+    // account alone can never produce this signature (CR-01).
+    const authorizationSignature = toB64(this.crypto.sign(recoverySigning.secretKey, authorizationPreimage));
+    this.crypto.zero(recoverySigning.secretKey);
 
     const newEntry: DeviceMembershipEntry = {
       deviceId: candidate.deviceId,
@@ -557,6 +564,8 @@ export class SyncControlService {
     const seed = this.crypto.randomBytes(32);
     const wrappingSeed = this.crypto.deriveSubkey(seed, 1, "CMSRBOX1", 32);
     const recoveryWrapping = this.crypto.generateWrappingKeyPairFromSeed(wrappingSeed);
+    const signingSeed = this.crypto.deriveSubkey(seed, 1, "CMSRSIG1", 32);
+    const recoverySigning = this.crypto.generateSigningKeyPairFromSeed(signingSeed);
 
     const salt = this.crypto.randomBytes(16);
     const wrapped = this.crypto.wrapWithPassphrase(input.passphrase, seed, {
@@ -566,6 +575,8 @@ export class SyncControlService {
     });
     this.crypto.zero(seed);
     this.crypto.zero(wrappingSeed);
+    this.crypto.zero(signingSeed);
+    this.crypto.zero(recoverySigning.secretKey);
 
     const packageId = this.randomId();
     const ciphertextDigest = toB64(this.crypto.hash(wrapped.ciphertext));
@@ -589,7 +600,8 @@ export class SyncControlService {
       ciphertextLength: wrapped.ciphertext.length,
       ciphertext: toB64(wrapped.ciphertext),
       ciphertextDigest,
-      signature
+      signature,
+      recoverySigningPublicKey: toB64(recoverySigning.publicKey)
     });
 
     const commit = {

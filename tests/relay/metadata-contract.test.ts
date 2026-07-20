@@ -213,6 +213,7 @@ describe("EnrollmentRequestRecordSchema / RecoveryPackageRecordSchema / HeadObse
       ciphertext: b64(4096, 0x45),
       ciphertextDigest: DIGEST32,
       signature: SIG64,
+      recoverySigningPublicKey: KEY32,
       status: "active" as const,
       createdAt: "2030-01-02T03:04:05.000Z"
     };
