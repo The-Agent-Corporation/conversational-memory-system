@@ -198,7 +198,7 @@ Plans:
 **Goal**: Turn the architecture into a product a user can install, inspect, and trust.
 **Requirements**: REQ-039 (audit surface); REQ-040 constrains every surface to deterministic/local operation.
 **Status**: Planned
-**Plans:** 1/6 plans executed
+**Plans:** 3/6 plans executed
 
 Plans:
 **Wave 1**
@@ -207,8 +207,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1; disjoint files, parallel)*
 
-- [ ] 07-02-PLAN.md — Guided interactive `memory init`: discover → per-source consent → bootstrap → offer daemon.
-- [ ] 07-04-PLAN.md — Versioned SQLite schema migration (`pragma user_version` + `schema_migrations`) + `getSchemaVersion`/`dbFileSizeBytes`.
+- [x] 07-02-PLAN.md — Guided interactive `memory init`: discover → per-source consent → bootstrap → offer daemon.
+- [x] 07-04-PLAN.md — Versioned SQLite schema migration (`pragma user_version` + `schema_migrations`) + `getSchemaVersion`/`dbFileSizeBytes`.
 
 **Wave 3** *(blocked on Wave 2)*
 
