@@ -19,6 +19,7 @@ export const REGISTRY: Record<string, () => Promise<{ main(argv: string[]): Prom
   "codex:discover": () => import("../imports/codex-discover-command.js"),
   "codex:import": () => import("../imports/codex-import-command.js"),
   discover: () => import("../imports/history-discover-command.js"),
+  init: () => import("../bootstrap/init-command.js"),
   import: () => import("../imports/history-import-command.js"),
   quarantine: () => import("../imports/quarantine-command.js"),
   "source:delete": () => import("../imports/source-delete-command.js"),
