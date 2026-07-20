@@ -21,6 +21,7 @@ export const REGISTRY: Record<string, () => Promise<{ main(argv: string[]): Prom
   discover: () => import("../imports/history-discover-command.js"),
   init: () => import("../bootstrap/init-command.js"),
   explain: () => import("../audit/explain-command.js"),
+  "audit-log": () => import("../audit/audit-log-command.js"),
   import: () => import("../imports/history-import-command.js"),
   quarantine: () => import("../imports/quarantine-command.js"),
   "source:delete": () => import("../imports/source-delete-command.js"),
