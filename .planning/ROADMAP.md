@@ -198,7 +198,7 @@ Plans:
 **Goal**: Turn the architecture into a product a user can install, inspect, and trust.
 **Requirements**: REQ-039 (audit surface); REQ-040 constrains every surface to deterministic/local operation.
 **Status**: Planned
-**Plans:** 4/6 plans executed
+**Plans:** 5/6 plans executed
 
 Plans:
 **Wave 1**
@@ -216,7 +216,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 07-05-PLAN.md — Health/status inspection surface + performance reporting and bounded tuning knobs.
+- [x] 07-05-PLAN.md — Health/status inspection surface + performance reporting and bounded tuning knobs.
 
 **Wave 5** *(blocked on Wave 4)*
 
