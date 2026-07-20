@@ -7,6 +7,7 @@ import { ConfirmationService } from "./confirmation-service.js";
 import { MemoryMutationApplication } from "./mutation-application.js";
 import { registerMemoryTools } from "./tool-catalog.js";
 import { ScopedProposalReviewer } from "../proposals/scoped-proposal-reviewer.js";
+import { ExplainService } from "../audit/explain-service.js";
 import { MemoryQueryService } from "../retrieval/memory-query-service.js";
 import { SubjectExpansionService } from "../retrieval/subject-expansion-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
@@ -70,6 +71,7 @@ export const createMemoryMcpServer = async (
           new ContinuationCursorCodec(cursorSecret, { now })
         ),
         proposals: new ScopedProposalReviewer(readStore, authority),
+        explain: new ExplainService(readStore, authority),
         now
       },
       mutations: new MemoryMutationApplication({
