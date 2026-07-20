@@ -110,6 +110,8 @@ export class SourceLifecycleService {
   async commitRevocation(input: CommitSourceRevocationInput): Promise<MutationCommitReceipt> {
     const receipt = await this.store.commitSourceRevocation(input);
     if (receipt.status === "COMMITTED") {
+      // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on
+      // non-COMMITTED status (WR-06); this call site does not throw or branch on it.
       await emitLocalSyncOperation(this.store, {
         personId: input.personId,
         deviceId: this.syncDeviceId,
@@ -215,6 +217,8 @@ export class SourceLifecycleService {
   async commitDeletion(input: CommitSourceDeletionInput): Promise<MutationCommitReceipt> {
     const receipt = await this.store.commitSourceDeletion(input);
     if (receipt.status === "COMMITTED") {
+      // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on
+      // non-COMMITTED status (WR-06); this call site does not throw or branch on it.
       await emitLocalSyncOperation(this.store, {
         personId: input.personId,
         deviceId: this.syncDeviceId,
@@ -240,6 +244,8 @@ export class SourceLifecycleService {
     actor: string;
     decidedAt: string;
   }): Promise<void> {
+    // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on
+    // non-COMMITTED status (WR-06); this call site does not throw or branch on it.
     await emitLocalSyncOperation(this.store, {
       personId: input.personId,
       deviceId: this.syncDeviceId,
@@ -268,6 +274,8 @@ export class SourceLifecycleService {
     actor: string;
     decidedAt: string;
   }): Promise<void> {
+    // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on
+    // non-COMMITTED status (WR-06); this call site does not throw or branch on it.
     await emitLocalSyncOperation(this.store, {
       personId: input.personId,
       deviceId: this.syncDeviceId,

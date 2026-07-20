@@ -392,6 +392,8 @@ export async function commitStagedGrantBatch(
       }
     });
     if (receipt.canonicalEventIds.length > 0) {
+      // Non-fatal: emitLocalSyncOperation surfaces a content-free signal internally on
+      // non-COMMITTED status (WR-06); this call site does not throw or branch on it.
       await emitLocalSyncOperation(store, {
         personId: grant.personId,
         deviceId: options.syncDeviceId ?? DEFAULT_LOCAL_SYNC_DEVICE_ID,
