@@ -95,6 +95,12 @@ export interface RelayHttpServer {
   readonly ready: Promise<void>;
   address(): { host: string; port: number };
   close(): Promise<void>;
+  /**
+   * Diagnostic-only: current count of live rate-limit window entries.
+   * Content-free (no token, bearer, or semantic data); exists so tests can
+   * prove stale windows are evicted rather than retained forever (WR-08).
+   */
+  rateLimitWindowCount(): number;
 }
 
 function statusForCode(code: RelayErrorCode): number {
@@ -138,13 +144,29 @@ export function createRelayHttpServer(config: RelayHttpServerConfig): RelayHttpS
 
   let activeRequests = 0;
   const rateWindows = new Map<string, { windowStartMs: number; count: number }>();
+  const rateLimitWindowMs = 60_000;
+
+  /**
+   * Evicts every rate-limit window whose `windowStartMs` has aged out of the
+   * rolling window (ADR 0047 "Relay Wire, Limits, and Logs"; WR-08). Runs on
+   * every access so a rotating set of bearer-token digests cannot
+   * permanently accumulate map entries -- only currently-live windows are
+   * retained.
+   */
+  function evictExpiredRateWindows(nowMs: number): void {
+    for (const [digest, window] of rateWindows) {
+      if (nowMs - window.windowStartMs >= rateLimitWindowMs) {
+        rateWindows.delete(digest);
+      }
+    }
+  }
 
   function withinRateLimit(token: string): boolean {
     const digest = tokenDigest(token);
     const nowMs = Date.now();
-    const windowMs = 60_000;
+    evictExpiredRateWindows(nowMs);
     const existing = rateWindows.get(digest);
-    if (!existing || nowMs - existing.windowStartMs >= windowMs) {
+    if (!existing) {
       rateWindows.set(digest, { windowStartMs: nowMs, count: 1 });
       return true;
     }
@@ -326,6 +348,10 @@ export function createRelayHttpServer(config: RelayHttpServerConfig): RelayHttpS
       return new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+    },
+    rateLimitWindowCount() {
+      evictExpiredRateWindows(Date.now());
+      return rateWindows.size;
     }
   };
 }
