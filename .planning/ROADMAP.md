@@ -196,8 +196,31 @@ Plans:
 ### Phase 7: Onboarding and Operational Readiness
 
 **Goal**: Turn the architecture into a product a user can install, inspect, and trust.
-**Requirements**: REQ-039
-**Status**: Pending
+**Requirements**: REQ-039 (audit surface); REQ-040 constrains every surface to deterministic/local operation.
+**Status**: Planned
+**Plans:** 6 plans in 5 waves
+
+Plans:
+**Wave 1**
+
+- [ ] 07-01-PLAN.md — Unified `memory` CLI dispatcher + mechanical `main(argv)` export refactor across all 20 command modules.
+
+**Wave 2** *(blocked on Wave 1; disjoint files, parallel)*
+
+- [ ] 07-02-PLAN.md — Guided interactive `memory init`: discover → per-source consent → bootstrap → offer daemon.
+- [ ] 07-04-PLAN.md — Versioned SQLite schema migration (`pragma user_version` + `schema_migrations`) + `getSchemaVersion`/`dbFileSizeBytes`.
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 07-03-PLAN.md — REQ-039 audit surface: `memory explain <id>` CLI + 7th read-only `memory_explain` MCP tool + exportable append-only audit log.
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 07-05-PLAN.md — Health/status inspection surface + performance reporting and bounded tuning knobs.
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 07-06-PLAN.md — Encrypted backup/restore (`cms.backup.v1` domain) + clearly-labeled `export --plaintext` escape hatch.
 
 ## Sequencing Principle
 
