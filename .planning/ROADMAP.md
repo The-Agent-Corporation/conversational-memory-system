@@ -12,7 +12,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 4: Continuous Local Daemon** — Keep approved sources synchronized and incrementally contract new history offline. (completed 2026-07-18)
 - [x] **Phase 5: Generic MCP Interface** — Expose safe host-neutral memory tools to Codex, OpenClaw, Claude-compatible clients, and future agents. (completed 2026-07-19)
 - [x] **Phase 6: Zero-Knowledge Multi-Device Sync** — Add encrypted device convergence after threat-model and protocol approval. (completed 2026-07-19)
-- [ ] **Phase 7: Onboarding and Operational Readiness** — Package the product with first-run consent, audit, migration, backup, and performance surfaces.
+- [x] **Phase 7: Onboarding and Operational Readiness** — Package the product with first-run consent, audit, migration, backup, and performance surfaces. (completed 2026-07-20)
 
 ## Phase Details
 
@@ -198,7 +198,7 @@ Plans:
 **Goal**: Turn the architecture into a product a user can install, inspect, and trust.
 **Requirements**: REQ-039 (audit surface); REQ-040 constrains every surface to deterministic/local operation.
 **Status**: Planned
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 **Wave 1**
@@ -220,7 +220,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4)*
 
-- [ ] 07-06-PLAN.md — Encrypted backup/restore (`cms.backup.v1` domain) + clearly-labeled `export --plaintext` escape hatch.
+- [x] 07-06-PLAN.md — Encrypted backup/restore (`cms.backup.v1` domain) + clearly-labeled `export --plaintext` escape hatch.
 
 ## Sequencing Principle
 
