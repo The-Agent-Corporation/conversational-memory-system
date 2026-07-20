@@ -7,6 +7,7 @@ import { ContinuationCursorCodec } from "../../src/mcp/continuation-cursor.js";
 import { createResponseEnvelope } from "../../src/mcp/response-envelope.js";
 import { loadMemoryMcpProfile } from "../../src/mcp/profile-loader.js";
 import { registerMemoryReadTools } from "../../src/mcp/tools/read-tools.js";
+import { ExplainService } from "../../src/audit/explain-service.js";
 import { ScopedProposalReviewer } from "../../src/proposals/scoped-proposal-reviewer.js";
 import { MemoryQueryService } from "../../src/retrieval/memory-query-service.js";
 import { SubjectExpansionService } from "../../src/retrieval/subject-expansion-service.js";
@@ -59,6 +60,7 @@ describe("MCP read application contract", () => {
         new ContinuationCursorCodec("synthetic-read-cursor-secret-32-bytes", { now: fixture.clock.now })
       ),
       proposals: new ScopedProposalReviewer(fixture.store, authority),
+      explain: new ExplainService(fixture.store, authority),
       now: fixture.clock.now
     });
     client = new Client({ name: "synthetic-memory-client", version: "1.0.0" });
@@ -222,7 +224,8 @@ describe("MCP read application contract", () => {
       "memory_review",
       "memory_expand_subject",
       "source_status",
-      "proposal_list"
+      "proposal_list",
+      "memory_explain"
     ]);
     expect(catalog.tools.every((tool) => tool.annotations?.readOnlyHint === true &&
       tool.annotations.destructiveHint === false && tool.annotations.idempotentHint === true &&
@@ -304,6 +307,27 @@ describe("MCP read application contract", () => {
     }));
     expect(structured.count).toBe(0);
     expect(JSON.stringify(structured)).not.toContain("proposal-mixed");
+    expect(await snapshotSemanticMemory(fixture!.store)).toBe(before);
+  });
+
+  it("07-03 Task 2 registers and routes memory_explain with scope-gated results and no existence oracle", async () => {
+    const protocol = await openReadProtocol();
+    const before = await snapshotSemanticMemory(fixture!.store);
+    const structured = expectEquivalentToolEnvelope(await protocol.callTool({
+      name: "memory_explain",
+      arguments: { itemId: "summary-alpha" }
+    }));
+    expect(structured.kind).toBe("summary");
+    expect((structured.events as Array<{ verb: string }>).map((event) => event.verb)).toEqual(
+      expect.arrayContaining(["summarized", "retrieved", "expanded"])
+    );
+
+    const restricted = await protocol.callTool({ name: "memory_explain", arguments: { itemId: "summary-beta" } });
+    const missing = await protocol.callTool({ name: "memory_explain", arguments: { itemId: "does-not-exist" } });
+    expect(restricted.isError).toBe(true);
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(restricted)).toBe(JSON.stringify(missing));
+    expect(JSON.stringify(restricted)).toContain("UNAUTHORIZED_OR_NOT_FOUND");
     expect(await snapshotSemanticMemory(fixture!.store)).toBe(before);
   });
 });

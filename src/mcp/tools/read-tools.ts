@@ -5,6 +5,7 @@ import { createResponseEnvelope } from "../response-envelope.js";
 import type { ScopedProposalReviewer } from "../../proposals/scoped-proposal-reviewer.js";
 import type { MemoryQueryService } from "../../retrieval/memory-query-service.js";
 import type { SubjectExpansionService } from "../../retrieval/subject-expansion-service.js";
+import { ExplainVerbSchema, type ExplainTrace } from "../../audit/explain-service.js";
 
 const IdentifierSchema = z.string().min(1).max(512);
 const BoundedTextSchema = z.string().max(65_536);
@@ -176,13 +177,34 @@ export const ProposalListOutputSchema = z.object({
   disclosure: z.string().min(1).max(2_000)
 }).strict();
 
+export const MemoryExplainInputSchema = z.object({
+  itemId: IdentifierSchema
+}).strict();
+
+const ExplainDetailValueSchema = z.union([z.string().max(2_000), z.number(), z.boolean(), z.null()]);
+const ExplainDetailSchema = z.record(z.string().min(1).max(128), ExplainDetailValueSchema);
+
+export const MemoryExplainOutputSchema = z.object({
+  itemId: IdentifierSchema,
+  kind: z.enum(["source", "summary", "anchor", "box", "trace"]),
+  events: z.array(z.object({
+    verb: ExplainVerbSchema,
+    occurredAt: z.string().min(1).max(64),
+    actor: z.string().min(1).max(256).optional(),
+    detail: ExplainDetailSchema.optional()
+  }).strict()).max(1_000),
+  count: z.number().int().min(0).max(1_000),
+  disclosure: z.string().min(1).max(2_000)
+}).strict();
+
 export const MEMORY_READ_TOOL_NAMES = [
   "memory_search",
   "memory_recall",
   "memory_review",
   "memory_expand_subject",
   "source_status",
-  "proposal_list"
+  "proposal_list",
+  "memory_explain"
 ] as const;
 
 export const MEMORY_READ_TOOL_ANNOTATIONS: Readonly<ToolAnnotations> = Object.freeze({
@@ -192,10 +214,16 @@ export const MEMORY_READ_TOOL_ANNOTATIONS: Readonly<ToolAnnotations> = Object.fr
   openWorldHint: false
 });
 
+/** Authority-bound explain lookup — same shape ExplainService (src/audit/explain-service.ts) exposes. */
+export interface MemoryExplainReader {
+  explain(itemId: string): Promise<ExplainTrace>;
+}
+
 export interface MemoryReadToolApplication {
   readonly queries: MemoryQueryService;
   readonly expansion: SubjectExpansionService;
   readonly proposals: ScopedProposalReviewer;
+  readonly explain: MemoryExplainReader;
   readonly now?: () => string;
 }
 
@@ -276,6 +304,21 @@ export const registerMemoryReadTools = (
     },
     async (input) => safeRead(async () => ({
       ...await application.proposals.listProposals(input),
+      disclosure: DISCLOSURE
+    }))
+  );
+
+  server.registerTool(
+    "memory_explain",
+    {
+      title: "Explain why an item exists",
+      description: "Return the authorized lifecycle trace (imported/summarized/synchronized/retrieved/expanded/approved/rejected/deleted) for one item id.",
+      inputSchema: MemoryExplainInputSchema,
+      outputSchema: MemoryExplainOutputSchema,
+      annotations: MEMORY_READ_TOOL_ANNOTATIONS
+    },
+    async (input) => safeRead(async () => ({
+      ...await application.explain.explain(input.itemId),
       disclosure: DISCLOSURE
     }))
   );
