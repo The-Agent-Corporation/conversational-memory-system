@@ -12,6 +12,9 @@
  * module that doesn't exist yet fails `tsc` (TS2307).
  */
 export const REGISTRY: Record<string, () => Promise<{ main(argv: string[]): Promise<void> }>> = {
+  backup: () => import("../storage/backup/backup-command.js"),
+  restore: () => import("../storage/backup/restore-command.js"),
+  export: () => import("../storage/backup/export-plaintext-command.js"),
   bootstrap: () => import("../bootstrap/bootstrap-command.js"),
   status: () => import("../bootstrap/status-command.js"),
   daemon: () => import("../daemon/daemon-command.js"),
