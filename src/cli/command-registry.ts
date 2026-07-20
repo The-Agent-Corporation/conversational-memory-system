@@ -34,5 +34,6 @@ export const REGISTRY: Record<string, () => Promise<{ main(argv: string[]): Prom
   "hermes:proposals:reject": () => import("../integrations/hermes/proposals-reject-command.js"),
   "hermes:resume": () => import("../integrations/hermes/resume-command.js"),
   "hermes:roscoe-env": () => import("../integrations/hermes/roscoe-env-command.js"),
-  "hermes:sleep": () => import("../integrations/hermes/sleep-command.js")
+  "hermes:sleep": () => import("../integrations/hermes/sleep-command.js"),
+  tune: () => import("../operations/tune-command.js")
 };
