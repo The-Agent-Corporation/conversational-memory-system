@@ -423,27 +423,31 @@ Backup should open with `{ readOnly: true }` — this also conveniently skips ru
 | A4 | The project has no build/`dist` step, so `bin/memory` must shebang into `tsx` rather than compiled JS | Pitfall 6 | Medium — verified `package.json` has no `build` script today, but the planner may decide to add one as part of this phase, which would change the correct shebang target |
 | A5 | Growing the MCP read-tool catalog from 6 to 7 tools (adding `memory_explain`) is acceptable and not blocked by some "exactly sixteen tools" invariant enforced elsewhere | Pattern 5 | Medium — STATE.md's phrase "Generic sixteen-tool local MCP interface" was found via a status summary, not a hard-coded assertion; I did not locate and read a test that asserts an exact total tool count across both read and mutation tools. The planner should grep for any such assertion before committing to this being trivially additive. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **What is the exact backup payload format — raw SQLite file bytes vs. a logical JSON dump?**
    - What we know: `SqliteStore` already supports `{ readOnly: true }` opens, and WAL mode is enabled, so a raw file copy risks missing WAL-only data unless a checkpoint (`pragma wal_checkpoint(TRUNCATE)`) runs first. A logical dump (iterate every table via existing `MemoryStore` list/get methods, or raw `select * from <table>`) is more portable across schema versions and easier to test deterministically with synthetic fixtures, but is more code to write and keep in sync with the table list.
    - What's unclear: Whether restore needs byte-for-byte fidelity (raw file copy, simplest, but ties backup format to the exact on-disk SQLite version/page size) or whether a logical JSON-lines dump (table name + row payload per line) is preferred for portability and for the review/audit trail's "inspect what a backup contains" goal.
    - Recommendation: Logical dump (one JSON line per row across all tables, in a fixed schema-versioned envelope) — it's inspectable in the plaintext-export escape hatch too (D-07's `export --plaintext` naturally becomes "write the same dump unencrypted"), and it decouples backup format from SQLite's on-disk page format. Restore replays it into a fresh `SqliteStore` (which runs `migrate()` first, then inserts rows) rather than requiring an exact schema-version match to the writer's SQLite build.
+   - RESOLVED: Adopted verbatim — logical JSON-lines dump in a fixed schema-versioned envelope, implemented in 07-06 (encrypted backup) and reused unencrypted by `export --plaintext`.
 
 2. **Does `memory init`'s guided flow need to detect and offer schema migration for an *existing* database, or is migration always transparent/automatic?**
    - What we know: `SqliteStore`'s constructor already runs `migrate()` unconditionally on every non-read-only open — this is existing, tested behavior.
    - What's unclear: Whether D-08 wants migration to stay silent/automatic (consistent with current behavior — "just works" on every command) or whether the health/status surface (D-06) should surface "schema version N, migrated from M at startup" so the user can see it happened (serves the "inspect and trust" goal).
    - Recommendation: Keep migration automatic (don't add a confirmation gate — this is a local single-user schema change, not a destructive data operation), but surface the current `schema_migrations` version and the most recent migration's `applied_at` in the health/status output so it's inspectable after the fact, satisfying "trust" without adding friction.
+   - RESOLVED: Adopted verbatim — automatic migration retained (07-04) and the current schema version is surfaced in the health/status surface (07-05).
 
 3. **Should the unified `bin` CLI require the mechanical `main(argv)` export refactor across all ~19 existing command modules as part of Wave 1, or can `bin/memory` spawn a subprocess (`child_process.execFile("tsx", [...])`) instead?**
    - What we know: Subprocess spawning avoids touching 19 existing files but adds process-spawn overhead, loses direct in-process error typing, and is inconsistent with "wrap, don't reimplement" (D-04) in spirit if the wrapping is done at the OS-process boundary rather than the module boundary.
    - What's unclear: Whether the planner considers the 19-file mechanical refactor in-scope for Wave 1's budget, given CONTEXT.md's explicit warning that this is already a broad phase.
    - Recommendation: Do the in-process `main(argv)` export refactor — it's mechanical (rename the guarded `main()` to accept and use an `argv` parameter instead of reading `process.argv.slice(2)`, export it, keep the guard), low-risk (each file already has direct unit-test coverage of its `run*Command` function, and the refactor doesn't touch that function), and produces a genuinely single binary rather than a dispatcher-that-shells-out. Size it as its own task/wave-1 sub-step, separate from writing brand-new commands.
+   - RESOLVED: Adopted verbatim — in-process `main(argv)` export refactor done as its own Wave 1 task (07-01 Task 2), separate from the dispatcher.
 
 4. **Exact set of D-09 tuning knobs.** CONTEXT.md names "cache sizes, retention/contraction thresholds, index rebuild" as examples but doesn't lock a final list.
    - What we know: No existing config-knob surface exists today (`grep` found no `RETENTION`/`CACHE_SIZE`/threshold constants outside `historical-bootstrapper.ts`, which is not itself a tunable-knob file).
    - What's unclear: Which specific runtime parameters in the daemon/retrieval/contraction pipeline are safe to expose as user-tunable without risking invariants those subsystems' existing tests depend on (e.g., contraction batch sizing, lease durations).
    - Recommendation: Defer the exact knob list to the planner/discuss-phase step with a concrete proposed default set: SQLite `busy_timeout` (already a `SqliteStoreOptions` field, just not CLI-exposed), retrieval result-limit/token-budget defaults (already bounded in `read-tools.ts` schemas, could become configurable defaults rather than hardcoded), and a manual "rebuild indexes" (`REINDEX`/`ANALYZE`) trigger — all three are low-risk because they don't change data semantics, only performance characteristics.
+   - RESOLVED: Adopted verbatim — the three tuning knobs (`busy_timeout`, retrieval-limit defaults, `REINDEX`+`ANALYZE` trigger) implemented in 07-05 Task 3.
 
 ## Environment Availability
 
