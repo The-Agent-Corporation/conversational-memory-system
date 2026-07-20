@@ -59,13 +59,13 @@ function readFlagValues(args: string[]): Map<string, string> {
   return values;
 }
 
-async function main(): Promise<void> {
-  const result = await runBootstrapCommand(parseArgs(process.argv.slice(2)));
+export async function main(argv: string[]): Promise<void> {
+  const result = await runBootstrapCommand(parseArgs(argv));
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

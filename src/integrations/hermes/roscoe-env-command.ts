@@ -79,12 +79,12 @@ function shellArg(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-async function main(): Promise<void> {
-  process.stdout.write(renderRoscoeMemoryEnvironment(parseArgs(process.argv.slice(2))));
+export async function main(argv: string[]): Promise<void> {
+  process.stdout.write(renderRoscoeMemoryEnvironment(parseArgs(argv)));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;

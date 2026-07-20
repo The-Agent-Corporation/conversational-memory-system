@@ -129,13 +129,13 @@ const parseArgs = (args: string[]): CodexImportCommandOptions => {
   };
 };
 
-const main = async (): Promise<void> => {
-  const result = await runCodexImportCommand(parseArgs(process.argv.slice(2)));
+export const main = async (argv: string[]): Promise<void> => {
+  const result = await runCodexImportCommand(parseArgs(argv));
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;

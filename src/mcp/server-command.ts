@@ -68,11 +68,13 @@ const parseMemoryMcpCommandOptions = (args: readonly string[]): MemoryMcpCommand
   return { configPath, profileName };
 };
 
+export const main = runMemoryMcpServerCommand;
+
 const isMain = process.argv[1] !== undefined &&
   fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isMain) {
-  runMemoryMcpServerCommand(process.argv.slice(2)).catch(() => {
+  main(process.argv.slice(2)).catch(() => {
     process.stderr.write("MEMORY_MCP_STARTUP_FAILED\n");
     process.exitCode = 1;
   });

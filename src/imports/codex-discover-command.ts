@@ -37,15 +37,15 @@ const parseRootPath = (args: string[]): string | undefined => {
   return equalsArg?.slice("--root=".length);
 };
 
-const main = async (): Promise<void> => {
+export const main = async (argv: string[]): Promise<void> => {
   const result = await runCodexDiscoverCommand({
-    rootPath: parseRootPath(process.argv.slice(2))
+    rootPath: parseRootPath(argv)
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;

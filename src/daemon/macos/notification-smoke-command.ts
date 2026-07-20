@@ -46,8 +46,8 @@ class NodeCommandRunner implements CommandRunner {
   }
 }
 
-async function main(): Promise<void> {
-  if (process.argv.slice(2).length > 0) {
+export async function main(argv: string[]): Promise<void> {
+  if (argv.length > 0) {
     throw new Error("The notification smoke command accepts no arguments.");
   }
   const attempt = await runMacOSNotificationSmoke({
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => {
+  main(process.argv.slice(2)).catch(() => {
     process.stderr.write("macOS notification smoke command failed.\n");
     process.exitCode = 1;
   });

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "memory": "./bin/memory"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",

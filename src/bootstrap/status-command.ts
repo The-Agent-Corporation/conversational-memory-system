@@ -188,13 +188,13 @@ function parseArgs(args: string[]): MemoryStatusCommandOptions {
   return { databasePath: resolve(databasePath), personId };
 }
 
-async function main(): Promise<void> {
-  const result = await runMemoryStatusCommand(parseArgs(process.argv.slice(2)));
+export async function main(argv: string[]): Promise<void> {
+  const result = await runMemoryStatusCommand(parseArgs(argv));
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });
