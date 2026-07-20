@@ -18,6 +18,7 @@ import type {
   CryptoProvider,
   PassphraseWrappedPackage
 } from "./crypto-provider.js";
+import { ARGON2ID_REVIEWED_FLOOR } from "./crypto-provider.js";
 
 const AEAD_KEY_BYTES = 32;
 const AEAD_NONCE_BYTES = 24;
@@ -174,6 +175,18 @@ export class LibsodiumCryptoProvider implements CryptoProvider {
   }
 
   unwrapWithPassphrase(passphrase: string, packageValue: PassphraseWrappedPackage): Uint8Array {
+    // Reject below-reviewed-floor Argon2id parameters before any derivation
+    // work: a stored package with weakened opsLimit/memLimit would otherwise
+    // silently narrow offline-guessing resistance (ADR 0047 "Optional
+    // passphrase recovery package"). Uniform failure -- identical to the
+    // wrong-passphrase path -- never distinguishes this check from an AEAD
+    // authentication failure.
+    if (
+      packageValue.opsLimit < ARGON2ID_REVIEWED_FLOOR.opsLimit ||
+      packageValue.memLimit < ARGON2ID_REVIEWED_FLOOR.memLimit
+    ) {
+      throw new SyncProtocolError("SYNC_INTEGRITY_FAILED");
+    }
     const key = sodium.crypto_pwhash(
       AEAD_KEY_BYTES,
       passphrase,

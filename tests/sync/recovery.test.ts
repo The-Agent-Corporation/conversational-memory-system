@@ -138,6 +138,69 @@ describe("recovery-key enrollment", () => {
     })).rejects.toMatchObject({ code: "SYNC_INTEGRITY_FAILED" });
   });
 
+  it("rejects a below-reviewed-floor Argon2id package uniformly, before deriving (WR-04)", async () => {
+    const harness = createControlTestHarness();
+    const clock = fixedClock();
+    const { currentControl, syncId } = await seedGenesisWithPassphrasePackage(harness, clock);
+    const recoveringService = harness.newControlService(clock);
+
+    const syncIdForPackage = syncId;
+    const recoverySeed = genesisSigner.randomBytes(32);
+    const salt = genesisSigner.randomBytes(16);
+    const belowFloorWrapped = genesisSigner.wrapWithPassphrase(PASSPHRASE, recoverySeed, {
+      opsLimit: ARGON2ID_REVIEWED_FLOOR.opsLimit - 1,
+      memLimit: ARGON2ID_REVIEWED_FLOOR.memLimit,
+      salt
+    });
+    const belowFloorPackageId = "dddddddddddddddddddddddddddddddd".slice(0, 32);
+    const ciphertextDigest = b64(genesisSigner.hash(belowFloorWrapped.ciphertext));
+    const recoverySigningSeed = genesisSigner.deriveSubkey(recoverySeed, 1, "CMSRSIG1", 32);
+    const recoverySigningKeyPair = genesisSigner.generateSigningKeyPairFromSeed(recoverySigningSeed);
+
+    const belowFloorPackage = {
+      syncId: syncIdForPackage,
+      packageId: belowFloorPackageId,
+      algorithm: "argon2id" as const,
+      opsLimit: belowFloorWrapped.opsLimit,
+      memLimit: belowFloorWrapped.memLimit,
+      salt: b64(belowFloorWrapped.salt),
+      nonce: b64(belowFloorWrapped.nonce),
+      ciphertextLength: belowFloorWrapped.ciphertext.length,
+      ciphertext: b64(belowFloorWrapped.ciphertext),
+      ciphertextDigest,
+      signature: b64(genesisSigner.randomBytes(64)),
+      recoverySigningPublicKey: b64(recoverySigningKeyPair.publicKey),
+      status: "active" as const,
+      createdAt: "2030-01-02T03:04:05.000Z"
+    };
+
+    await expect(recoveringService.enrollViaRecovery({
+      personId: PERSON_ID,
+      syncId,
+      passphrase: PASSPHRASE,
+      activePackage: belowFloorPackage,
+      currentControl,
+      publisherDeviceId: "deaddeaddeaddeaddeaddeaddeaddead"
+    })).rejects.toMatchObject({ code: "SYNC_INTEGRITY_FAILED" });
+  });
+
+  it("still unwraps an at-reviewed-floor Argon2id package", async () => {
+    // seedGenesisWithPassphrasePackage already wraps at exactly the reviewed
+    // floor (opsLimit/memLimit === ARGON2ID_REVIEWED_FLOOR); the first
+    // success-path test above already exercises this, but this test isolates
+    // the boundary explicitly by unwrapping directly.
+    const provider = new LibsodiumCryptoProvider();
+    const seed = provider.randomBytes(32);
+    const salt = provider.randomBytes(16);
+    const wrapped = provider.wrapWithPassphrase(PASSPHRASE, seed, {
+      opsLimit: ARGON2ID_REVIEWED_FLOOR.opsLimit,
+      memLimit: ARGON2ID_REVIEWED_FLOOR.memLimit,
+      salt
+    });
+    const opened = provider.unwrapWithPassphrase(PASSPHRASE, wrapped);
+    expect(Buffer.from(opened)).toEqual(Buffer.from(seed));
+  });
+
   it("fails when there is no active recovery package (account-only access is insufficient)", async () => {
     const harness = createControlTestHarness();
     const clock = fixedClock();
