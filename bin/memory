@@ -1,0 +1,22 @@
+#!/usr/bin/env -S npx tsx
+
+// Thin executable shim for the unified `memory` CLI (D-04).
+//
+// This project ships no build step (package.json has `typecheck`/`test`
+// only, no `build`/`dist`), so this shim runs the TypeScript dispatcher
+// directly through tsx rather than pointing at compiled JS that doesn't
+// exist. See 07-RESEARCH.md Pitfall 6.
+//
+// bin/memory (not src/cli/bin.ts) is the actual process entry point when
+// invoked via the package.json "bin" field, so src/cli/bin.ts's own
+// import.meta.url guard never fires here — call dispatch explicitly.
+//
+// Kept as plain JavaScript (no TypeScript syntax): tsx's CLI does not
+// apply its TypeScript transform to extension-less entry scripts, only to
+// files it resolves via .ts/.tsx/.mts/.cts (directly or through imports).
+import { dispatch } from "../src/cli/bin.js";
+
+dispatch(process.argv.slice(2)).catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});
