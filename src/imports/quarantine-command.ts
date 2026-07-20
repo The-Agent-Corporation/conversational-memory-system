@@ -46,8 +46,8 @@ function required(flags: Map<string, string>, name: string): string {
   return value;
 }
 
-async function main(): Promise<void> {
-  const [operation, ...args] = process.argv.slice(2);
+export async function main(argv: string[]): Promise<void> {
+  const [operation, ...args] = argv;
   const flags = readFlags(args);
   const databasePath = resolve(required(flags, "--db"));
   const personId = required(flags, "--person");
@@ -69,7 +69,7 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

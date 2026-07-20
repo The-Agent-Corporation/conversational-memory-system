@@ -128,8 +128,8 @@ function selectProposalPlanners(
   return null;
 }
 
-async function main(): Promise<void> {
-  const databasePath = parseDatabasePath(process.argv.slice(2));
+export async function main(argv: string[]): Promise<void> {
+  const databasePath = parseDatabasePath(argv);
   const input = await readStdin();
   const result = await sleepHermesMemory({ databasePath, input: input.trim() || "{}" });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -165,7 +165,7 @@ async function readStdin(): Promise<string> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;

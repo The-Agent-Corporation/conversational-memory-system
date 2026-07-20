@@ -26,8 +26,8 @@ export async function runSourceDeleteCommand(options: {
   }
 }
 
-async function main(): Promise<void> {
-  const flags = readFlags(process.argv.slice(2));
+export async function main(argv: string[]): Promise<void> {
+  const flags = readFlags(argv);
   const databasePath = flags.get("--db");
   const personId = flags.get("--person");
   const candidateId = flags.get("--candidate");
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error: unknown) => {
+  main(process.argv.slice(2)).catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

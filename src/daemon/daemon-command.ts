@@ -406,15 +406,15 @@ function capabilityError(subcommand: DaemonSubcommand): DaemonCommandResult {
   };
 }
 
-async function main(): Promise<void> {
-  const options = parseDaemonCommandArgs(process.argv.slice(2));
+export async function main(argv: string[]): Promise<void> {
+  const options = parseDaemonCommandArgs(argv);
   const result = await runDaemonCommand(options);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.ok) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch(() => {
+  main(process.argv.slice(2)).catch(() => {
     process.stderr.write("Memory daemon command failed.\n");
     process.exitCode = 1;
   });
