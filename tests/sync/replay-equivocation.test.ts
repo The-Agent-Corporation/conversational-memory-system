@@ -394,6 +394,39 @@ describe("ReplayVerifier: membership, signature, and rollback/fork chain validat
     expect(outcome).toEqual({ kind: "rejected", code: "SYNC_INTEGRITY_FAILED" });
   });
 
+  it("accepts a correctly-produced sequence-2 envelope (producer<->verifier round-trip)", async () => {
+    const harness = await createReplicationHarness();
+    const operation1 = canonicalAppendOperation({ originSequence: 1 });
+    const operation2 = canonicalAppendOperation({ originSequence: 2 });
+    const store = harness.storeFor(SYNTHETIC_DEVICE_ALPHA.deviceId);
+    await seedOutbox(store, SYNTHETIC_DEVICE_ALPHA.deviceId, 1, operation1.body.canonicalEventId, null);
+    await seedOutbox(store, SYNTHETIC_DEVICE_ALPHA.deviceId, 2, operation2.body.canonicalEventId, "a".repeat(64));
+    const alphaService = harness.serviceFor(
+      SYNTHETIC_DEVICE_ALPHA.deviceId,
+      SYNTHETIC_DEVICE_ALPHA.signing.secretKey,
+      async (row) => ({ operation: row.deviceSequence === 1 ? operation1 : operation2 })
+    );
+    await alphaService.pushPending();
+
+    const page = await new FakeSyncRelay({ service: harness.service, bearerToken: harness.bearerToken })
+      .listEnvelopes(SYNTHETIC_DEVICE_ALPHA.deviceId);
+    const firstEnvelope = page.records.find((record) => record.header.sequence === 1)!;
+    const secondEnvelope = page.records.find((record) => record.header.sequence === 2)!;
+    const { receivedAt: _receivedAt, ...wireSecondEnvelope } = secondEnvelope;
+
+    const verifier = new ReplayVerifier(harness.crypto);
+    const outcome = verifier.verify(wireSecondEnvelope, {
+      aeadKey: harness.aeadKey,
+      membership: harness.membership,
+      expectedNextSequence: 2,
+      expectedPreviousChainDigest: firstEnvelope.ciphertextDigest
+    });
+    expect(outcome.kind).toBe("verified");
+    if (outcome.kind === "verified") {
+      expect(outcome.opened.operation.body).toMatchObject({ canonicalEventId: operation2.body.canonicalEventId });
+    }
+  });
+
   it("rejects an envelope from a revoked device before any AEAD work", async () => {
     const harness = await createReplicationHarness();
     const operation = canonicalAppendOperation();
