@@ -152,6 +152,71 @@ describe("recovery-key enrollment", () => {
   });
 });
 
+describe("adversarial account-only enrollment (CR-01)", () => {
+  it("rejects a self-signed membership.cas from a candidate that never possessed the recovery seed", async () => {
+    const harness = createControlTestHarness();
+    const clock = fixedClock();
+    const { currentControl, syncId } = await seedGenesisWithPassphrasePackage(harness, clock);
+
+    // Attacker has ONLY relay account access: no recovery seed, no passphrase.
+    // It generates a fresh candidate device identity locally (any account
+    // holder can do this) and learns the active package's packageId via the
+    // ordinary recovery.fetch operation -- exactly what enrollViaRecovery does,
+    // minus ever touching the seed.
+    const attackerService = harness.newControlService(clock);
+    const candidate = await attackerService.createDeviceIdentity(PERSON_ID, syncId);
+
+    const attackerSession = harness.newRelaySession();
+    const learnedPackage = await attackerSession.fetchRecoveryPackage();
+    if (!learnedPackage) throw new Error("expected an active recovery package to exist");
+
+    const challengeNonce = genesisSigner.randomBytes(32);
+    const authorizationPreimage = genesisSigner.canonicalBytes({
+      candidateDeviceId: candidate.deviceId,
+      challengeNonce: b64(challengeNonce),
+      domain: "cms.sync.v1/recovery-authorization",
+      packageId: learnedPackage.packageId,
+      syncId
+    });
+    // No recovery seed in hand: sign with the candidate's OWN freshly
+    // generated device key instead of any seed-derived recovery credential.
+    const authorizationSignature = b64(genesisSigner.sign(candidate.signing.secretKey, authorizationPreimage));
+
+    const newEntry = {
+      deviceId: candidate.deviceId,
+      signingPublicKey: b64(candidate.signing.publicKey),
+      wrappingPublicKey: b64(candidate.wrapping.publicKey)
+    };
+    const activeDevices = [...currentControl.activeDevices, newEntry].sort((left, right) =>
+      left.deviceId < right.deviceId ? -1 : left.deviceId > right.deviceId ? 1 : 0
+    );
+    const commit = {
+      activeDevices,
+      controlVersion: currentControl.controlVersion + 1,
+      domain: "cms.sync.v1/control-commit" as const,
+      epoch: currentControl.epoch,
+      keyPackageDigests: [] as string[],
+      previousCommitHash: currentControl.commitHash,
+      previousControlVersion: currentControl.controlVersion,
+      protocol: "cms-sync-v1" as const,
+      recoveryCredentialId: currentControl.recoveryCredentialId,
+      revokedDevices: [...currentControl.revokedDevices],
+      syncId
+    };
+    const commitSignature = b64(genesisSigner.sign(candidate.signing.secretKey, genesisSigner.canonicalBytes(commit)));
+
+    await expect(attackerSession.compareAndSwapMembership({
+      commit,
+      signature: commitSignature,
+      recoveryAuthorization: {
+        packageId: learnedPackage.packageId,
+        challengeNonce: b64(challengeNonce),
+        signature: authorizationSignature
+      }
+    })).rejects.toMatchObject({ code: expect.stringMatching(/^(SYNC_INTEGRITY_FAILED|SYNC_DEVICE_DENIED)$/) });
+  });
+});
+
 describe("recovery rotation", () => {
   it("replaces the current recovery credential/package and the old package no longer authorizes enrollment", async () => {
     const harness = createControlTestHarness();
