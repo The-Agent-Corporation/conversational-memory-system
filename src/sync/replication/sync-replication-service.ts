@@ -183,7 +183,14 @@ export class SyncReplicationService {
         (candidate) => candidate.deviceId === row.deviceId && candidate.deviceSequence === row.deviceSequence - 1
       );
       if (!predecessor || predecessor.status !== "sealed") return null; // predecessor not sealed yet; bounded pending work
-      previousEnvelopeHash = hexToBase64Url(predecessor.sealedEnvelopeDigest!);
+      // Chain on the predecessor's own ciphertextDigest (BLAKE2b generichash over ciphertext
+      // bytes only), matching ReplayVerifier.chainDigestOf -- NOT sealedEnvelopeDigest, which is
+      // a local-bookkeeping SHA-256 over the whole base64 envelope JSON and never equals the
+      // value the verifier checks (CR-02).
+      const predecessorEnvelope = JSON.parse(
+        Buffer.from(predecessor.sealedEnvelopeBytesBase64!, "base64").toString("utf8")
+      ) as EncryptedSyncEnvelope;
+      previousEnvelopeHash = predecessorEnvelope.ciphertextDigest;
     }
 
     const header: Omit<EncryptedSyncEnvelopeHeader, "ciphertextLength"> = {
