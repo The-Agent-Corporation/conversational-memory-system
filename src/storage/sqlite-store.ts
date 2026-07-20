@@ -180,6 +180,55 @@ export class SqliteStore implements MemoryStore {
   }
 
   /**
+   * `applied_at` of the most recently applied `schema_migrations` row, or
+   * `null` if the `schema_migrations` table does not exist yet (a database
+   * that predates versioned migrations, or a fresh readOnly open before
+   * `migrate()` has ever run). Used by the health surface's "inspect and
+   * trust" reporting alongside `getSchemaVersion()`.
+   */
+  getLatestSchemaMigrationAppliedAt(): string | null {
+    const exists = this.database
+      .prepare("select name from sqlite_master where type = 'table' and name = 'schema_migrations'")
+      .get() as { name: string } | undefined;
+    if (!exists) return null;
+    const row = this.database
+      .prepare("select applied_at as appliedAt from schema_migrations order by version desc limit 1")
+      .get() as { appliedAt: string } | undefined;
+    return row?.appliedAt ?? null;
+  }
+
+  /**
+   * Current SQLite `busy_timeout` in milliseconds for this connection.
+   * Lets tuning tooling confirm a configured `busyTimeoutMs` was honored.
+   */
+  getBusyTimeoutMs(): number {
+    const row = this.database.prepare("pragma busy_timeout").get() as { timeout: number };
+    return row.timeout;
+  }
+
+  /**
+   * Whether SQLite has recorded index/table statistics (i.e. `ANALYZE` has
+   * run at least once) via the presence of the `sqlite_stat1` table. Used by
+   * the health surface's index-health reporting.
+   */
+  hasIndexStatistics(): boolean {
+    const row = this.database
+      .prepare("select name from sqlite_master where type = 'table' and name = 'sqlite_stat1'")
+      .get() as { name: string } | undefined;
+    return row !== undefined;
+  }
+
+  /**
+   * Manual, low-risk performance-maintenance trigger: rebuilds all indexes
+   * and refreshes query-planner statistics. Performance-only — no
+   * data-semantics change.
+   */
+  reindexAndAnalyze(): void {
+    this.database.exec("REINDEX");
+    this.database.exec("ANALYZE");
+  }
+
+  /**
    * Total on-disk size of the database file plus its WAL/SHM sidecar files
    * (when present), in bytes. Used by the health/status surface to report
    * database size accurately regardless of journal mode.
