@@ -155,7 +155,7 @@ Plans:
 **Goal**: Synchronize memory without giving the relay decryption capability.
 **Requirements**: REQ-031, REQ-032, REQ-033, REQ-034, REQ-035, REQ-036
 **Status**: Gap Closure Planned (2 confirmed BLOCKING gaps + 8 review warnings)
-**Plans:** 8/8 base plans complete; 5 gap-closure plans planned (06-09…06-13)
+**Plans:** 12/13 plans executed
 
 Plans:
 
@@ -184,10 +184,10 @@ Plans:
 
 **Gap Closure — Wave 1** *(from 06-VERIFICATION.md + 06-REVIEW.md; parallel, disjoint files)*
 
-- [ ] 06-09-PLAN.md — [BLOCKING GAP-1/CR-01] Bind recovery-seed possession (CMSRSIG1) into recovery enrollment; adversarial account-only test.
-- [ ] 06-10-PLAN.md — [BLOCKING GAP-2/CR-02] Chain envelope hash on the predecessor ciphertextDigest; multi-op-per-device convergence.
-- [ ] 06-11-PLAN.md — Bound client remote-apply gap allocation (WR-02) and evict relay rate-limit windows (WR-08).
-- [ ] 06-12-PLAN.md — Surface dropped sync emissions (WR-06), fix takePlan guard (WR-01), remove Keychain read deadlock (WR-05).
+- [x] 06-09-PLAN.md — [BLOCKING GAP-1/CR-01] Bind recovery-seed possession (CMSRSIG1) into recovery enrollment; adversarial account-only test.
+- [x] 06-10-PLAN.md — [BLOCKING GAP-2/CR-02] Chain envelope hash on the predecessor ciphertextDigest; multi-op-per-device convergence.
+- [x] 06-11-PLAN.md — Bound client remote-apply gap allocation (WR-02) and evict relay rate-limit windows (WR-08).
+- [x] 06-12-PLAN.md — Surface dropped sync emissions (WR-06), fix takePlan guard (WR-01), remove Keychain read deadlock (WR-05).
 
 **Gap Closure — Wave 2** *(blocked on 06-09; shared relay/control files)*
 
