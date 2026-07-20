@@ -156,7 +156,11 @@ export class OpaqueRelayService {
         packageId: request.recoveryAuthorization.packageId,
         syncId
       });
-      if (!verifyDetached(candidate.signingPublicKey, authorizationPreimage, request.recoveryAuthorization.signature)) {
+      // Bind possession of the recovery SEED, not the relay account: the
+      // recovery-authorization signature must verify against the seed-derived
+      // CMSRSIG1 public key persisted with the active package, never against
+      // the candidate's own (freshly self-generated) device key (CR-01).
+      if (!verifyDetached(activePackage.recoverySigningPublicKey, authorizationPreimage, request.recoveryAuthorization.signature)) {
         throw new RelayError("SYNC_INTEGRITY_FAILED");
       }
       if (!verifyDetached(candidate.signingPublicKey, commitBytes, request.signature)) {

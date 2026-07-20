@@ -267,6 +267,17 @@ export const RecoveryPackageRecordSchema = z.object({
   ciphertext: relayBase64UrlVariableSchema(MAX_CIPHERTEXT_LENGTH, "ciphertext"),
   ciphertextDigest: relayBase64UrlBytesSchema(32, "ciphertextDigest"),
   signature: relayBase64UrlBytesSchema(64, "signature"),
+  /**
+   * Public half of the `CMSRSIG1` recovery signing credential (ADR 0047
+   * "Cryptographic Suite and Key Hierarchy"), derived client-side from the
+   * recovery seed via `deriveSubkey(seed, 1, "CMSRSIG1", 32)`. The relay
+   * verifies every recovery-authorized `membership.cas` signature against
+   * THIS key -- never against the enrolling candidate's own device key --
+   * so possession of the relay account alone can never author a valid
+   * recovery authorization (CR-01 / D-04 "Account Recovery Cannot Enroll
+   * or Decrypt").
+   */
+  recoverySigningPublicKey: relayBase64UrlBytesSchema(32, "recoverySigningPublicKey"),
   status: RecoveryPackageStatusSchema,
   createdAt: RelayCanonicalTimestampSchema
 }).strict();
