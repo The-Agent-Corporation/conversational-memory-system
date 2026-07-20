@@ -7,12 +7,14 @@ import type {
   DeviceCredentialRecord,
   EnrollmentRequestRecord,
   HeadObservationRecord,
+  RecoveryChallengeRecord,
   RecoveryPackageRecord
 } from "../domain/types.js";
 import type {
   AppendEnvelopeResult,
   CommitControlInput,
   CommitControlResult,
+  IssueRecoveryChallengeInput,
   RelayStore
 } from "./relay-store.js";
 
@@ -124,6 +126,17 @@ export class SqliteRelayStore implements RelayStore {
         status TEXT NOT NULL,
         record_json TEXT NOT NULL,
         PRIMARY KEY (sync_id, package_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS recovery_challenges (
+        sync_id TEXT NOT NULL,
+        challenge_nonce TEXT NOT NULL,
+        package_id TEXT NOT NULL,
+        control_version INTEGER NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (sync_id, challenge_nonce)
       );
 
       CREATE TABLE IF NOT EXISTS head_observations (
@@ -245,6 +258,31 @@ export class SqliteRelayStore implements RelayStore {
         return { status: "conflict", currentRecord };
       }
 
+      // Reject reactivation of a currently-revoked credential (ADR 0047 relay
+      // acceptance condition 4): a commit cannot silently resurrect a device
+      // whose stored credential status is 'revoked' by simply relisting it in
+      // activeDevices.
+      for (const entry of input.commit.activeDevices) {
+        const existingStatusRow = this.database
+          .prepare("SELECT status FROM device_credentials WHERE sync_id = ? AND device_id = ?")
+          .get(input.syncId, entry.deviceId) as { status: string } | undefined;
+        if (existingStatusRow && existingStatusRow.status === "revoked") {
+          this.database.exec("rollback");
+          const currentRecord = currentRow
+            ? {
+                syncId: input.syncId,
+                controlVersion: currentRow.control_version,
+                previousControlVersion: currentRow.previous_control_version,
+                commitDigest: currentRow.commit_digest,
+                canonicalCommitBytes: currentRow.canonical_commit_bytes,
+                signature: currentRow.signature,
+                createdAt: currentRow.created_at
+              }
+            : null;
+          return { status: "conflict", currentRecord };
+        }
+      }
+
       this.database
         .prepare("INSERT INTO control_records (sync_id, control_version, previous_control_version, commit_digest, canonical_commit_bytes, signature, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(
@@ -312,6 +350,12 @@ export class SqliteRelayStore implements RelayStore {
             .prepare("UPDATE recovery_packages SET status = 'superseded', record_json = ? WHERE sync_id = ? AND package_id = ?")
             .run(JSON.stringify(record), input.syncId, input.supersedeRecoveryPackageId);
         }
+      }
+
+      if (input.consumeRecoveryChallengeNonce) {
+        this.database
+          .prepare("UPDATE recovery_challenges SET consumed_at = ? WHERE sync_id = ? AND challenge_nonce = ?")
+          .run(input.createdAt, input.syncId, input.consumeRecoveryChallengeNonce);
       }
 
       this.database.exec("commit");
@@ -437,6 +481,42 @@ export class SqliteRelayStore implements RelayStore {
       .prepare("SELECT record_json FROM recovery_packages WHERE sync_id = ? AND status = 'active' LIMIT 1")
       .get(syncId) as { record_json: string } | undefined;
     return row ? (JSON.parse(row.record_json) as RecoveryPackageRecord) : null;
+  }
+
+  async issueRecoveryChallenge(input: IssueRecoveryChallengeInput): Promise<RecoveryChallengeRecord> {
+    this.database
+      .prepare(`
+        INSERT INTO recovery_challenges (sync_id, challenge_nonce, package_id, control_version, expires_at, consumed_at, created_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?)
+      `)
+      .run(input.syncId, input.challengeNonce, input.packageId, input.controlVersion, input.expiresAt, input.createdAt);
+    return {
+      syncId: input.syncId,
+      packageId: input.packageId,
+      challengeNonce: input.challengeNonce,
+      controlVersion: input.controlVersion,
+      expiresAt: input.expiresAt,
+      consumedAt: null,
+      createdAt: input.createdAt
+    };
+  }
+
+  async getRecoveryChallenge(syncId: string, challengeNonce: string): Promise<RecoveryChallengeRecord | null> {
+    const row = this.database
+      .prepare("SELECT sync_id, challenge_nonce, package_id, control_version, expires_at, consumed_at, created_at FROM recovery_challenges WHERE sync_id = ? AND challenge_nonce = ?")
+      .get(syncId, challengeNonce) as
+      | { sync_id: string; challenge_nonce: string; package_id: string; control_version: number; expires_at: string; consumed_at: string | null; created_at: string }
+      | undefined;
+    if (!row) return null;
+    return {
+      syncId: row.sync_id,
+      packageId: row.package_id,
+      challengeNonce: row.challenge_nonce,
+      controlVersion: row.control_version,
+      expiresAt: row.expires_at,
+      consumedAt: row.consumed_at,
+      createdAt: row.created_at
+    };
   }
 
   async appendHeadObservation(record: HeadObservationRecord): Promise<HeadObservationRecord> {

@@ -5,6 +5,7 @@ import type {
   DataEnvelopeRecord,
   EnrollmentRequestRecord,
   HeadObservationRecord,
+  RecoveryChallengeRecord,
   RecoveryPackageRecord,
   RelayMembershipCommit
 } from "../../relay/domain/types.js";
@@ -57,7 +58,8 @@ export interface SyncRelay {
     packageValue: Omit<RecoveryPackageRecord, "status" | "createdAt">
   ): Promise<RecoveryPackageRecord>;
 
-  fetchRecoveryPackage(): Promise<RecoveryPackageRecord | null>;
+  /** Fetches the active recovery package plus a freshly minted single-use relay challenge bound to it (ADR 0047 "Recovery-key enrollment"). */
+  fetchRecoveryPackage(): Promise<{ package: RecoveryPackageRecord | null; challenge: RecoveryChallengeRecord | null }>;
 
   observeHead(observation: Omit<HeadObservationRecord, "createdAt">): Promise<HeadObservationRecord>;
 }
@@ -194,11 +196,11 @@ export class FakeSyncRelay implements SyncRelay {
     }
   }
 
-  async fetchRecoveryPackage(): Promise<RecoveryPackageRecord | null> {
+  async fetchRecoveryPackage(): Promise<{ package: RecoveryPackageRecord | null; challenge: RecoveryChallengeRecord | null }> {
     try {
       const response = await this.service.handle(this.bearerToken, { version: 1, operation: "recovery.fetch" });
       if (response.operation !== "recovery.fetch") throw new SyncProtocolError("SYNC_INTERNAL");
-      return response.record;
+      return { package: response.record, challenge: response.challenge };
     } catch (error) {
       return translateRelayError(error);
     }

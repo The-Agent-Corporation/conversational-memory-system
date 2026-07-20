@@ -17,10 +17,10 @@ await sodium.ready;
  * enrollment/recovery/revocation exercise the real relay authorization and
  * CAS rules end-to-end without any network transport.
  */
-export function createControlTestHarness() {
+export function createControlTestHarness(options: { relayClock?: () => string } = {}) {
   const store = new InMemoryRelayStore();
   const authenticator = new FakeRelayAccountAuthenticator();
-  const service = new OpaqueRelayService({ authenticator, store });
+  const service = new OpaqueRelayService({ authenticator, store, clock: options.relayClock });
   const email = "owner@example.test";
   const bearerToken = authenticator.emailSignup(email);
 

@@ -6,12 +6,14 @@ import type {
   DeviceCredentialRecord,
   EnrollmentRequestRecord,
   HeadObservationRecord,
+  RecoveryChallengeRecord,
   RecoveryPackageRecord
 } from "../domain/types.js";
 import type {
   AppendEnvelopeResult,
   CommitControlInput,
   CommitControlResult,
+  IssueRecoveryChallengeInput,
   RelayStore
 } from "./relay-store.js";
 
@@ -51,6 +53,7 @@ export class InMemoryRelayStore implements RelayStore {
   private envelopesByDevice = new Map<string, Map<number, DataEnvelopeRecord>>();
   private enrollmentRequests = new Map<string, Map<string, EnrollmentRequestRecord>>();
   private recoveryPackages = new Map<string, RecoveryPackageRecord[]>();
+  private recoveryChallenges = new Map<string, RecoveryChallengeRecord[]>();
   private headObservations = new Map<string, HeadObservationRecord[]>();
 
   async getAccountNamespace(issuerHash: string, subjectHash: string): Promise<AccountNamespaceRecord | null> {
@@ -95,6 +98,20 @@ export class InMemoryRelayStore implements RelayStore {
       input.commit.previousCommitHash !== expectedPreviousHash
     ) {
       return { status: "conflict", currentRecord: current };
+    }
+
+    // Reject reactivation of a currently-revoked credential (ADR 0047 relay
+    // acceptance condition 4): a commit cannot silently resurrect a device
+    // whose stored credential status is 'revoked' by simply relisting it in
+    // activeDevices.
+    const existingCredentials = this.deviceCredentials.get(input.syncId);
+    if (existingCredentials) {
+      for (const entry of input.commit.activeDevices) {
+        const existingDevice = existingCredentials.get(entry.deviceId);
+        if (existingDevice && existingDevice.status === "revoked") {
+          return { status: "conflict", currentRecord: current };
+        }
+      }
     }
 
     const record: ControlRecord = {
@@ -161,6 +178,15 @@ export class InMemoryRelayStore implements RelayStore {
     }
     if (stagedRecoveryPackages) {
       this.recoveryPackages.set(input.syncId, stagedRecoveryPackages);
+    }
+    if (input.consumeRecoveryChallengeNonce) {
+      const existingChallenges = this.recoveryChallenges.get(input.syncId) ?? [];
+      this.recoveryChallenges.set(
+        input.syncId,
+        existingChallenges.map((item) =>
+          item.challengeNonce === input.consumeRecoveryChallengeNonce ? { ...item, consumedAt: input.createdAt } : item
+        )
+      );
     }
 
     return { status: "committed", record };
@@ -238,6 +264,26 @@ export class InMemoryRelayStore implements RelayStore {
   async getActiveRecoveryPackage(syncId: string): Promise<RecoveryPackageRecord | null> {
     const existing = this.recoveryPackages.get(syncId) ?? [];
     return existing.find((item) => item.status === "active") ?? null;
+  }
+
+  async issueRecoveryChallenge(input: IssueRecoveryChallengeInput): Promise<RecoveryChallengeRecord> {
+    const record: RecoveryChallengeRecord = {
+      syncId: input.syncId,
+      packageId: input.packageId,
+      challengeNonce: input.challengeNonce,
+      controlVersion: input.controlVersion,
+      expiresAt: input.expiresAt,
+      consumedAt: null,
+      createdAt: input.createdAt
+    };
+    const existing = this.recoveryChallenges.get(input.syncId) ?? [];
+    this.recoveryChallenges.set(input.syncId, [...existing, record]);
+    return record;
+  }
+
+  async getRecoveryChallenge(syncId: string, challengeNonce: string): Promise<RecoveryChallengeRecord | null> {
+    const existing = this.recoveryChallenges.get(syncId) ?? [];
+    return existing.find((item) => item.challengeNonce === challengeNonce) ?? null;
   }
 
   async appendHeadObservation(record: HeadObservationRecord): Promise<HeadObservationRecord> {
