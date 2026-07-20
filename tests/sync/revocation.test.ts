@@ -241,4 +241,70 @@ describe("device revocation and future-only epoch rotation", () => {
       personId: PERSON_ID, syncId, actingDevice: alpha, currentControl, revokedDeviceId: beta.deviceId
     })).rejects.toBeInstanceOf(SyncProtocolError);
   });
+
+  it("rejects a control commit that relists a previously-revoked deviceId as active (WR-07)", async () => {
+    const harness = createControlTestHarness();
+    const clock = fixedClock();
+    const { alpha, beta, currentControl, syncId } = await seedTwoActiveDevices(harness, clock);
+    const alphaService = harness.newControlService(clock);
+
+    const revocation = await alphaService.revokeDevice({
+      personId: PERSON_ID,
+      syncId,
+      actingDevice: alpha,
+      currentControl,
+      revokedDeviceId: beta.deviceId
+    });
+
+    // A later commit attempts to relist the revoked device as active again.
+    const reactivateCommit = {
+      activeDevices: sortDevices([
+        { deviceId: alpha.deviceId, signingPublicKey: b64(alpha.signing.publicKey), wrappingPublicKey: b64(alpha.wrapping.publicKey) },
+        { deviceId: beta.deviceId, signingPublicKey: b64(beta.signing.publicKey), wrappingPublicKey: b64(beta.wrapping.publicKey) }
+      ]),
+      controlVersion: revocation.controlRecord.controlVersion + 1,
+      domain: "cms.sync.v1/control-commit" as const,
+      epoch: revocation.epoch,
+      keyPackageDigests: [] as string[],
+      previousCommitHash: revocation.controlRecord.commitDigest,
+      previousControlVersion: revocation.controlRecord.controlVersion,
+      protocol: "cms-sync-v1" as const,
+      recoveryCredentialId: currentControl.recoveryCredentialId,
+      revokedDevices: [] as string[],
+      syncId
+    };
+    const reactivateSignature = b64(genesisSigner.sign(alpha.signing.secretKey, genesisSigner.canonicalBytes(reactivateCommit)));
+
+    const relaySession = harness.newRelaySession();
+    const reactivateOutcome = await relaySession.compareAndSwapMembership({
+      commit: reactivateCommit,
+      signature: reactivateSignature
+    });
+    expect(reactivateOutcome.status).toBe("conflict");
+
+    // A normal enrollment commit (not reactivating anyone revoked) still succeeds.
+    const gamma: DeviceIdentity = await harness.newControlService(clock).createDeviceIdentity(PERSON_ID, syncId);
+    const enrollCommit = {
+      activeDevices: sortDevices([
+        { deviceId: alpha.deviceId, signingPublicKey: b64(alpha.signing.publicKey), wrappingPublicKey: b64(alpha.wrapping.publicKey) },
+        { deviceId: gamma.deviceId, signingPublicKey: b64(gamma.signing.publicKey), wrappingPublicKey: b64(gamma.wrapping.publicKey) }
+      ]),
+      controlVersion: revocation.controlRecord.controlVersion + 1,
+      domain: "cms.sync.v1/control-commit" as const,
+      epoch: revocation.epoch,
+      keyPackageDigests: [] as string[],
+      previousCommitHash: revocation.controlRecord.commitDigest,
+      previousControlVersion: revocation.controlRecord.controlVersion,
+      protocol: "cms-sync-v1" as const,
+      recoveryCredentialId: currentControl.recoveryCredentialId,
+      revokedDevices: [] as string[],
+      syncId
+    };
+    const enrollSignature = b64(genesisSigner.sign(alpha.signing.secretKey, genesisSigner.canonicalBytes(enrollCommit)));
+    const enrollOutcome = await harness.newRelaySession().compareAndSwapMembership({
+      commit: enrollCommit,
+      signature: enrollSignature
+    });
+    expect(enrollOutcome.status).toBe("committed");
+  });
 });

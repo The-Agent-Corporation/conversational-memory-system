@@ -245,6 +245,31 @@ export class SqliteRelayStore implements RelayStore {
         return { status: "conflict", currentRecord };
       }
 
+      // Reject reactivation of a currently-revoked credential (ADR 0047 relay
+      // acceptance condition 4): a commit cannot silently resurrect a device
+      // whose stored credential status is 'revoked' by simply relisting it in
+      // activeDevices.
+      for (const entry of input.commit.activeDevices) {
+        const existingStatusRow = this.database
+          .prepare("SELECT status FROM device_credentials WHERE sync_id = ? AND device_id = ?")
+          .get(input.syncId, entry.deviceId) as { status: string } | undefined;
+        if (existingStatusRow && existingStatusRow.status === "revoked") {
+          this.database.exec("rollback");
+          const currentRecord = currentRow
+            ? {
+                syncId: input.syncId,
+                controlVersion: currentRow.control_version,
+                previousControlVersion: currentRow.previous_control_version,
+                commitDigest: currentRow.commit_digest,
+                canonicalCommitBytes: currentRow.canonical_commit_bytes,
+                signature: currentRow.signature,
+                createdAt: currentRow.created_at
+              }
+            : null;
+          return { status: "conflict", currentRecord };
+        }
+      }
+
       this.database
         .prepare("INSERT INTO control_records (sync_id, control_version, previous_control_version, commit_digest, canonical_commit_bytes, signature, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(

@@ -234,5 +234,98 @@ for (const adapter of adapters()) {
       expect(revokedCredential?.status).toBe("revoked");
       expect(revokedCredential?.revokedAt).toBe("2030-01-02T03:10:00.000Z");
     });
+
+    it("rejects a later commit that relists a revoked device as active (WR-07 no silent reactivation)", async () => {
+      const syncId = randomId();
+      const approver = createFixtureDevice();
+      const other = createFixtureDevice();
+      const genesisTwoDevices: import("../../src/relay/domain/types.js").RelayMembershipCommit = {
+        activeDevices: [approver, other].sort((a, b) => a.deviceId.localeCompare(b.deviceId)).map((d) => ({ deviceId: d.deviceId, signingPublicKey: d.signingPublicKey, wrappingPublicKey: d.wrappingPublicKey })),
+        controlVersion: 1,
+        domain: "cms.sync.v1/control-commit",
+        epoch: 1,
+        keyPackageDigests: [],
+        previousCommitHash: FIXED_ZERO_DIGEST,
+        previousControlVersion: 0,
+        protocol: "cms-sync-v1",
+        recoveryCredentialId: randomId(),
+        revokedDevices: [],
+        syncId
+      };
+      await store.commitControl({
+        syncId,
+        commit: genesisTwoDevices,
+        canonicalCommitBytes: Buffer.from(canonicalBytes(genesisTwoDevices)).toString("base64url"),
+        commitDigest: digestOf(genesisTwoDevices),
+        signature: signCommit(approver, genesisTwoDevices),
+        createdAt: "2030-01-02T03:04:05.000Z"
+      });
+
+      const revoke = nextCommit(
+        { controlVersion: 1, commitDigest: digestOf(genesisTwoDevices) },
+        {
+          syncId,
+          activeDevices: [{ deviceId: approver.deviceId, signingPublicKey: approver.signingPublicKey, wrappingPublicKey: approver.wrappingPublicKey }],
+          revokedDevices: [other.deviceId],
+          epoch: 2
+        }
+      );
+      const revokeResult = await store.commitControl({
+        syncId,
+        commit: revoke,
+        canonicalCommitBytes: Buffer.from(canonicalBytes(revoke)).toString("base64url"),
+        commitDigest: digestOf(revoke),
+        signature: signCommit(approver, revoke),
+        createdAt: "2030-01-02T03:10:00.000Z"
+      });
+      expect(revokeResult.status).toBe("committed");
+
+      // A later commit relists the already-revoked device as active again.
+      const reactivate = nextCommit(
+        { controlVersion: 2, commitDigest: digestOf(revoke) },
+        {
+          syncId,
+          activeDevices: [approver, other].sort((a, b) => a.deviceId.localeCompare(b.deviceId)).map((d) => ({ deviceId: d.deviceId, signingPublicKey: d.signingPublicKey, wrappingPublicKey: d.wrappingPublicKey })),
+          revokedDevices: [],
+          epoch: 2
+        }
+      );
+      const reactivateResult = await store.commitControl({
+        syncId,
+        commit: reactivate,
+        canonicalCommitBytes: Buffer.from(canonicalBytes(reactivate)).toString("base64url"),
+        commitDigest: digestOf(reactivate),
+        signature: signCommit(approver, reactivate),
+        createdAt: "2030-01-02T03:11:00.000Z"
+      });
+      expect(reactivateResult.status).toBe("conflict");
+
+      const stillRevoked = await store.getDeviceCredential(syncId, other.deviceId);
+      expect(stillRevoked?.status).toBe("revoked");
+
+      // A normal (non-revoking) enrollment commit continues to succeed.
+      const third = createFixtureDevice();
+      const enroll = nextCommit(
+        { controlVersion: 2, commitDigest: digestOf(revoke) },
+        {
+          syncId,
+          activeDevices: [
+            { deviceId: approver.deviceId, signingPublicKey: approver.signingPublicKey, wrappingPublicKey: approver.wrappingPublicKey },
+            { deviceId: third.deviceId, signingPublicKey: third.signingPublicKey, wrappingPublicKey: third.wrappingPublicKey }
+          ].sort((a, b) => a.deviceId.localeCompare(b.deviceId)),
+          revokedDevices: [other.deviceId],
+          epoch: 2
+        }
+      );
+      const enrollResult = await store.commitControl({
+        syncId,
+        commit: enroll,
+        canonicalCommitBytes: Buffer.from(canonicalBytes(enroll)).toString("base64url"),
+        commitDigest: digestOf(enroll),
+        signature: signCommit(approver, enroll),
+        createdAt: "2030-01-02T03:12:00.000Z"
+      });
+      expect(enrollResult.status).toBe("committed");
+    });
   });
 }

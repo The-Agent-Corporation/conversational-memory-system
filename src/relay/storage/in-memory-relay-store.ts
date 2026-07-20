@@ -97,6 +97,20 @@ export class InMemoryRelayStore implements RelayStore {
       return { status: "conflict", currentRecord: current };
     }
 
+    // Reject reactivation of a currently-revoked credential (ADR 0047 relay
+    // acceptance condition 4): a commit cannot silently resurrect a device
+    // whose stored credential status is 'revoked' by simply relisting it in
+    // activeDevices.
+    const existingCredentials = this.deviceCredentials.get(input.syncId);
+    if (existingCredentials) {
+      for (const entry of input.commit.activeDevices) {
+        const existingDevice = existingCredentials.get(entry.deviceId);
+        if (existingDevice && existingDevice.status === "revoked") {
+          return { status: "conflict", currentRecord: current };
+        }
+      }
+    }
+
     const record: ControlRecord = {
       syncId: input.syncId,
       controlVersion: input.commit.controlVersion,
