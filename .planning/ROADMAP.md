@@ -198,12 +198,12 @@ Plans:
 **Goal**: Turn the architecture into a product a user can install, inspect, and trust.
 **Requirements**: REQ-039 (audit surface); REQ-040 constrains every surface to deterministic/local operation.
 **Status**: Planned
-**Plans:** 6 plans in 5 waves
+**Plans:** 1/6 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — Unified `memory` CLI dispatcher + mechanical `main(argv)` export refactor across all 20 command modules.
+- [x] 07-01-PLAN.md — Unified `memory` CLI dispatcher + mechanical `main(argv)` export refactor across all 20 command modules.
 
 **Wave 2** *(blocked on Wave 1; disjoint files, parallel)*
 
