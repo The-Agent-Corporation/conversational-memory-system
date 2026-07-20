@@ -5,12 +5,12 @@ status: draft
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-07-19
-updated: 2026-07-19
+updated: 2026-07-20
 ---
 
 # Phase 06 — Validation Strategy
 
-> Execution contract for exactly eight Zero-Knowledge Multi-Device Sync plans. Completion flags remain false until every listed automated result and blocking human gate has real evidence.
+> Execution contract for the original eight Zero-Knowledge Multi-Device Sync plans PLUS five gap-closure plans (06-09..06-13) that close the CR-01/CR-02 blockers and the WR-01..WR-08 hardening warnings from 06-VERIFICATION.md / 06-REVIEW.md. The eight-plan rows below are complete and green; the five gap-closure rows are `pending` until executed. `nyquist_compliant` stays as recorded for the original phase and is NOT re-flipped by this gap-closure planning pass — the gap work is not yet executed.
 
 ## Test Infrastructure
 
@@ -31,6 +31,13 @@ updated: 2026-07-19
 | 3 | 06-04, 06-05 | Both depend on 06-02; files do not overlap |
 | 4 | 06-06, 06-07 | 06-06 depends on 06-03/04/05; 06-07 depends on 06-04; files do not overlap |
 | 5 | 06-08 | Depends on 06-06 and 06-07 |
+
+### Gap-closure waves (plans 06-09..06-13)
+
+| Wave | Plans | Dependency gate |
+|------|-------|-----------------|
+| 1 | 06-09, 06-10, 06-11, 06-12 | All `depends_on: []`; source and declared test files are disjoint across the four plans (06-09 recovery.test.ts; 06-10 replay-equivocation.test.ts + multi-device-sync.test.ts; 06-11 gap-allocation.test.ts + http-sync-relay.test.ts; 06-12 sync-producers.test.ts + mutation-tools.test.ts + device-secret-store.test.ts) |
+| 2 | 06-13 | Depends on 06-09 (shares recovery.test.ts + relay service/store/control-service source; serialized after 06-09) |
 
 ## Per-Task Verification Map
 
@@ -57,6 +64,20 @@ updated: 2026-07-19
 | 06-08-01 | 06-08 | 5 | REQ-031, REQ-033–REQ-036 | T-06-28–T-06-31 | `npx vitest run tests/sync/replay-equivocation.test.ts tests/sync/convergence.test.ts tests/sync/deletion-tombstones.test.ts tests/integration/multi-device-sync.test.ts && npm run typecheck` | complete |
 | 06-08-02 | 06-08 | 5 | REQ-031–REQ-036 | T-06-29–T-06-32, T-06-36 | `node scripts/benchmark-sync-padding.mjs && npx vitest run tests/sync tests/relay tests/integration/multi-device-sync.test.ts tests/storage/sync-store.test.ts tests/daemon/contraction-runner.test.ts tests/daemon/daemon-loop.test.ts tests/daemon/daemon-commands.test.ts tests/mcp && npm test && npm run typecheck && node scripts/verify-phase06-evidence.mjs --automated` | complete |
 | 06-08-03 | 06-08 | 5 | REQ-031, REQ-032, REQ-033 | T-06-33 | `node scripts/verify-phase06-evidence.mjs --keychain-evidence /private/tmp/phase06-keychain-uat-evidence.json` | complete |
+| 06-09-01 | 06-09 | 1 (gap) | REQ-032 | T-06-02 | `npx vitest run tests/sync/recovery.test.ts -t "account-only" 2>&1 \| tail -20` | pending |
+| 06-09-02 | 06-09 | 1 (gap) | REQ-032 | T-06-02 | `npx tsc --noEmit && npx vitest run tests/sync/recovery.test.ts -t "recovery rotation" 2>&1 \| tail -20` | pending |
+| 06-09-03 | 06-09 | 1 (gap) | REQ-032 | T-06-02, T-06-09 | `npx vitest run tests/sync/recovery.test.ts 2>&1 \| tail -25` | pending |
+| 06-10-01 | 06-10 | 1 (gap) | REQ-031, REQ-034, REQ-035 | T-06-05 | `npx vitest run tests/sync/replay-equivocation.test.ts -t "sequence-2" 2>&1 \| tail -20` | pending |
+| 06-10-02 | 06-10 | 1 (gap) | REQ-031, REQ-034, REQ-035 | T-06-05, T-06-05b | `npx vitest run tests/sync/replay-equivocation.test.ts 2>&1 \| tail -25` | pending |
+| 06-10-03 | 06-10 | 1 (gap) | REQ-034, REQ-035 | T-06-05 | `npx vitest run tests/integration/multi-device-sync.test.ts 2>&1 \| tail -25` | pending |
+| 06-11-01 | 06-11 | 1 (gap) | REQ-034, REQ-036 | T-06-07 | `npx vitest run tests/sync/gap-allocation.test.ts 2>&1 \| tail -20` | pending |
+| 06-11-02 | 06-11 | 1 (gap) | REQ-034, REQ-036 | T-06-07b | `npx vitest run tests/sync/http-sync-relay.test.ts 2>&1 \| tail -20` | pending |
+| 06-12-01 | 06-12 | 1 (gap) | REQ-033, REQ-035 | T-06-08, T-06-03 | `npx vitest run tests/integration/sync-producers.test.ts 2>&1 \| tail -20` | pending |
+| 06-12-02 | 06-12 | 1 (gap) | REQ-031 | T-06-07 | `npx vitest run tests/mcp 2>&1 \| tail -20` | pending |
+| 06-12-03 | 06-12 | 1 (gap) | REQ-031 | T-06-07 | `npx vitest run tests/sync/device-secret-store.test.ts 2>&1 \| tail -20` | pending |
+| 06-13-01 | 06-13 | 2 (gap) | REQ-032, REQ-036 | T-06-02 | `npx vitest run tests/sync/recovery.test.ts 2>&1 \| tail -25` | pending |
+| 06-13-02 | 06-13 | 2 (gap) | REQ-032 | T-06-06 | `npx vitest run tests/sync/recovery.test.ts tests/sync/crypto-envelope.test.ts 2>&1 \| tail -20` | pending |
+| 06-13-03 | 06-13 | 2 (gap) | REQ-033, REQ-036 | T-06-09 | `npx vitest run tests/sync/revocation.test.ts 2>&1 \| tail -20` | pending |
 
 ## Requirement Proof Map
 
@@ -91,6 +112,14 @@ updated: 2026-07-19
 - [x] **06-07:** Deterministic materialization, complete authoritative producer wiring including BoxReviewer, lifecycle controls, tombstones, quarantine, conflicts, and both resolutions.
 - [x] **06-08:** Sealed-byte replication, production daemon transport selection, complete real-loopback multi-device proof, final validator (automated portion), and blocking external real-Keychain evidence (Task 06-08-03 complete -- Keychain UAT evidence verified and owner-approved 2026-07-19).
 
+## Gap-Closure Plans (06-09..06-13)
+
+- [ ] **06-09 (CR-01, BLOCKING):** Bind recovery-seed possession (CMSRSIG1) into recovery enrollment so account-only access cannot enroll an active device; adversarial account-only rejection test.
+- [ ] **06-10 (CR-02, BLOCKING):** Chain `previousEnvelopeHash` on the predecessor's `ciphertextDigest` so device-sequence >= 2 envelopes verify and multi-operation histories converge.
+- [ ] **06-11 (WR-02, WR-08):** Bound client remote-apply gap allocation at MAX_RETAINED_GAP_SLOTS (both adapters, new `tests/sync/gap-allocation.test.ts`) and evict stale relay HTTP rate-limit windows.
+- [ ] **06-12 (WR-06, WR-01, WR-05):** Surface non-COMMITTED local outbox emissions, restore the takePlan kind guard, and remove the Keychain read pipe-deadlock.
+- [ ] **06-13 (WR-03, WR-04, WR-07):** Relay-issued single-use recovery challenge, Argon2id reviewed-floor enforcement on unwrap, and revoked-device reactivation guard (both relay stores).
+
 ## Adversarial Matrix
 
 | Scenario | Required assertion |
@@ -116,7 +145,9 @@ updated: 2026-07-19
 - The production macOS Keychain gate is separate Task 06-08-03. Editing this file cannot create its external content-free evidence.
 - No watch mode, live hosted provider, credential, external model, or personal history is permitted in deterministic validation.
 - Set `wave_0_complete: true` only after every Wave 0 artifact exists and its owning task is green.
-- Set `nyquist_compliant: true` only after every task row and requirement proof is green and the blocking Keychain human inspection is approved.
+- Set `nyquist_compliant: true` only after every task row and requirement proof is green and the blocking Keychain human inspection is approved. The five gap-closure rows (06-09..06-13) are `pending`; re-flip only after they are executed and green.
 
 **Keychain UAT:** complete (2026-07-19, macOS 26.4.1 real Keychain, production adapter + compiled helper, synthetic non-production item; exact sequence create→read→rotate_success→rotate_failed_preserves_old→delete→post_delete_absent; all leakageScanCounts zero; evidence digest `7ebe6a455f251b3ddb5ec0dcbbeeaedb6809ffe9b10af644c939af560237cbcc`; `verify-phase06-evidence.mjs --keychain-evidence` PASSED)
 **Approval:** approved by Aaron Whaley (owner) 2026-07-19 after reviewing the UAT evidence summary; `nyquist_compliant: true`
+</content>
+</invoke>
