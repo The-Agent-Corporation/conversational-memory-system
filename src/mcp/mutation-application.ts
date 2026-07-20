@@ -219,7 +219,7 @@ export class MemoryMutationApplication {
   private takePlan(token: string, expectedKind: StoredPlan["kind"]): StoredPlan | undefined {
     const plan = this.plans.get(token);
     this.plans.delete(token);
-    return plan?.kind === expectedKind ? plan : plan;
+    return plan?.kind === expectedKind ? plan : undefined;
   }
 
   private consume(token: string, kind: StoredPlan["kind"], targetIds: string[], normalizedParameters: Record<string, unknown>, effectsFingerprint: string): void {

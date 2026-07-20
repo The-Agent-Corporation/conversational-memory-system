@@ -451,6 +451,25 @@ describe("MCP mutation application contract", () => {
     await expect(store.listSources(authority.personId)).resolves.toEqual([]);
   });
 
+  it("WR-01 takePlan returns undefined on a stored-plan kind mismatch instead of the mismatched plan", async () => {
+    const store = new InMemoryStore();
+    const lifecycle = new SourceLifecycleService(store);
+    const authority = testAuthority();
+    await lifecycle.approve({ personId: authority.personId, candidateId: "candidate-kind-guard", application: "synthetic", format: "jsonl", sourceLocator: "synthetic://configured", profileId: authority.profileName, scopeId: authority.ingestScopeId, approvedAt: NOW });
+    const app = new MemoryMutationApplication({ store, authority, confirmations: new ConfirmationService({ clock: () => NOW }) });
+    // Store a plan of kind "source_revoke" via the public preview path.
+    const preview = await app.previewSourceRevocation({ candidateId: "candidate-kind-guard", actor: "synthetic-reviewer", revokedAt: LATER });
+
+    const privateApp = app as unknown as { takePlan: (token: string, expectedKind: string) => unknown };
+    const mismatched = privateApp.takePlan(preview.token, "source_delete");
+    expect(mismatched).toBeUndefined();
+
+    // takePlan always removes the token from the plan map (even on mismatch), so a second call
+    // for the *correct* kind also returns undefined -- the plan was consumed by the first call.
+    const secondAttempt = privateApp.takePlan(preview.token, "source_revoke");
+    expect(secondAttempt).toBeUndefined();
+  });
+
   it("05-05 Task 2 rejects deletion until the exact already-revoked source is confirmed", async () => {
     const store = new InMemoryStore();
     const lifecycle = new SourceLifecycleService(store);
