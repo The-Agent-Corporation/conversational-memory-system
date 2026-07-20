@@ -5,6 +5,7 @@ import type {
   DataEnvelopeRecord,
   EnrollmentRequestRecord,
   HeadObservationRecord,
+  RecoveryChallengeRecord,
   RecoveryPackageRecord
 } from "../../relay/domain/types.js";
 import { RelayErrorCodeSchema } from "../../relay/domain/types.js";
@@ -250,9 +251,12 @@ export class HttpSyncRelay implements SyncRelay {
     return response.record as RecoveryPackageRecord;
   }
 
-  async fetchRecoveryPackage(): Promise<RecoveryPackageRecord | null> {
+  async fetchRecoveryPackage(): Promise<{ package: RecoveryPackageRecord | null; challenge: RecoveryChallengeRecord | null }> {
     const response = await this.call("recovery.fetch", {});
-    return (response.record as RecoveryPackageRecord | null | undefined) ?? null;
+    return {
+      package: (response.record as RecoveryPackageRecord | null | undefined) ?? null,
+      challenge: (response.challenge as RecoveryChallengeRecord | null | undefined) ?? null
+    };
   }
 
   async observeHead(observation: Omit<HeadObservationRecord, "createdAt">): Promise<HeadObservationRecord> {

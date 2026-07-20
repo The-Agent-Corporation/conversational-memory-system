@@ -29,6 +29,8 @@ import type { RelayStore } from "../storage/relay-store.js";
 
 const ENVELOPE_SIGNATURE_DOMAIN = "cms.sync.v1/envelope-signature";
 const RECOVERY_AUTHORIZATION_DOMAIN = "cms.sync.v1/recovery-authorization";
+/** Relay-issued recovery challenge lifetime (ADR 0047 "Recovery-key enrollment"). */
+const RECOVERY_CHALLENGE_TTL_MS = 10 * 60 * 1000;
 
 function canonicalBytes(value: unknown): Uint8Array {
   const text = canonicalize(value);
@@ -145,15 +147,39 @@ export class OpaqueRelayService {
       if (newDevices.length !== 1) throw new RelayError("SYNC_DEVICE_DENIED");
       const [candidate] = newDevices;
 
+      // Relay-issued single-use challenge freshness/binding (ADR 0047
+      // "Recovery-key enrollment"; WR-03). The client never chooses this
+      // nonce: it must be one this relay minted via recovery.fetch, still
+      // unconsumed, not expired, and bound to the CURRENT controlVersion.
+      // Checked before the active-package lookup so a replayed (consumed)
+      // challenge is always reported as SYNC_ALREADY_USED, never masked by
+      // an unrelated active-package state change.
+      const challenge = await this.store.getRecoveryChallenge(syncId, request.recoveryAuthorization.challengeNonce);
+      if (!challenge || challenge.packageId !== request.recoveryAuthorization.packageId) {
+        throw new RelayError("SYNC_DEVICE_DENIED");
+      }
+      if (challenge.consumedAt) {
+        throw new RelayError("SYNC_ALREADY_USED");
+      }
+      if (Date.parse(challenge.expiresAt) <= Date.parse(this.clock())) {
+        throw new RelayError("SYNC_EXPIRED");
+      }
+      if (challenge.controlVersion !== current.controlVersion) {
+        throw new RelayError("SYNC_DEVICE_DENIED");
+      }
+
       const activePackage = await this.store.getActiveRecoveryPackage(syncId);
       if (!activePackage || activePackage.packageId !== request.recoveryAuthorization.packageId) {
         throw new RelayError("SYNC_DEVICE_DENIED");
       }
+
       const authorizationPreimage = canonicalBytes({
         candidateDeviceId: candidate.deviceId,
-        challengeNonce: request.recoveryAuthorization.challengeNonce,
+        challengeNonce: challenge.challengeNonce,
+        controlVersion: challenge.controlVersion,
         domain: RECOVERY_AUTHORIZATION_DOMAIN,
-        packageId: request.recoveryAuthorization.packageId,
+        expiresAt: challenge.expiresAt,
+        packageId: challenge.packageId,
         syncId
       });
       // Bind possession of the recovery SEED, not the relay account: the
@@ -180,7 +206,8 @@ export class OpaqueRelayService {
       signature: request.signature,
       createdAt: this.clock(),
       enrollmentRequestId: request.enrollmentRequestId,
-      supersedeRecoveryPackageId: request.recoveryAuthorization?.packageId
+      supersedeRecoveryPackageId: request.recoveryAuthorization?.packageId,
+      consumeRecoveryChallengeNonce: request.recoveryAuthorization?.challengeNonce
     });
 
     if (result.status === "conflict") {
@@ -286,7 +313,25 @@ export class OpaqueRelayService {
 
   private async handleRecoveryFetch(syncId: string): Promise<RelayResponse> {
     const record = await this.store.getActiveRecoveryPackage(syncId);
-    return { version: 1, operation: "recovery.fetch", record };
+    if (!record) {
+      return { version: 1, operation: "recovery.fetch", record: null, challenge: null };
+    }
+    // Mint a fresh single-use relay challenge bound to the CURRENT
+    // controlVersion for this fetch (ADR 0047 "Recovery-key enrollment";
+    // WR-03). The client never gets to choose this nonce/expiry.
+    const current = await this.store.getCurrentControlRecord(syncId);
+    const controlVersion = current?.controlVersion ?? 0;
+    const challengeNonce = toBase64Url(randomBytes(32));
+    const expiresAt = new Date(Date.parse(this.clock()) + RECOVERY_CHALLENGE_TTL_MS).toISOString();
+    const challenge = await this.store.issueRecoveryChallenge({
+      syncId,
+      packageId: record.packageId,
+      challengeNonce,
+      controlVersion,
+      expiresAt,
+      createdAt: this.clock()
+    });
+    return { version: 1, operation: "recovery.fetch", record, challenge };
   }
 
   private async handleHeadObserve(

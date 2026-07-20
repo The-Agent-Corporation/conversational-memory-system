@@ -101,13 +101,14 @@ describe("recovery-key enrollment", () => {
       historicalEpochKeys: [{ epoch: 1, key: new Uint8Array(32).fill(9) }]
     });
     void activePackage;
-    const currentActivePackage = await harness.newRelaySession().fetchRecoveryPackage();
+    const fetched = await harness.newRelaySession().fetchRecoveryPackage();
 
     const { controlRecord, candidate, importedEpochs } = await recoveringService.enrollViaRecovery({
       personId: PERSON_ID,
       syncId,
       passphrase: PASSPHRASE,
-      activePackage: currentActivePackage,
+      activePackage: fetched.package,
+      activeChallenge: fetched.challenge,
       currentControl: {
         ...currentControl,
         controlVersion: rotation.controlRecord.controlVersion,
@@ -133,6 +134,7 @@ describe("recovery-key enrollment", () => {
       syncId,
       passphrase: "definitely the wrong passphrase",
       activePackage,
+      activeChallenge: null,
       currentControl,
       publisherDeviceId: "deaddeaddeaddeaddeaddeaddeaddead"
     })).rejects.toMatchObject({ code: "SYNC_INTEGRITY_FAILED" });
@@ -179,6 +181,7 @@ describe("recovery-key enrollment", () => {
       syncId,
       passphrase: PASSPHRASE,
       activePackage: belowFloorPackage,
+      activeChallenge: null,
       currentControl,
       publisherDeviceId: "deaddeaddeaddeaddeaddeaddeaddead"
     })).rejects.toMatchObject({ code: "SYNC_INTEGRITY_FAILED" });
@@ -212,6 +215,7 @@ describe("recovery-key enrollment", () => {
       syncId,
       passphrase: PASSPHRASE,
       activePackage: null,
+      activeChallenge: null,
       currentControl,
       publisherDeviceId: "deaddeaddeaddeaddeaddeaddeaddead"
     })).rejects.toMatchObject({ code: "SYNC_INCOMPLETE" });
@@ -233,14 +237,19 @@ describe("adversarial account-only enrollment (CR-01)", () => {
     const candidate = await attackerService.createDeviceIdentity(PERSON_ID, syncId);
 
     const attackerSession = harness.newRelaySession();
-    const learnedPackage = await attackerSession.fetchRecoveryPackage();
+    const { package: learnedPackage, challenge: learnedChallenge } = await attackerSession.fetchRecoveryPackage();
     if (!learnedPackage) throw new Error("expected an active recovery package to exist");
+    if (!learnedChallenge) throw new Error("expected a relay-issued recovery challenge to exist");
 
-    const challengeNonce = genesisSigner.randomBytes(32);
+    // Even with a REAL, freshly-issued relay challenge in hand (freshness and
+    // single-use are not the weak point being probed here), the attacker still
+    // cannot produce a valid recovery authorization without the seed.
     const authorizationPreimage = genesisSigner.canonicalBytes({
       candidateDeviceId: candidate.deviceId,
-      challengeNonce: b64(challengeNonce),
+      challengeNonce: learnedChallenge.challengeNonce,
+      controlVersion: learnedChallenge.controlVersion,
       domain: "cms.sync.v1/recovery-authorization",
+      expiresAt: learnedChallenge.expiresAt,
       packageId: learnedPackage.packageId,
       syncId
     });
@@ -276,10 +285,195 @@ describe("adversarial account-only enrollment (CR-01)", () => {
       signature: commitSignature,
       recoveryAuthorization: {
         packageId: learnedPackage.packageId,
-        challengeNonce: b64(challengeNonce),
+        challengeNonce: learnedChallenge.challengeNonce,
         signature: authorizationSignature
       }
     })).rejects.toMatchObject({ code: expect.stringMatching(/^(SYNC_INTEGRITY_FAILED|SYNC_DEVICE_DENIED)$/) });
+  });
+});
+
+describe("recovery challenge freshness and single-use (WR-03)", () => {
+  it("rejects an expired relay-issued recovery challenge with SYNC_EXPIRED", async () => {
+    // The 10-minute challenge TTL is enforced against the RELAY's own clock
+    // (`OpaqueRelayService`), not the client-side `SyncControlService` clock:
+    // this harness controls the relay clock directly so the test can advance
+    // past expiry deterministically.
+    let relayNow = "2030-01-02T03:04:05.000Z";
+    const harness = createControlTestHarness({ relayClock: () => relayNow });
+    const clock = fixedClock();
+    const { owner, currentControl, syncId } = await seedGenesisWithPassphrasePackage(harness, clock);
+    const ownerService = harness.newControlService(clock);
+
+    const rotation = await ownerService.rotateRecoveryCredential({
+      syncId,
+      actingDevice: owner,
+      currentControl,
+      passphrase: PASSPHRASE,
+      historicalEpochKeys: [{ epoch: 1, key: new Uint8Array(32).fill(9) }]
+    });
+
+    const fetched = await harness.newRelaySession().fetchRecoveryPackage();
+    if (!fetched.package || !fetched.challenge) throw new Error("expected an active package and challenge");
+
+    // Advance the relay clock past the challenge's 10-minute expiry before attempting enrollment.
+    relayNow = "2030-01-02T03:20:00.000Z";
+    const recoveringService = harness.newControlService(clock);
+
+    await expect(recoveringService.enrollViaRecovery({
+      personId: PERSON_ID,
+      syncId,
+      passphrase: PASSPHRASE,
+      activePackage: fetched.package,
+      activeChallenge: fetched.challenge,
+      currentControl: {
+        ...currentControl,
+        controlVersion: rotation.controlRecord.controlVersion,
+        commitHash: rotation.controlRecord.commitDigest,
+        recoveryCredentialId: rotation.packageId
+      },
+      publisherDeviceId: owner.deviceId
+    })).rejects.toMatchObject({ code: "SYNC_EXPIRED" });
+  });
+
+  it("rejects a reused (already-consumed) recovery challenge with SYNC_ALREADY_USED", async () => {
+    const harness = createControlTestHarness();
+    const clock = fixedClock();
+    const { owner, currentControl, syncId } = await seedGenesisWithPassphrasePackage(harness, clock);
+    const ownerService = harness.newControlService(clock);
+
+    const rotation = await ownerService.rotateRecoveryCredential({
+      syncId,
+      actingDevice: owner,
+      currentControl,
+      passphrase: PASSPHRASE,
+      historicalEpochKeys: [{ epoch: 1, key: new Uint8Array(32).fill(9) }]
+    });
+
+    const fetched = await harness.newRelaySession().fetchRecoveryPackage();
+    if (!fetched.package || !fetched.challenge) throw new Error("expected an active package and challenge");
+
+    const enrollInput = {
+      personId: PERSON_ID,
+      syncId,
+      passphrase: PASSPHRASE,
+      activePackage: fetched.package,
+      activeChallenge: fetched.challenge,
+      currentControl: {
+        ...currentControl,
+        controlVersion: rotation.controlRecord.controlVersion,
+        commitHash: rotation.controlRecord.commitDigest,
+        recoveryCredentialId: rotation.packageId
+      },
+      publisherDeviceId: owner.deviceId
+    };
+
+    const first = await harness.newControlService(clock).enrollViaRecovery(enrollInput);
+    expect(first.controlRecord.controlVersion).toBe(3);
+
+    // Replaying the SAME relay-issued challenge nonce a second time (e.g. a
+    // second device attempting recovery with the same fetched challenge, or a
+    // captured-and-replayed request) must be rejected as already used.
+    await expect(harness.newControlService(clock).enrollViaRecovery({
+      ...enrollInput,
+      currentControl: {
+        ...enrollInput.currentControl,
+        controlVersion: first.controlRecord.controlVersion,
+        commitHash: first.controlRecord.commitDigest
+      }
+    })).rejects.toMatchObject({ code: "SYNC_ALREADY_USED" });
+  });
+
+  it("succeeds via the legitimate fresh-challenge path (baseline for the above)", async () => {
+    const harness = createControlTestHarness();
+    const clock = fixedClock();
+    const { owner, currentControl, syncId } = await seedGenesisWithPassphrasePackage(harness, clock);
+    const ownerService = harness.newControlService(clock);
+
+    const rotation = await ownerService.rotateRecoveryCredential({
+      syncId,
+      actingDevice: owner,
+      currentControl,
+      passphrase: PASSPHRASE,
+      historicalEpochKeys: [{ epoch: 1, key: new Uint8Array(32).fill(9) }]
+    });
+
+    const fetched = await harness.newRelaySession().fetchRecoveryPackage();
+    if (!fetched.package || !fetched.challenge) throw new Error("expected an active package and challenge");
+    expect(fetched.challenge.controlVersion).toBe(rotation.controlRecord.controlVersion);
+    expect(fetched.challenge.consumedAt).toBeNull();
+
+    const outcome = await harness.newControlService(clock).enrollViaRecovery({
+      personId: PERSON_ID,
+      syncId,
+      passphrase: PASSPHRASE,
+      activePackage: fetched.package,
+      activeChallenge: fetched.challenge,
+      currentControl: {
+        ...currentControl,
+        controlVersion: rotation.controlRecord.controlVersion,
+        commitHash: rotation.controlRecord.commitDigest,
+        recoveryCredentialId: rotation.packageId
+      },
+      publisherDeviceId: owner.deviceId
+    });
+    expect(outcome.controlRecord.controlVersion).toBe(3);
+  });
+
+  it("rejects a client-chosen challenge nonce the relay never issued", async () => {
+    const harness = createControlTestHarness();
+    const clock = fixedClock();
+    const { currentControl, syncId } = await seedGenesisWithPassphrasePackage(harness, clock);
+
+    const attackerService = harness.newControlService(clock);
+    const candidate = await attackerService.createDeviceIdentity(PERSON_ID, syncId);
+    const attackerSession = harness.newRelaySession();
+    const { package: learnedPackage } = await attackerSession.fetchRecoveryPackage();
+    if (!learnedPackage) throw new Error("expected an active recovery package to exist");
+
+    const selfChosenNonce = b64(genesisSigner.randomBytes(32));
+    const authorizationPreimage = genesisSigner.canonicalBytes({
+      candidateDeviceId: candidate.deviceId,
+      challengeNonce: selfChosenNonce,
+      controlVersion: currentControl.controlVersion,
+      domain: "cms.sync.v1/recovery-authorization",
+      expiresAt: "2030-01-02T03:14:05.000Z",
+      packageId: learnedPackage.packageId,
+      syncId
+    });
+    const authorizationSignature = b64(genesisSigner.sign(candidate.signing.secretKey, authorizationPreimage));
+
+    const newEntry = {
+      deviceId: candidate.deviceId,
+      signingPublicKey: b64(candidate.signing.publicKey),
+      wrappingPublicKey: b64(candidate.wrapping.publicKey)
+    };
+    const activeDevices = [...currentControl.activeDevices, newEntry].sort((left, right) =>
+      left.deviceId < right.deviceId ? -1 : left.deviceId > right.deviceId ? 1 : 0
+    );
+    const commit = {
+      activeDevices,
+      controlVersion: currentControl.controlVersion + 1,
+      domain: "cms.sync.v1/control-commit" as const,
+      epoch: currentControl.epoch,
+      keyPackageDigests: [] as string[],
+      previousCommitHash: currentControl.commitHash,
+      previousControlVersion: currentControl.controlVersion,
+      protocol: "cms-sync-v1" as const,
+      recoveryCredentialId: currentControl.recoveryCredentialId,
+      revokedDevices: [...currentControl.revokedDevices],
+      syncId
+    };
+    const commitSignature = b64(genesisSigner.sign(candidate.signing.secretKey, genesisSigner.canonicalBytes(commit)));
+
+    await expect(attackerSession.compareAndSwapMembership({
+      commit,
+      signature: commitSignature,
+      recoveryAuthorization: {
+        packageId: learnedPackage.packageId,
+        challengeNonce: selfChosenNonce,
+        signature: authorizationSignature
+      }
+    })).rejects.toMatchObject({ code: "SYNC_DEVICE_DENIED" });
   });
 });
 
@@ -309,6 +503,19 @@ describe("recovery rotation", () => {
       syncId,
       passphrase: PASSPHRASE,
       activePackage: oldPackage,
+      // Never actually issued by the relay for this syncId: the relay's
+      // "no such challenge" check fires (SYNC_DEVICE_DENIED) before ever
+      // reaching the stale-package check, which is exactly the outcome
+      // under test either way.
+      activeChallenge: {
+        syncId,
+        packageId: oldPackage.packageId,
+        challengeNonce: b64(genesisSigner.randomBytes(32)),
+        controlVersion: currentControl.controlVersion,
+        expiresAt: "2030-01-02T03:14:05.000Z",
+        consumedAt: null,
+        createdAt: "2030-01-02T03:04:05.000Z"
+      },
       currentControl,
       publisherDeviceId: owner.deviceId
     })).rejects.toMatchObject({ code: "SYNC_DEVICE_DENIED" });

@@ -5,6 +5,7 @@ import type {
   DeviceCredentialRecord,
   EnrollmentRequestRecord,
   HeadObservationRecord,
+  RecoveryChallengeRecord,
   RecoveryPackageRecord,
   RelayMembershipCommit
 } from "../domain/types.js";
@@ -32,6 +33,17 @@ export interface CommitControlInput {
   enrollmentRequestId?: string;
   /** When set, the referenced recovery package is atomically marked `superseded` iff the CAS succeeds. */
   supersedeRecoveryPackageId?: string;
+  /** When set, the referenced single-use recovery challenge is atomically marked consumed iff the CAS succeeds. */
+  consumeRecoveryChallengeNonce?: string;
+}
+
+export interface IssueRecoveryChallengeInput {
+  syncId: string;
+  packageId: string;
+  challengeNonce: string;
+  controlVersion: number;
+  expiresAt: string;
+  createdAt: string;
 }
 
 export type CommitControlResult =
@@ -92,6 +104,12 @@ export interface RelayStore {
   putRecoveryPackage(record: RecoveryPackageRecord): Promise<RecoveryPackageRecord>;
 
   getActiveRecoveryPackage(syncId: string): Promise<RecoveryPackageRecord | null>;
+
+  /** Persists a freshly minted single-use recovery challenge (ADR 0047 "Recovery-key enrollment"). */
+  issueRecoveryChallenge(input: IssueRecoveryChallengeInput): Promise<RecoveryChallengeRecord>;
+
+  /** Looks up a previously issued recovery challenge by its relay-issued nonce. Returns `null` if unknown. */
+  getRecoveryChallenge(syncId: string, challengeNonce: string): Promise<RecoveryChallengeRecord | null>;
 
   appendHeadObservation(record: HeadObservationRecord): Promise<HeadObservationRecord>;
 

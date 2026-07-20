@@ -12,7 +12,7 @@ import type { CryptoProvider, CryptoKeyPair } from "../crypto/crypto-provider.js
 import { ARGON2ID_REVIEWED_FLOOR } from "../crypto/crypto-provider.js";
 import type { DeviceSecretStore } from "../secrets/device-secret-store.js";
 import type { SyncRelay } from "../transport/sync-relay.js";
-import type { DataEnvelopeRecord, EnrollmentRequestRecord, RecoveryPackageRecord } from "../../relay/domain/types.js";
+import type { DataEnvelopeRecord, EnrollmentRequestRecord, RecoveryChallengeRecord, RecoveryPackageRecord } from "../../relay/domain/types.js";
 
 /**
  * Device enrollment, recovery, revocation, and recovery-credential rotation
@@ -376,6 +376,8 @@ export class SyncControlService {
     syncId: string;
     passphrase: string;
     activePackage: RecoveryPackageRecord | null;
+    /** Relay-issued single-use challenge obtained from the same `SyncRelay.fetchRecoveryPackage()` call as `activePackage` (ADR 0047 "Recovery-key enrollment"; WR-03). */
+    activeChallenge: RecoveryChallengeRecord | null;
     currentControl: CurrentControlState;
     publisherDeviceId: string;
   }): Promise<{
@@ -399,6 +401,8 @@ export class SyncControlService {
       throw new SyncProtocolError("SYNC_INTEGRITY_FAILED");
     }
 
+    if (!input.activeChallenge) throw new SyncProtocolError("SYNC_INCOMPLETE");
+
     const wrappingSeed = this.crypto.deriveSubkey(seed, 1, "CMSRBOX1", 32);
     const recoveryWrapping = this.crypto.generateWrappingKeyPairFromSeed(wrappingSeed);
     const signingSeed = this.crypto.deriveSubkey(seed, 1, "CMSRSIG1", 32);
@@ -408,11 +412,15 @@ export class SyncControlService {
     this.crypto.zero(signingSeed);
 
     const candidate = await this.createDeviceIdentity(input.personId, input.syncId);
-    const challengeNonce = this.crypto.randomBytes(32);
+    // Bind the relay-issued challenge fields (never a client-chosen nonce):
+    // freshness, single-use, and controlVersion binding are all enforced
+    // relay-side against these exact values (WR-03).
     const authorizationPreimage = this.crypto.canonicalBytes({
       candidateDeviceId: candidate.deviceId,
-      challengeNonce: toB64(challengeNonce),
+      challengeNonce: input.activeChallenge.challengeNonce,
+      controlVersion: input.activeChallenge.controlVersion,
       domain: RECOVERY_AUTHORIZATION_DOMAIN,
+      expiresAt: input.activeChallenge.expiresAt,
       packageId: input.activePackage.packageId,
       syncId: input.syncId
     });
@@ -448,7 +456,7 @@ export class SyncControlService {
       signature: commitSignature,
       recoveryAuthorization: {
         packageId: input.activePackage.packageId,
-        challengeNonce: toB64(challengeNonce),
+        challengeNonce: input.activeChallenge.challengeNonce,
         signature: authorizationSignature
       }
     });

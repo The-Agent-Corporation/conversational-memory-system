@@ -7,12 +7,14 @@ import type {
   DeviceCredentialRecord,
   EnrollmentRequestRecord,
   HeadObservationRecord,
+  RecoveryChallengeRecord,
   RecoveryPackageRecord
 } from "../domain/types.js";
 import type {
   AppendEnvelopeResult,
   CommitControlInput,
   CommitControlResult,
+  IssueRecoveryChallengeInput,
   RelayStore
 } from "./relay-store.js";
 
@@ -124,6 +126,17 @@ export class SqliteRelayStore implements RelayStore {
         status TEXT NOT NULL,
         record_json TEXT NOT NULL,
         PRIMARY KEY (sync_id, package_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS recovery_challenges (
+        sync_id TEXT NOT NULL,
+        challenge_nonce TEXT NOT NULL,
+        package_id TEXT NOT NULL,
+        control_version INTEGER NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (sync_id, challenge_nonce)
       );
 
       CREATE TABLE IF NOT EXISTS head_observations (
@@ -339,6 +352,12 @@ export class SqliteRelayStore implements RelayStore {
         }
       }
 
+      if (input.consumeRecoveryChallengeNonce) {
+        this.database
+          .prepare("UPDATE recovery_challenges SET consumed_at = ? WHERE sync_id = ? AND challenge_nonce = ?")
+          .run(input.createdAt, input.syncId, input.consumeRecoveryChallengeNonce);
+      }
+
       this.database.exec("commit");
       return {
         status: "committed",
@@ -462,6 +481,42 @@ export class SqliteRelayStore implements RelayStore {
       .prepare("SELECT record_json FROM recovery_packages WHERE sync_id = ? AND status = 'active' LIMIT 1")
       .get(syncId) as { record_json: string } | undefined;
     return row ? (JSON.parse(row.record_json) as RecoveryPackageRecord) : null;
+  }
+
+  async issueRecoveryChallenge(input: IssueRecoveryChallengeInput): Promise<RecoveryChallengeRecord> {
+    this.database
+      .prepare(`
+        INSERT INTO recovery_challenges (sync_id, challenge_nonce, package_id, control_version, expires_at, consumed_at, created_at)
+        VALUES (?, ?, ?, ?, ?, NULL, ?)
+      `)
+      .run(input.syncId, input.challengeNonce, input.packageId, input.controlVersion, input.expiresAt, input.createdAt);
+    return {
+      syncId: input.syncId,
+      packageId: input.packageId,
+      challengeNonce: input.challengeNonce,
+      controlVersion: input.controlVersion,
+      expiresAt: input.expiresAt,
+      consumedAt: null,
+      createdAt: input.createdAt
+    };
+  }
+
+  async getRecoveryChallenge(syncId: string, challengeNonce: string): Promise<RecoveryChallengeRecord | null> {
+    const row = this.database
+      .prepare("SELECT sync_id, challenge_nonce, package_id, control_version, expires_at, consumed_at, created_at FROM recovery_challenges WHERE sync_id = ? AND challenge_nonce = ?")
+      .get(syncId, challengeNonce) as
+      | { sync_id: string; challenge_nonce: string; package_id: string; control_version: number; expires_at: string; consumed_at: string | null; created_at: string }
+      | undefined;
+    if (!row) return null;
+    return {
+      syncId: row.sync_id,
+      packageId: row.package_id,
+      challengeNonce: row.challenge_nonce,
+      controlVersion: row.control_version,
+      expiresAt: row.expires_at,
+      consumedAt: row.consumed_at,
+      createdAt: row.created_at
+    };
   }
 
   async appendHeadObservation(record: HeadObservationRecord): Promise<HeadObservationRecord> {

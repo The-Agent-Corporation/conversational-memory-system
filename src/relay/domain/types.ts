@@ -283,6 +283,25 @@ export const RecoveryPackageRecordSchema = z.object({
 }).strict();
 export type RecoveryPackageRecord = z.infer<typeof RecoveryPackageRecordSchema>;
 
+/**
+ * Relay-issued single-use recovery challenge (ADR 0047 "Recovery-key
+ * enrollment"): freshly minted on `recovery.fetch`, bound to the
+ * then-current `controlVersion` and a 10-minute `expiresAt`, and consumed
+ * exactly once by a successful `membership.cas` recovery commit. Never
+ * client-chosen: the client submits back only the relay-issued
+ * `challengeNonce` it just received.
+ */
+export const RecoveryChallengeRecordSchema = z.object({
+  syncId: RelayIdSchema,
+  packageId: RelayIdSchema,
+  challengeNonce: relayBase64UrlBytesSchema(32, "challengeNonce"),
+  controlVersion: z.number().int().min(0).max(MAX_SAFE_SEQUENCE),
+  expiresAt: RelayCanonicalTimestampSchema,
+  consumedAt: RelayCanonicalTimestampSchema.nullable(),
+  createdAt: RelayCanonicalTimestampSchema
+}).strict();
+export type RecoveryChallengeRecord = z.infer<typeof RecoveryChallengeRecordSchema>;
+
 /** Signed observed head: `syncId`, observing device, observed digests, signature, `createdAt` only. */
 export const HeadObservationRecordSchema = z.object({
   syncId: RelayIdSchema,
@@ -405,7 +424,9 @@ export const RelayResponseSchema = z.discriminatedUnion("operation", [
   }).strict(),
   RelayResponseBaseSchema.extend({
     operation: z.literal("recovery.fetch"),
-    record: RecoveryPackageRecordSchema.nullable()
+    record: RecoveryPackageRecordSchema.nullable(),
+    /** Freshly issued single-use recovery challenge bound to `record`, or `null` when there is no active package. */
+    challenge: RecoveryChallengeRecordSchema.nullable()
   }).strict(),
   RelayResponseBaseSchema.extend({
     operation: z.literal("head.observe"),
