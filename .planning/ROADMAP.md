@@ -155,7 +155,7 @@ Plans:
 **Goal**: Synchronize memory without giving the relay decryption capability.
 **Requirements**: REQ-031, REQ-032, REQ-033, REQ-034, REQ-035, REQ-036
 **Status**: Gap Closure Planned (2 confirmed BLOCKING gaps + 8 review warnings)
-**Plans:** 12/13 plans executed
+**Plans:** 13/13 plans complete
 
 Plans:
 
@@ -191,7 +191,7 @@ Plans:
 
 **Gap Closure — Wave 2** *(blocked on 06-09; shared relay/control files)*
 
-- [ ] 06-13-PLAN.md — Recovery-challenge freshness/single-use (WR-03), Argon2id unwrap floor (WR-04), revoked-device reactivation guard (WR-07).
+- [x] 06-13-PLAN.md — Recovery-challenge freshness/single-use (WR-03), Argon2id unwrap floor (WR-04), revoked-device reactivation guard (WR-07).
 
 ### Phase 7: Onboarding and Operational Readiness
 
