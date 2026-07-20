@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { request as httpRequest } from "node:http";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeRelayAccountAuthenticator } from "../../src/relay/auth/relay-account-authenticator.js";
 import { InMemoryRelayStore } from "../../src/relay/storage/in-memory-relay-store.js";
 import { OpaqueRelayService } from "../../src/relay/service/opaque-relay-service.js";
@@ -19,6 +20,33 @@ const signer = new LibsodiumCryptoProvider();
 
 function b64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64url");
+}
+
+/** Minimal raw request helper (no HttpSyncRelay envelope wrapping) so the rate-limit test can drive distinct bearer tokens directly against the boundary. */
+function rawJsonRequest(port: number, path: string, token: string, body: unknown): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+          "content-length": Buffer.byteLength(payload)
+        }
+      },
+      (res) => {
+        res.on("data", () => {});
+        res.on("end", () => resolve({ status: res.statusCode ?? 0 }));
+      }
+    );
+    req.on("error", reject);
+    req.write(payload);
+    req.end();
+  });
 }
 
 describe("HttpSyncRelay (real loopback)", () => {
@@ -276,5 +304,33 @@ describe("HttpSyncRelay (real loopback)", () => {
     await relay.listEnrollmentRequests();
     expect(logs).toHaveLength(1);
     expect(JSON.stringify(logs)).not.toContain(bearerToken);
+  });
+
+  it("evicts stale rate-limit windows instead of retaining them for every rotated token digest (WR-08)", async () => {
+    const { port } = handle.address();
+    const nowSpy = vi.spyOn(Date, "now");
+    let mockedNowMs = Date.now();
+    nowSpy.mockImplementation(() => mockedNowMs);
+    try {
+      // A rotating set of distinct account tokens each opens its own rate-limit window.
+      const staleTokens = Array.from({ length: 8 }, (_unused, index) => authenticator.emailSignup(`rotated-${index}@example.test`));
+      for (const token of staleTokens) {
+        const response = await rawJsonRequest(port, "/v1/enrollment/list", token, {});
+        expect(response.status).toBe(200);
+      }
+      expect(handle.rateLimitWindowCount()).toBe(staleTokens.length);
+
+      // Advance past the 60s rolling window: every prior window is now stale.
+      mockedNowMs += 61_000;
+
+      // A single fresh access (any token, including a brand-new one) must sweep every
+      // expired window on access -- the map must not retain the stale entries forever.
+      const freshToken = authenticator.emailSignup("fresh-after-window@example.test");
+      const response = await rawJsonRequest(port, "/v1/enrollment/list", freshToken, {});
+      expect(response.status).toBe(200);
+      expect(handle.rateLimitWindowCount()).toBe(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
