@@ -1,190 +1,203 @@
 ---
 phase: 06-zero-knowledge-multi-device-sync
-verified: 2026-07-20T00:56:20Z
-status: gaps_found
-score: 4/6 requirement truths verified (REQ-032, REQ-031/034 blocked by confirmed code defects)
+verified: 2026-07-20T13:31:00Z
+status: passed
+score: 6/6 requirement truths verified
 overrides_applied: 0
-gaps:
-  - truth: "Account recovery cannot enroll a device or decrypt memory (REQ-032; ADR 0047 D-04, D-16, 'Account Recovery Cannot Enroll or Decrypt')"
-    status: failed
-    reason: >
-      Confirmed CR-01 from 06-REVIEW.md by direct code inspection. The recovery-enrollment
-      authorization is verified against the CANDIDATE DEVICE'S OWN signing key
-      (self-generated at enrollment time), not against any key derived from the recovery
-      seed. The ADR-specified recovery signing credential context "CMSRSIG1" is never
-      derived or referenced anywhere in the codebase (confirmed via grep across
-      src/sync/control/sync-control-service.ts) -- only "CMSRBOX1" (the wrapping subkey)
-      is derived. Because the relay's recovery.fetch operation returns the active
-      package's packageId to any account-authenticated caller, and the relay's only
-      check is `verifyDetached(candidate.signingPublicKey, authorizationPreimage,
-      request.recoveryAuthorization.signature)` -- i.e. verifying the candidate's
-      self-signature against its own freshly-generated key -- possession of the relay
-      account alone (without the recovery seed) is sufficient to author a valid
-      recovery-authorized membership.cas commit and become an active device. Because
-      future epoch-key rotations package new epoch keys to every active device's
-      wrapping key, this active status leads to future decryption capability, directly
-      contradicting the ADR's binding "Account Recovery Cannot Enroll or Decrypt" claim.
-      No test in tests/sync/recovery.test.ts exercises this adversarial path (all tests
-      call the client's enrollViaRecovery with a real seed in hand; none attempt
-      relay-only enrollment with only account access), so the gap is real and untested.
-    artifacts:
-      - path: "src/relay/service/opaque-relay-service.ts"
-        issue: "Lines ~140-164 (handleMembershipCas recovery branch): verifies request.recoveryAuthorization.signature against candidate.signingPublicKey (the candidate device's own key), not against a recovery-seed-derived signing credential."
-      - path: "src/sync/control/sync-control-service.ts"
-        issue: "enrollViaRecovery (~lines 374-447) derives only the CMSRBOX1 wrapping subkey via deriveSubkey(seed, 1, \"CMSRBOX1\", 32); it never derives a CMSRSIG1 recovery signing key. authorizationSignature (line 416) is produced with `this.crypto.sign(candidate.signing.secretKey, authorizationPreimage)` -- the candidate's own freshly generated device key, not a recovery-derived key."
-    missing:
-      - "Derive a recovery signing credential from the recovery seed (e.g. deriveSubkey(seed, 1, \"CMSRSIG1\", 32) -> generateSigningKeyPairFromSeed) on the client, and persist its public key with the active recovery package/control record on the relay."
-      - "Change the relay's recovery-branch verification (opaque-relay-service.ts handleMembershipCas) to verify request.recoveryAuthorization.signature against the stored recovery-credential public key, not candidate.signingPublicKey."
-      - "Add an adversarial test: account-authenticated caller with NO recovery seed (only packageId learned via recovery.fetch) attempts membership.cas with a self-signed recoveryAuthorization and MUST be rejected with SYNC_DEVICE_DENIED or SYNC_INTEGRITY_FAILED."
-  - truth: "Offline convergence: concurrent device changes converge after reconnection (REQ-034); envelope hash chain integrity holds for multi-operation histories (ADR 0047 'Durable sequence/hash chains')"
-    status: failed
-    reason: >
-      Confirmed CR-02 from 06-REVIEW.md by direct code inspection. The producer
-      (sync-replication-service.ts sealOne) sets header.previousEnvelopeHash from
-      `hexToBase64Url(predecessor.sealedEnvelopeDigest!)`, where sealedEnvelopeDigest is
-      computed as `sha256HexOfBase64(envelopeBytesBase64)` -- a SHA-256 digest over the
-      entire base64-encoded envelope JSON blob. The verifier (replay-verifier.ts,
-      documented explicitly in its own file header: "Chain digest definition: envelope
-      N+1's header.previousEnvelopeHash MUST equal envelope N's own ciphertextDigest")
-      compares header.previousEnvelopeHash against context.expectedPreviousChainDigest,
-      which pullAndApply threads from `outcome.chainDigest = envelope.ciphertextDigest`
-      -- a BLAKE2b generichash of the ciphertext bytes ALONE (32 bytes, base64url,
-      computed via sodium.crypto_generichash in sealSyncEnvelope/verified in
-      handleEnvelopeAppend). These are two different digests: different algorithm
-      (SHA-256 vs BLAKE2b/generichash) over different inputs (whole base64 envelope
-      JSON string vs raw ciphertext bytes). For any device sequence >= 2 the check
-      `envelope.header.previousEnvelopeHash !== expectedPrevious` at
-      replay-verifier.ts:94 will be true, and the envelope is rejected with
-      SYNC_INTEGRITY_FAILED before it is even decrypted -- meaning no device can ever
-      successfully replicate its second-or-later operation to a peer. This breaks
-      REQ-034 (offline convergence) for any real usage beyond a single operation per
-      device. Confirmed the existing test suite does not catch this: the one test that
-      exercises sequence-2 chain verification
-      (tests/sync/replay-equivocation.test.ts:365-395, "rejects a tampered
-      previousEnvelopeHash...") only asserts that a RANDOMLY TAMPERED
-      previousEnvelopeHash is rejected -- it never asserts that the real,
-      correctly-produced sequence-2 envelope from pushPending/sealOne is ACCEPTED by
-      the verifier. All integration tests in tests/integration/multi-device-sync.test.ts
-      that assert successful convergence only ever push a single outbox row
-      (deviceSequence: 1) per device, so the bug never manifests in the current suite.
-    artifacts:
-      - path: "src/sync/replication/sync-replication-service.ts"
-        issue: "Lines 186 and 209: previousEnvelopeHash = hexToBase64Url(predecessor.sealedEnvelopeDigest!), where sealedEnvelopeDigest = sha256HexOfBase64(envelopeBytesBase64) (line 209, function defined line 96) -- a SHA-256 over the whole base64 envelope JSON, not the predecessor's ciphertextDigest."
-      - path: "src/sync/replication/replay-verifier.ts"
-        issue: "Lines 21-27 (doc comment), 54-55 (chainDigestOf), 92-96 (verify): chain check compares header.previousEnvelopeHash against the predecessor's ciphertextDigest (BLAKE2b generichash of ciphertext bytes only) -- a different value and algorithm than what the producer writes."
-    missing:
-      - "Change sealOne (sync-replication-service.ts) to set previousEnvelopeHash from the predecessor's sealed envelope's own ciphertextDigest (already present on the sealed EncryptedSyncEnvelope / persisted alongside sealedEnvelopeDigest), not from sha256HexOfBase64 of the whole envelope JSON."
-      - "Add (or fix) a producer<->verifier round-trip test that seals device-sequence 1 and 2 through pushPending/sealOne and asserts ReplayVerifier.verify ACCEPTS (kind: 'verified') the resulting sequence-2 envelope, not just that a tampered one is rejected."
-      - "Re-run tests/integration/multi-device-sync.test.ts with a >=2-operation-per-device scenario to confirm convergence after the fix."
+re_verification:
+  previous_status: gaps_found
+  previous_score: 4/6 requirement truths verified (REQ-032, REQ-031/034 blocked by confirmed code defects)
+  gaps_closed:
+    - "Account recovery cannot enroll a device or decrypt memory (REQ-032; ADR 0047 D-04, D-16) — CR-01"
+    - "Offline convergence / envelope hash chain integrity for multi-operation histories (REQ-034; also unblocks REQ-035) — CR-02"
+  gaps_remaining: []
+  regressions: []
 ---
 
 # Phase 6: Zero-Knowledge Multi-Device Sync Verification Report
 
 **Phase Goal:** Synchronize memory without giving the relay decryption capability.
-**Verified:** 2026-07-20T00:56:20Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-07-20T13:31:00Z
+**Status:** passed
+**Re-verification:** Yes — after gap closure (plans 06-09..06-13)
 
 ## Goal Achievement
 
-This phase claims eight complete plans (06-01 through 06-08) implementing the zero-knowledge
-sync protocol from ADR 0047: end-to-end encrypted envelopes, an opaque relay, device
-enrollment/recovery/revocation, offline convergence with a hash-chained replay-defense
-protocol, deletion tombstones, and minimal relay metadata. `06-REVIEW.md` (already committed,
-dated the same day as this phase's SUMMARYs) independently found 2 critical/blocker defects.
-This verification's mandate was to independently confirm or refute each against the real
-source, not trust either the SUMMARYs or the review's prose. Both are confirmed by direct
-code reading below.
+This is a re-verification of Phase 6 after five gap-closure plans (06-09..06-13) were executed
+to address the two BLOCKER findings (CR-01, CR-02) recorded in the prior `06-VERIFICATION.md`
+(status `gaps_found`, score 4/6). Both blockers are re-examined directly against the live
+source tree — not the SUMMARYs — below.
+
+### CR-01 (REQ-032) — closed
+
+**Claim:** account-only access (no recovery seed) could previously enroll a new active device
+via the recovery path, because the relay verified the recovery authorization against the
+candidate device's own freshly generated signing key rather than a key derived from the
+recovery seed.
+
+**Evidence the fix is real and complete:**
+
+- `src/sync/control/sync-control-service.ts:406-430` (`enrollViaRecovery`) now derives a
+  second seed-bound subkey via `this.crypto.deriveSubkey(seed, 1, "CMSRSIG1", 32)` (alongside
+  the pre-existing `CMSRBOX1` wrapping subkey), turns it into a signing keypair via
+  `generateSigningKeyPairFromSeed(signingSeed)`, and signs the recovery authorization preimage
+  with that key (`this.crypto.sign(recoverySigning.secretKey, authorizationPreimage)`) — not
+  with `candidate.signing.secretKey`. The derived seed material (`signingSeed`,
+  `recoverySigning.secretKey`) is explicitly zeroed after use.
+- `src/relay/domain/types.ts:280` — `RecoveryPackageRecordSchema` now has a required
+  `recoverySigningPublicKey: relayBase64UrlBytesSchema(32, ...)` field.
+- `src/relay/storage/in-memory-relay-store.ts` and `src/relay/storage/sqlite-relay-store.ts`
+  both persist `RecoveryPackageRecord` as an opaque typed object / `record_json` blob
+  respectively, so the new field round-trips through both stores without additional per-field
+  wiring (confirmed by reading `putRecoveryPackage`/`getActiveRecoveryPackage` in both files —
+  no field allowlist strips it).
+- `src/relay/service/opaque-relay-service.ts:189` (`handleMembershipCas` recovery branch) now
+  verifies `request.recoveryAuthorization.signature` against
+  `activePackage.recoverySigningPublicKey` — the stored, seed-derived key — not
+  `candidate.signingPublicKey`. `candidate.signingPublicKey` is still checked separately at
+  line 192 for the device's own device-identity commit signature, which is the correct,
+  orthogonal check.
+- Adversarial regression test: `tests/sync/recovery.test.ts` — new suite "adversarial
+  account-only enrollment (CR-01)" containing "rejects a self-signed membership.cas from a
+  candidate that never possessed the recovery seed" — **PASSING**
+  (`npx vitest run tests/sync/recovery.test.ts` → 12/12 tests pass, including this one).
+
+**Verdict:** CR-01 is closed. Recovery-seed possession is now cryptographically bound into
+enrollment; account access alone can no longer author a valid recovery authorization.
+
+### CR-02 (REQ-031/REQ-034, and REQ-035 by extension) — closed
+
+**Claim:** the producer computed `previousEnvelopeHash` as a SHA-256 digest of the entire
+base64-encoded envelope JSON blob, while the verifier required the predecessor's BLAKE2b
+`ciphertextDigest` — two different values by construction — causing every envelope at
+device-sequence ≥ 2 to be rejected `SYNC_INTEGRITY_FAILED` on every peer, blocking convergence
+beyond one operation per device.
+
+**Evidence the fix is real and complete:**
+
+- `src/sync/replication/sync-replication-service.ts:171-202` (`sealOne`) now sets
+  `previousEnvelopeHash = predecessorEnvelope.ciphertextDigest` (line 193), sourced from the
+  predecessor's own already-sealed `EncryptedSyncEnvelope.ciphertextDigest` (BLAKE2b
+  generichash over ciphertext bytes), matching `ReplayVerifier.chainDigestOf` exactly per the
+  inline comment at lines 186-192. The old `sha256HexOfBase64(envelopeBytesBase64)` helper
+  still exists (line 96) but is now only used for `sealedEnvelopeDigest` — a local
+  row-identity/bookkeeping digest, no longer fed into the wire chain header. No re-encryption,
+  no schema change.
+- `src/sync/replication/replay-verifier.ts` is unchanged (it was already internally correct;
+  the defect was entirely on the producer side) — still compares
+  `header.previousEnvelopeHash` against the predecessor's `ciphertextDigest`.
+- New test: `tests/sync/replay-equivocation.test.ts` — "accepts a correctly-produced
+  sequence-2 envelope (producer<->verifier round-trip)" — **PASSING**.
+- New integration test: `tests/integration/multi-device-sync.test.ts` — "converges a
+  >=2-operations-per-device history through the real network boundary (CR-02)" — **PASSING**.
+- `npx vitest run tests/sync/replay-equivocation.test.ts tests/integration/multi-device-sync.test.ts`
+  → 16/16 tests pass (10 + 6).
+
+**Verdict:** CR-02 is closed. Producer and verifier now agree on the chain-digest source;
+multi-operation histories converge across devices over the real HTTP loopback transport.
+
+### Full Suite and Typecheck
+
+- `npm test` → **77 test files, 672 tests, all passing** (matches the expected ~672 count).
+- `npm run typecheck` → clean, no errors.
+- `grep -n -E "TBD|FIXME|XXX"` across the six files touched by the CR-01/CR-02 fixes
+  (`sync-control-service.ts`, `opaque-relay-service.ts`, `relay/domain/types.ts`,
+  `sync-replication-service.ts`, `replay-verifier.ts`, both relay stores) → no matches.
 
 ### Observable Truths
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Content is encrypted client-side before transmission; relay possesses no decryption key (REQ-031, crypto boundary) | VERIFIED | `sealSyncEnvelope`/`openSyncEnvelope` (libsodium AEAD) confirmed device-side only; `opaque-relay-service.ts` never imports crypto-open functions, only signature/digest verification over opaque bytes (module doc comment + code inspection). |
-| 2 | New devices join via authorized-device approval OR recovery-key possession, and account access alone is insufficient (REQ-032) | **FAILED** | CR-01 confirmed: `opaque-relay-service.ts` recovery branch verifies the candidate's self-signature against the candidate's own key; no recovery-seed-derived (`CMSRSIG1`) credential is ever derived or checked. Relay-account access alone (learn `packageId` via `recovery.fetch`, self-sign) suffices to enroll. |
-| 3 | Device revocation is enforceable and rotates future keys without destroying local history (REQ-033) | VERIFIED (independent, not part of mandated review scope) — code exists (`revokedDevices` handling, epoch rotation on control commit) and is exercised by `tests/sync/revocation.test.ts`; not exhaustively re-audited beyond the two mandated defects, per task scope. |
-| 4 | Concurrent device changes converge after reconnection without a single online writer (REQ-034) | **FAILED** | CR-02 confirmed: producer computes `previousEnvelopeHash` as SHA-256 of the whole base64 envelope JSON; verifier requires the predecessor's BLAKE2b `ciphertextDigest`. Any device-sequence >= 2 envelope is rejected `SYNC_INTEGRITY_FAILED` on every peer, blocking convergence beyond one operation per device. |
-| 5 | Deletions/revocations propagate with auditable tombstones and cannot be reintroduced by stale peers (REQ-035) | Not independently re-derived beyond CR-02's blast radius — REQ-035 also depends on the replication pipeline that CR-02 breaks for sequence >= 2, so tombstone propagation beyond a device's first operation is blocked by the same defect. Flagged as at-risk, not separately re-verified. |
-| 6 | Relay stores only metadata required for routing/authorization/replay-protection/convergence — no semantic content (REQ-036) | VERIFIED | `opaque-relay-service.ts` module doc + `RelayRequestSchema`/`DataEnvelopeRecordSchema` field allowlists confirmed to carry only ids, digests, signatures, ciphertext, and header metadata; no plaintext or semantic fields present. |
+| 1 | Content is encrypted client-side before transmission; relay possesses no decryption key (REQ-031) | VERIFIED | Unchanged from initial verification: `sealSyncEnvelope`/`openSyncEnvelope` device-side only; relay code never imports crypto-open functions. Also now unblocked end-to-end for multi-operation histories by the CR-02 fix (previously the *transport* of REQ-031 payloads failed for sequence ≥2; now confirmed accepted). |
+| 2 | New devices join via authorized-device approval OR recovery-key possession, and account access alone is insufficient (REQ-032) | VERIFIED | CR-01 closed: recovery authorization is now signed with a `CMSRSIG1` seed-derived key and verified against the stored `recoverySigningPublicKey`, not the candidate's own key. Adversarial account-only rejection test passing. |
+| 3 | Device revocation is enforceable and rotates future keys without destroying local history (REQ-033) | VERIFIED | Unchanged from initial verification — `tests/sync/revocation.test.ts` and relay `membership-cas` tests passing in full suite; no regression introduced by the gap-closure plans (07/08/09/10/11/12/13 all green). |
+| 4 | Concurrent device changes converge after reconnection without a single online writer (REQ-034) | VERIFIED | CR-02 closed: chain-digest producer/verifier agreement confirmed by direct code reading and by a genuine sequence-2 acceptance test plus a real-network ≥2-ops-per-device convergence test, both passing. |
+| 5 | Deletions/revocations propagate with auditable tombstones and cannot be reintroduced by stale peers (REQ-035) | VERIFIED | Previously flagged "at risk" only because it rides the same replication pipeline broken by CR-02; that pipeline is now fixed and the full `tests/sync/deletion-tombstones.test.ts` suite passes as part of the 672-test green run. No independent regression found. |
+| 6 | Relay stores only metadata required for routing/authorization/replay-protection/convergence — no semantic content (REQ-036) | VERIFIED | Unchanged from initial verification; `RecoveryPackageRecordSchema`'s new `recoverySigningPublicKey` field is itself just a public key (opaque, non-semantic), consistent with the existing allowlist discipline. |
 
-**Score:** 4/6 truths independently confirmed sound at the code level; 2 are FAILED (both matching the review's two BLOCKER findings), with a third (REQ-035) at risk as a direct consequence of the CR-02 defect.
+**Score:** 6/6 truths verified.
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `src/relay/service/opaque-relay-service.ts` | Zero-knowledge relay orchestration; recovery enrollment gated on recovery-seed possession | EXISTS, but recovery-branch logic is a **functional defect** (CR-01) | `handleMembershipCas` recovery branch verifies against `candidate.signingPublicKey`, not a recovery-derived key. |
-| `src/sync/control/sync-control-service.ts` | Client-side enrollment/recovery/revocation state machine deriving recovery credentials per ADR 0047 | EXISTS, but recovery credential derivation is **incomplete** (CR-01) | `enrollViaRecovery` derives only `CMSRBOX1`; `CMSRSIG1` is never derived anywhere in the codebase (confirmed via repo-wide grep). |
-| `src/sync/replication/sync-replication-service.ts` | Producer: seals outbox rows into hash-chained envelopes | EXISTS, but chain-digest computation is **inconsistent with the verifier** (CR-02) | `sealOne` sets `previousEnvelopeHash` from `sha256HexOfBase64(envelopeBytesBase64)`, not the predecessor's `ciphertextDigest`. |
-| `src/sync/replication/replay-verifier.ts` | Verifier: rejects rollback/fork via hash chain before AEAD open | EXISTS and internally consistent with its own documented contract, but the **producer does not honor that contract** (CR-02) | `verify()` correctly compares against `ciphertextDigest`-based `expectedPreviousChainDigest`; the mismatch originates upstream in the producer. |
+| `src/relay/service/opaque-relay-service.ts` | Zero-knowledge relay orchestration; recovery enrollment gated on recovery-seed possession | VERIFIED | `handleMembershipCas` recovery branch (line 189) now verifies against `activePackage.recoverySigningPublicKey`. |
+| `src/sync/control/sync-control-service.ts` | Client-side enrollment/recovery/revocation state machine deriving recovery credentials per ADR 0047 | VERIFIED | `enrollViaRecovery` (lines 406-430) derives both `CMSRBOX1` and `CMSRSIG1` subkeys and signs with the latter. |
+| `src/relay/domain/types.ts` | `RecoveryPackageRecord` carries a persisted recovery signing public key | VERIFIED | `recoverySigningPublicKey` required field at line 280. |
+| `src/sync/replication/sync-replication-service.ts` | Producer: seals outbox rows into hash-chained envelopes, chain source matching the verifier | VERIFIED | `sealOne` (line 193) sources `previousEnvelopeHash` from `predecessorEnvelope.ciphertextDigest`. |
+| `src/sync/replication/replay-verifier.ts` | Verifier: rejects rollback/fork via hash chain before AEAD open | VERIFIED | Unchanged; now agrees with the producer. |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|-----|-----|--------|---------|
-| `sync-control-service.ts` recovery authorization | `opaque-relay-service.ts` recovery verification | `verifyDetached(candidate.signingPublicKey, ...)` | **NOT_WIRED to a seed-derived credential** | Both sides agree on verifying the candidate's own key — internally consistent but not the recovery-seed-bound authorization ADR 0047 specifies. This is the root of CR-01: the link exists and "works" but authenticates the wrong principal. |
-| `sync-replication-service.ts` sealOne (producer) | `replay-verifier.ts` verify (consumer) | `header.previousEnvelopeHash` field | **NOT_WIRED** (value mismatch) | Producer and consumer independently compute this field from different algorithms/inputs; this is the root of CR-02. Confirmed no shared helper function exists between the two files for this computation — `sync-replication-service.ts` defines its own local `sha256HexOfBase64`, `replay-verifier.ts` and `sealSyncEnvelope` use `ReplayVerifier.chainDigestOf` / `ciphertextDigest` independently. |
+| `sync-control-service.ts` `enrollViaRecovery` recovery authorization | `opaque-relay-service.ts` `handleMembershipCas` recovery verification | `verifyDetached(activePackage.recoverySigningPublicKey, authorizationPreimage, signature)` | WIRED | Producer signs with the seed-derived `CMSRSIG1` key; relay verifies against the persisted `recoverySigningPublicKey` from the same record. Root cause of CR-01 eliminated. |
+| `sync-replication-service.ts` `sealOne` (producer) | `replay-verifier.ts` `verify` (consumer) | `header.previousEnvelopeHash` field | WIRED | Both sides now agree the value is the predecessor's `ciphertextDigest` (BLAKE2b generichash over ciphertext bytes). Root cause of CR-02 eliminated. |
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|------------|-------------|--------|----------|
-| REQ-031 | 06-02, 06-05, 06-08 | End-to-end encryption; relay possesses no decryption keys | PARTIALLY BLOCKED | Encryption boundary itself sound; but the replication pipeline that carries REQ-031's payloads is broken for sequence >= 2 by CR-02, so the requirement's "synchronized" half fails beyond one op/device. |
-| REQ-032 | 06-06, 06-08 | Device enrollment via authorized-device approval or recovery key | **BLOCKED** | CR-01: account access alone enrolls a device via the recovery path; recovery-seed possession is never proven. |
-| REQ-033 | 06-05, 06-06, 06-08 | Device revocation + future key rotation without losing local history | SATISFIED (not independently re-audited beyond scope) | Code and dedicated tests present; not part of the two mandated confirmations. |
-| REQ-034 | 06-04, 06-07, 06-08 | Offline convergence for concurrent changes | **BLOCKED** | CR-02: any device-sequence >= 2 envelope is rejected on every peer; convergence beyond one operation per device does not function. |
-| REQ-035 | 06-04, 06-07, 06-08 | Deletion propagation with auditable, non-reintroducible tombstones | AT RISK | Tombstone logic depends on the same replication pipeline broken by CR-02 for any device's second-or-later operation. |
-| REQ-036 | 06-05, 06-06, 06-08 | Minimal relay metadata | SATISFIED | Field-allowlist review confirms no semantic/plaintext data crosses the relay boundary. |
+| REQ-031 | 06-02, 06-05, 06-08, 06-10 | End-to-end encryption; relay possesses no decryption keys | SATISFIED | Encryption boundary sound; replication pipeline now carries multi-op payloads correctly (CR-02 closed). |
+| REQ-032 | 06-06, 06-08, 06-09 | Device enrollment via authorized-device approval or recovery key | SATISFIED | CR-01 closed: recovery-seed possession is cryptographically required; adversarial test passing. |
+| REQ-033 | 06-05, 06-06, 06-08 | Device revocation + future key rotation without losing local history | SATISFIED | Code and dedicated tests present and passing; no regression from gap-closure plans. |
+| REQ-034 | 06-04, 06-07, 06-08, 06-10 | Offline convergence for concurrent changes | SATISFIED | CR-02 closed: real ≥2-ops-per-device convergence test passing over the HTTP loopback transport. |
+| REQ-035 | 06-04, 06-07, 06-08, 06-10 | Deletion propagation with auditable, non-reintroducible tombstones | SATISFIED | Rides the now-fixed replication pipeline; full tombstone test suite green. |
+| REQ-036 | 06-05, 06-06, 06-08, 06-09 | Minimal relay metadata | SATISFIED | Field-allowlist review confirms no semantic/plaintext data crosses the relay boundary; new field is an opaque public key. |
 
 ### Anti-Patterns Found
 
-None newly introduced beyond what 06-REVIEW.md already documented (8 warnings, 3 info items) — this verification's mandate was scoped to confirming/refuting the 2 BLOCKER findings, not re-running full anti-pattern scanning across all 37 reviewed files. The 2 confirmed blockers are logic/correctness defects, not stub/placeholder anti-patterns — both paths are fully implemented, just implemented against mismatched contracts (CR-02) or an incomplete credential-derivation model (CR-01).
+None in the CR-01/CR-02 fix files (`sync-control-service.ts`, `opaque-relay-service.ts`,
+`relay/domain/types.ts`, `sync-replication-service.ts`, `replay-verifier.ts`,
+`in-memory-relay-store.ts`, `sqlite-relay-store.ts`) — no `TBD`/`FIXME`/`XXX` markers.
+Plans 06-11..06-13 (WR-hardening items) were out of mandate for this re-verification pass,
+which was scoped to confirming closure of the two BLOCKER findings; the full test suite
+(672 tests) including their coverage passes green with no observed regressions.
+
+### Behavioral Spot-Checks / Probe Execution
+
+| Behavior | Command | Result | Status |
+|----------|---------|--------|--------|
+| CR-01 adversarial rejection | `npx vitest run tests/sync/recovery.test.ts` | 12/12 passed, incl. "rejects a self-signed membership.cas from a candidate that never possessed the recovery seed" | PASS |
+| CR-02 sequence-2 acceptance + convergence | `npx vitest run tests/sync/replay-equivocation.test.ts tests/integration/multi-device-sync.test.ts` | 16/16 passed, incl. "accepts a correctly-produced sequence-2 envelope" and "converges a >=2-operations-per-device history through the real network boundary (CR-02)" | PASS |
+| Full suite | `npm test` | 77 files / 672 tests passed | PASS |
+| Type safety | `npm run typecheck` | clean | PASS |
 
 ### Human Verification Required
 
-None. Both findings are deterministic code-level defects confirmable by static reading and are not observation-, timing-, or UX-dependent.
+None. Both prior findings and their fixes are deterministic code-level facts confirmable by
+static reading and automated test execution.
 
 ### Gaps Summary
 
-Both BLOCKER findings from `06-REVIEW.md` are independently confirmed against the live source
-tree, not merely trusted from the review's prose:
+Both BLOCKER findings recorded in the prior `06-VERIFICATION.md` are now closed, confirmed by
+independent reading of the live source (not the SUMMARYs):
 
-1. **CR-01 (REQ-032 / security):** `src/relay/service/opaque-relay-service.ts` (`handleMembershipCas`
-   recovery branch, ~lines 140-164) verifies the recovery-authorization signature against the
-   *candidate device's own* signing public key. `src/sync/control/sync-control-service.ts`
-   (`enrollViaRecovery`, ~lines 374-447) never derives the ADR-specified `CMSRSIG1` recovery
-   signing credential — confirmed absent via repo-wide grep — and signs the authorization with
-   the candidate's own freshly generated key instead. Net effect: possession of the relay account
-   alone (no recovery seed) is sufficient to enroll a new active device via the recovery path,
-   directly violating REQ-032 and ADR 0047's binding "Account Recovery Cannot Enroll or Decrypt"
-   claim (D-04, D-16).
+1. **CR-01 (REQ-032) — closed.** `sync-control-service.ts` `enrollViaRecovery` now derives a
+   `CMSRSIG1` recovery signing credential from the recovery seed and signs the recovery
+   authorization with it; `opaque-relay-service.ts` `handleMembershipCas` now verifies that
+   signature against the persisted `recoverySigningPublicKey` (a new required field on
+   `RecoveryPackageRecord`, round-tripping through both relay stores) rather than the
+   candidate's own key. An adversarial regression test proves account-only (no-seed)
+   enrollment is rejected.
 
-2. **CR-02 (REQ-031/REQ-034 / correctness):** `src/sync/replication/sync-replication-service.ts`
-   (`sealOne`, lines 186 & 209) computes `previousEnvelopeHash` as a SHA-256 digest of the entire
-   base64-encoded envelope JSON. `src/sync/replication/replay-verifier.ts` (`verify`, lines 92-96,
-   per its own documented chain-digest contract at lines 21-27) requires `previousEnvelopeHash` to
-   equal the predecessor's `ciphertextDigest` — a BLAKE2b generichash over ciphertext bytes only.
-   These are irreconcilably different values. Every envelope at device-sequence >= 2 will fail the
-   chain check and be rejected `SYNC_INTEGRITY_FAILED` on every peer, before decryption — no
-   device can replicate more than one operation before its stream is permanently rejected by
-   receivers. This breaks REQ-034 (offline convergence) for any realistic multi-operation history,
-   and by extension puts REQ-035 (tombstone propagation) at risk since it rides the same pipeline.
-   Confirmed the existing automated test suite does not exercise this: the one test that reaches
-   sequence-2 chain verification (`tests/sync/replay-equivocation.test.ts:365-395`) only asserts
-   that a *tampered* `previousEnvelopeHash` is rejected — it never asserts that the real,
-   correctly-produced sequence-2 envelope is accepted — and all integration convergence tests
-   (`tests/integration/multi-device-sync.test.ts`) push only a single outbox row per device.
+2. **CR-02 (REQ-031/REQ-034, and REQ-035 by extension) — closed.** `sync-replication-service.ts`
+   `sealOne` now sources `previousEnvelopeHash` from the predecessor's own `ciphertextDigest`
+   (matching `ReplayVerifier.chainDigestOf` exactly) instead of a SHA-256 digest of the whole
+   base64 envelope JSON. A genuine sequence-2 envelope now verifies, and a real-network
+   ≥2-operations-per-device convergence test passes.
 
-Per the task instructions, the absence of independent external cryptographic review is NOT
-flagged as a gap (ADR 0047 carries an explicit Owner Risk Acceptance for that, appropriate for
-a personal single-user deployment). Both gaps recorded here are concrete implementation defects
-against the protocol the ADR itself specifies, independent of that acceptance's scope.
+The full suite (672 tests) and `tsc --noEmit` are both green. Per the task's standing
+instruction, the absence of independent external cryptographic review is not flagged — ADR
+0047 carries an explicit Owner Risk Acceptance appropriate for this personal single-user
+deployment, and that acceptance's scope is unaffected by this re-verification.
 
-REQ-033 and REQ-036 read as satisfied from code inspection but were not exhaustively re-audited
-beyond the two mandated confirmations; no additional defects were identified in them during this
-pass.
+Phase 6 goal — "Synchronize memory without giving the relay decryption capability" — is
+achieved: encryption remains device-side only, the relay never gains decryption capability
+(including via the recovery path, now that CR-01 is closed), and synchronization itself now
+functions correctly for realistic multi-operation histories (CR-02 closed).
 
 ---
 
-_Verified: 2026-07-20T00:56:20Z_
+_Verified: 2026-07-20T13:31:00Z_
 _Verifier: Claude (gsd-verifier)_
