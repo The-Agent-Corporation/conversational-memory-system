@@ -35,6 +35,20 @@ const OptionsSchema = z.object({
 export interface MemoryStatusCommandOptions {
   databasePath: string;
   personId: string;
+  /** Injectable clock for deterministic latency reporting (REQ-040 — no wall-clock timing assertions in tests). */
+  clock?: { now(): number };
+}
+
+export interface SyncLagSnapshot {
+  pendingOutboxOperationCount: number;
+  oldestPendingOutboxCreatedAt: string | null;
+}
+
+export interface HealthPerformanceSnapshot {
+  /** Elapsed time (per the injected or wall clock) to gather this health snapshot's reads. */
+  queryLatencyMs: number;
+  /** Whether SQLite has recorded index/table statistics (ANALYZE has run at least once). */
+  indexStatsAvailable: boolean;
 }
 
 export interface MemoryStatusCommandResult {
@@ -54,6 +68,17 @@ export interface MemoryStatusCommandResult {
   proposedMemoryChangeCount: number;
   bootstrapCheckpoint: HistoricalBootstrapCheckpoint | null;
   daemon: DaemonStatusSnapshot;
+  /** On-disk footprint of the database file plus -wal/-shm sidecars, in bytes. */
+  dbFileSizeBytes: number;
+  /** Current schema version (pragma user_version), kept in sync by runSchemaMigrations. */
+  schemaVersion: number;
+  /** applied_at of the most recently applied schema migration, or null if none has run yet. */
+  schemaMigrationAppliedAt: string | null;
+  /** Unsealed (pending) local sync outbox operations for this person — how far this device is behind sealing. */
+  syncLag: SyncLagSnapshot;
+  /** Count of proposals awaiting review for this person. */
+  pendingProposalCount: number;
+  performance: HealthPerformanceSnapshot;
 }
 
 export async function readDaemonStatusSnapshot(
@@ -119,10 +144,12 @@ export async function readDaemonStatusSnapshot(
 export async function runMemoryStatusCommand(
   options: MemoryStatusCommandOptions
 ): Promise<MemoryStatusCommandResult> {
-  const parsed = OptionsSchema.parse(options);
+  const parsed = OptionsSchema.parse({ databasePath: options.databasePath, personId: options.personId });
+  const clock = options.clock ?? { now: () => Date.now() };
   const store = new SqliteStore(parsed.databasePath);
   try {
-    const [sources, events, imports, grants, audits, quarantine, summaries, anchors, boxes, proposals, checkpoint, daemon] =
+    const startedAt = clock.now();
+    const [sources, events, imports, grants, audits, quarantine, summaries, anchors, boxes, proposals, syncOutbox, checkpoint, daemon] =
       await Promise.all([
         store.listSources(parsed.personId),
         store.listCanonicalEvents(parsed.personId),
@@ -134,9 +161,23 @@ export async function runMemoryStatusCommand(
         store.listAnchors(),
         store.listBoxes(),
         store.listProposals({ state: "proposed" }),
+        store.listSyncOutboxOperations(parsed.personId),
         store.getBootstrapCheckpoint(historicalBootstrapCheckpointId(parsed.personId)),
         readDaemonStatusSnapshot(store, new Date().toISOString(), null, parsed.personId)
       ]);
+    const dbFileSizeBytes = store.dbFileSizeBytes();
+    const schemaVersion = store.getSchemaVersion();
+    const schemaMigrationAppliedAt = store.getLatestSchemaMigrationAppliedAt();
+    const indexStatsAvailable = store.hasIndexStatistics();
+    const queryLatencyMs = clock.now() - startedAt;
+
+    const pendingOutbox = syncOutbox.filter((operation) => operation.status === "pending");
+    const oldestPendingOutboxCreatedAt = pendingOutbox.reduce<string | null>(
+      (oldest, operation) => (oldest === null || operation.createdAt < oldest ? operation.createdAt : oldest),
+      null
+    );
+    const personProposals = proposals.filter((proposal) => proposal.personId === parsed.personId);
+
     return {
       ok: true,
       personId: parsed.personId,
@@ -158,11 +199,21 @@ export async function runMemoryStatusCommand(
       proposedBoxCount: boxes.filter(
         (box) => box.personId === parsed.personId && box.state === "proposed"
       ).length,
-      proposedMemoryChangeCount: proposals.filter(
-        (proposal) => proposal.personId === parsed.personId
-      ).length,
+      proposedMemoryChangeCount: personProposals.length,
       bootstrapCheckpoint: checkpoint,
-      daemon
+      daemon,
+      dbFileSizeBytes,
+      schemaVersion,
+      schemaMigrationAppliedAt,
+      syncLag: {
+        pendingOutboxOperationCount: pendingOutbox.length,
+        oldestPendingOutboxCreatedAt
+      },
+      pendingProposalCount: personProposals.length,
+      performance: {
+        queryLatencyMs,
+        indexStatsAvailable
+      }
     };
   } finally {
     store.close();
