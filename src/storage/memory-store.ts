@@ -148,5 +148,16 @@ export interface MemoryStore {
   sealClaimedOutboxEnvelope(input: SealClaimedOutboxEnvelopeInput): Promise<SealOutboxResult>;
   getSyncReplayFrontier(personId: string, deviceId: string): Promise<number>;
   listSyncOutboxOperations(personId: string): Promise<SyncOutboxOperation[]>;
+  /**
+   * Indexed single-operation lookup by (person, device, deviceSequence). Producers that only
+   * need one predecessor operation MUST use this instead of listing the whole outbox and
+   * scanning it: the outbox grows by one row per ingested event, so a per-event full-list scan
+   * is O(n^2) over a bootstrap import. Returns null when no such operation exists.
+   */
+  getSyncOutboxOperation(
+    personId: string,
+    deviceId: string,
+    deviceSequence: number
+  ): Promise<SyncOutboxOperation | null>;
   listAcceptedSyncOperations(personId: string): Promise<AcceptedSyncOperation[]>;
 }

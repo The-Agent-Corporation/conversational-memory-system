@@ -1066,6 +1066,16 @@ export class InMemoryStore implements MemoryStore {
       .sort((left, right) => left.deviceSequence - right.deviceSequence));
   }
 
+  async getSyncOutboxOperation(
+    personId: string,
+    deviceId: string,
+    deviceSequence: number
+  ): Promise<SyncOutboxOperation | null> {
+    const match = this.syncOutbox.find((row) =>
+      row.personId === personId && row.deviceId === deviceId && row.deviceSequence === deviceSequence);
+    return match ? structuredClone(match) : null;
+  }
+
   async listAcceptedSyncOperations(personId: string): Promise<AcceptedSyncOperation[]> {
     return structuredClone(this.acceptedSyncOperations
       .filter((op) => op.personId === personId)

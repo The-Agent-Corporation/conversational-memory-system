@@ -1439,6 +1439,17 @@ export class SqliteStore implements MemoryStore {
     return rows.map((row) => SyncOutboxOperationSchema.parse(JSON.parse(row.payload)));
   }
 
+  async getSyncOutboxOperation(
+    personId: string,
+    deviceId: string,
+    deviceSequence: number
+  ): Promise<SyncOutboxOperation | null> {
+    const row = this.database.prepare(
+      "select payload from sync_outbox where person_id = ? and device_id = ? and device_sequence = ?"
+    ).get(personId, deviceId, deviceSequence) as PayloadRow | undefined;
+    return row ? SyncOutboxOperationSchema.parse(JSON.parse(row.payload)) : null;
+  }
+
   async listAcceptedSyncOperations(personId: string): Promise<AcceptedSyncOperation[]> {
     const rows = this.database.prepare(
       "select payload from accepted_sync_operations where person_id = ? order by sequence asc"
