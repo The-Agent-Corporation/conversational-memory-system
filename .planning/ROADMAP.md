@@ -15,7 +15,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 5: Generic MCP Interface** — Expose safe host-neutral memory tools to Codex, OpenClaw, Claude-compatible clients, and future agents. (completed 2026-07-19)
 - [x] **Phase 6: Zero-Knowledge Multi-Device Sync** — Add encrypted device convergence after threat-model and protocol approval. (completed 2026-07-19)
 - [x] **Phase 7: Onboarding and Operational Readiness** — Package the product with first-run consent, audit, migration, backup, and performance surfaces. (completed 2026-07-20)
-- [ ] **Phase 8: Vector Storage Foundation** — Add a scope-safe, tombstone-ready `summary_vectors` store with exact-match parity between SqliteStore and InMemoryStore.
+- [x] **Phase 8: Vector Storage Foundation** — Add a scope-safe, tombstone-ready `summary_vectors` store with exact-match parity between SqliteStore and InMemoryStore. (completed 2026-07-21)
 - [ ] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default.
 - [ ] **Phase 10: Embedding Backfill** — Resumable, idempotent, checkpointed backfill of vectors for all 135,366 existing summaries.
 - [ ] **Phase 11: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
@@ -249,7 +249,7 @@ Plans:
 - [x] 08-01-PLAN.md — BLOB codec + MemoryStore vector contract + Wave 0 parity suite (RED)
 - [x] 08-02-PLAN.md — SqliteStore vectors + summary_vectors migration (version 2)
 - [x] 08-03-PLAN.md — InMemoryStore vectors (exact-parity twin)
-- [ ] 08-04-PLAN.md — SC3 cross-store exact-parity gate + full-suite verification
+- [x] 08-04-PLAN.md — SC3 cross-store exact-parity gate + full-suite verification
 
 ### Phase 9: Embedding Model + Embedder
 
