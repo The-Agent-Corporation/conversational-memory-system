@@ -82,3 +82,19 @@ function tokenize(text: string): string[] {
     .split(/[^a-z0-9]+/)
     .filter((token) => token.length > 0);
 }
+
+/**
+ * D-03: opt-in extension surface for embedders that support bge's asymmetric
+ * embedding recipe (queries prefixed with an instruction string, stored
+ * passages/summaries embedded bare). Extends, does not replace, `Embedder` —
+ * `DeterministicEmbedder` never implements this, since it has no asymmetric
+ * recipe; its `embed()` alone remains its passage-equivalent.
+ */
+export interface AsymmetricEmbedder extends Embedder {
+  /** Embeds text as a search query (bge instruction-prefixed). */
+  embedQuery(text: string): Promise<Embedding>;
+}
+
+export function isAsymmetricEmbedder(embedder: Embedder): embedder is AsymmetricEmbedder {
+  return typeof (embedder as Partial<AsymmetricEmbedder>).embedQuery === "function";
+}
