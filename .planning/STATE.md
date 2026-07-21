@@ -1,18 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 7
-current_plan: Not started
-status: milestone_complete
-stopped_at: Milestone complete (Phase 07 was final phase)
-last_updated: 2026-07-20T20:37:30.689Z
+milestone: v1.1
+milestone_name: Vector-Native Traces + Semantic Recall
+status: planning
+last_updated: "2026-07-21T16:08:34.222Z"
+last_activity: 2026-07-21
 progress:
-  total_phases: 7
-  completed_phases: 4
-  total_plans: 50
-  completed_plans: 50
-  percent: 57
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -75,3 +73,10 @@ The current execution environment can edit the worktree but cannot write `.git/i
 - [Phase 05]: Require structural Vitest JSON plus exact five-row validation approval for final signoff. — Prevents prose, skipped tests, or malformed validation artifacts from appearing green.
 - [Phase 05]: Authorize the union of declared, payload, recursive Summary, Box, Trace, and next-effect dependencies before constructing proposal decisions.
 - [Phase 05]: Bind normalized startup scopes and exact present-or-absent dependency state, then revalidate it with one shared pure validator before either adapter writes.
+
+## Current Position
+
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-07-21 — Milestone v1.1 started
