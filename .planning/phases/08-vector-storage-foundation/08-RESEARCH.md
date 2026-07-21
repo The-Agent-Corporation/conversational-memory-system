@@ -347,7 +347,7 @@ async commitSourceDeletion(input: CommitSourceDeletionInput): Promise<MutationCo
 
 **If this table is empty:** N/A — see above; all three assumptions are explicitly within the CONTEXT.md-granted discretion zone, not disputed facts.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `findNearestSummaries` accept a single `scopeId` filter, a `scopeIds` array (any-of or all-of), or reuse `applyRetrievalBoundary`'s exact semantics (`(summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId))`)?**
    - What we know: `applyRetrievalBoundary` (`memory-retriever.ts:113-167`) uses an "every allowed scope must be in the caller's allowed set" (AND) semantic with a `"personal"` default when `scopeIds` is absent. This is the existing, load-bearing boundary contract summaries already respect.
