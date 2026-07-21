@@ -227,6 +227,16 @@ for (const backend of backends) {
       expect(matches.map((match) => match.summaryId)).not.toContain(summaryId);
     });
 
+    it("rejects saveSummaryVector when dimensions !== vector.length (CR-01)", async () => {
+      const record = vectorRecord({ dimensions: 8, vector: [1, 0, 0, 0] });
+      await expect(store.saveSummaryVector(record)).rejects.toThrow(/dimensions/);
+    });
+
+    it("rejects saveSummaryVector when the vector contains a non-finite value (WR-02)", async () => {
+      const record = vectorRecord({ vector: [1, Number.NaN, 0, 0] });
+      await expect(store.saveSummaryVector(record)).rejects.toThrow(/non-finite/);
+    });
+
   });
 }
 
@@ -299,6 +309,66 @@ describe("cross-store exact parity (SC3, D-07)", () => {
 
       expect(sqliteResult).toHaveLength(3);
       expect(sqliteResult).toEqual(inMemoryResult);
+    } finally {
+      await inMemory.cleanup();
+      await sqlite.cleanup();
+    }
+  });
+
+  it("applies an identical minimumScore keep-condition in both stores (SC3 gap 1)", async () => {
+    const inMemory = await backends[0]!.create();
+    const sqlite = await backends[1]!.create();
+
+    try {
+      await seed(inMemory.store);
+      await seed(sqlite.store);
+
+      // summary_beta = [1,0,0,0] against query [0.5,0.5,0.5,0.5] scores exactly 0.5 (float32-exact),
+      // which sits at the minimumScore boundary -- both stores must keep it identically, and both
+      // must drop summary_gamma = [0,1,0,0] (also exactly 0.5)... instead pick a threshold that
+      // excludes at least one row unambiguously: 0.9 excludes summary_beta/gamma (score 0.5) but
+      // keeps summary_delta/summary_epsilon (score 1.0, exact match to the query direction).
+      const minimumScoreQuery: FindNearestSummariesQuery = { ...query, minimumScore: 0.9 };
+
+      const inMemoryResult = await inMemory.store.findNearestSummaries(minimumScoreQuery);
+      const sqliteResult = await sqlite.store.findNearestSummaries(minimumScoreQuery);
+
+      expect(sqliteResult).toEqual(inMemoryResult);
+      expect(sqliteResult.map((match) => match.summaryId)).not.toContain("summary_beta");
+      expect(sqliteResult.map((match) => match.summaryId)).not.toContain("summary_gamma");
+      expect(sqliteResult.map((match) => match.summaryId)).toEqual(
+        expect.arrayContaining(["summary_delta", "summary_epsilon"])
+      );
+    } finally {
+      await inMemory.cleanup();
+      await sqlite.cleanup();
+    }
+  });
+
+  it("skips a dimension-drifted row identically in both stores (WR-04)", async () => {
+    const inMemory = await backends[0]!.create();
+    const sqlite = await backends[1]!.create();
+
+    try {
+      const wellFormed = vectorRecord({ summaryId: "summary_wellformed", dimensions: 4, vector: [0.5, 0.5, 0.5, 0.5] });
+      const drifted = vectorRecord({
+        summaryId: "summary_drifted",
+        dimensions: 2,
+        vector: [0.5, 0.5]
+      });
+
+      await inMemory.store.saveSummaryVector(wellFormed);
+      await inMemory.store.saveSummaryVector(drifted);
+      await sqlite.store.saveSummaryVector(wellFormed);
+      await sqlite.store.saveSummaryVector(drifted);
+
+      const inMemoryResult = await inMemory.store.findNearestSummaries(query);
+      const sqliteResult = await sqlite.store.findNearestSummaries(query);
+
+      expect(sqliteResult).toEqual(inMemoryResult);
+      const ids = sqliteResult.map((match) => match.summaryId);
+      expect(ids).toContain("summary_wellformed");
+      expect(ids).not.toContain("summary_drifted");
     } finally {
       await inMemory.cleanup();
       await sqlite.cleanup();
