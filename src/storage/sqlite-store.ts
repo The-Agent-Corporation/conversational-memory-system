@@ -25,7 +25,16 @@ import {
   type Summary,
   type Turn
 } from "../domain/types.js";
-import type { MemoryStore, ProposalFilter, TraceFilter } from "./memory-store.js";
+import type {
+  FindNearestSummariesQuery,
+  MemoryStore,
+  ProposalFilter,
+  SummaryVectorMatch,
+  SummaryVectorRecord,
+  TraceFilter
+} from "./memory-store.js";
+import { cosineSimilarity } from "../embeddings/embedder.js";
+import { packFloat32Vector, unpackFloat32Vector } from "../embeddings/vector-codec.js";
 import { ImportCheckpointSchema, type ImportCheckpoint } from "../imports/types.js";
 import {
   HistoricalBootstrapCheckpointSchema,
@@ -106,6 +115,17 @@ import {
 
 interface PayloadRow {
   payload: string;
+}
+
+interface SummaryVectorTableRow {
+  summary_id: string;
+  provider: string;
+  model: string;
+  dimensions: number;
+  vector: Uint8Array;
+  person_id: string;
+  scope_ids_json: string;
+  created_at: string;
 }
 
 interface DatabaseSyncConstructor {
@@ -1229,6 +1249,99 @@ export class SqliteStore implements MemoryStore {
       : this.database.prepare("select payload from traces order by id asc").all() as PayloadRow[];
 
     return rows.map((row) => MemoryTraceSchema.parse(JSON.parse(row.payload)));
+  }
+
+  async saveSummaryVector(record: SummaryVectorRecord): Promise<void> {
+    this.database
+      .prepare(
+        `insert into summary_vectors
+           (summary_id, provider, model, dimensions, vector, person_id, scope_ids_json, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?)
+         on conflict(summary_id, provider, model) do update set
+           dimensions = excluded.dimensions,
+           vector = excluded.vector,
+           person_id = excluded.person_id,
+           scope_ids_json = excluded.scope_ids_json,
+           created_at = excluded.created_at`
+      )
+      .run(
+        record.summaryId,
+        record.provider,
+        record.model,
+        record.dimensions,
+        packFloat32Vector(record.vector),
+        record.personId,
+        JSON.stringify(record.scopeIds),
+        record.createdAt
+      );
+  }
+
+  async getSummaryVector(summaryId: string, provider: string, model: string): Promise<SummaryVectorRecord | null> {
+    const row = this.database
+      .prepare(
+        `select summary_id, provider, model, dimensions, vector, person_id, scope_ids_json, created_at
+         from summary_vectors
+         where summary_id = ? and provider = ? and model = ?`
+      )
+      .get(summaryId, provider, model) as SummaryVectorTableRow | undefined;
+    return row ? this.summaryVectorRecordFromRow(row) : null;
+  }
+
+  async listSummaryIdsMissingVector(provider: string, model: string): Promise<string[]> {
+    const rows = this.database
+      .prepare(
+        `select id from summaries
+         where not exists (
+           select 1 from summary_vectors sv
+           where sv.summary_id = summaries.id and sv.provider = ? and sv.model = ?
+         )
+         order by id asc`
+      )
+      .all(provider, model) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  async findNearestSummaries(query: FindNearestSummariesQuery): Promise<SummaryVectorMatch[]> {
+    const candidateRows = this.database
+      .prepare(
+        `select summary_id, provider, model, dimensions, vector, person_id, scope_ids_json, created_at
+         from summary_vectors
+         where provider = ? and model = ? and person_id = ?`
+      )
+      .all(query.provider, query.model, query.personId) as SummaryVectorTableRow[];
+
+    const allowedScopeIds = new Set(query.allowedScopeIds);
+    const matches: SummaryVectorMatch[] = [];
+    for (const row of candidateRows) {
+      const scopeIds = JSON.parse(row.scope_ids_json) as string[];
+      const effectiveScopeIds = scopeIds.length ? scopeIds : ["personal"];
+      if (!effectiveScopeIds.every((scopeId) => allowedScopeIds.has(scopeId))) continue;
+      const vector = unpackFloat32Vector(row.vector, row.dimensions);
+      const score = cosineSimilarity(query.vector, vector);
+      if (query.minimumScore !== undefined && score < query.minimumScore) continue;
+      matches.push({ summaryId: row.summary_id, score });
+    }
+
+    matches.sort((left, right) => right.score - left.score || left.summaryId.localeCompare(right.summaryId));
+    return matches.slice(0, query.topK);
+  }
+
+  async deleteSummaryVectors(summaryIds: string[]): Promise<void> {
+    const statement = this.database.prepare("delete from summary_vectors where summary_id = ?");
+    for (const summaryId of summaryIds) statement.run(summaryId);
+  }
+
+  private summaryVectorRecordFromRow(row: SummaryVectorTableRow): SummaryVectorRecord {
+    return {
+      summaryId: row.summary_id,
+      provider: row.provider,
+      model: row.model,
+      dimensions: row.dimensions,
+      vector: unpackFloat32Vector(row.vector, row.dimensions),
+      personId: row.person_id,
+      scopeIds: JSON.parse(row.scope_ids_json) as string[],
+      createdAt: row.created_at
+    };
   }
 
   async commitLocalSyncOperation(input: CommitLocalSyncOperationInput): Promise<SyncCommitReceipt> {

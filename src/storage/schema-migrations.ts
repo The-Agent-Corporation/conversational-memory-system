@@ -27,6 +27,28 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
     apply: () => {
       /* no-op: base block already ran before runSchemaMigrations is invoked */
     }
+  },
+  {
+    version: 2,
+    description: "REQ-041: add summary_vectors table for local vector-native summary embeddings",
+    apply: (database) => {
+      database.exec(`
+        create table if not exists summary_vectors (
+          summary_id text not null,
+          provider text not null,
+          model text not null,
+          dimensions integer not null,
+          vector blob not null,
+          person_id text not null,
+          scope_ids_json text not null,
+          created_at text not null,
+          primary key (summary_id, provider, model)
+        );
+
+        create index if not exists idx_summary_vectors_provider_model_person
+          on summary_vectors (provider, model, person_id, summary_id);
+      `);
+    }
   }
 ];
 
