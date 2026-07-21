@@ -95,3 +95,16 @@ None - no external service configuration required.
 ---
 *Phase: 08-vector-storage-foundation*
 *Completed: 2026-07-21*
+
+## Self-Check
+
+```
+FOUND: src/storage/schema-migrations.ts
+FOUND: src/storage/sqlite-store.ts
+FOUND: .planning/phases/08-vector-storage-foundation/08-02-SUMMARY.md
+FOUND: 58fd7aa (feat(08-02): add summary_vectors as schema-migrations version 2)
+FOUND: 0db1dc9 (feat(08-02): implement SqliteStore vector surface (D-02/D-03/D-05/D-06/D-07/D-09))
+FOUND: 077a7a1 (docs(08-02): add plan summary for SqliteStore vector surface)
+```
+
+## Self-Check: PASSED
