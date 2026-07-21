@@ -23,13 +23,17 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+const RUN_NETWORK_TESTS = process.env.MEMORY_RUN_NETWORK_TESTS === "1";
+const NETWORK_TEST_TIMEOUT_MS = 300_000;
+
 /**
- * Wave 0 RED scaffold (D-01/D-02/D-04). `vendorModel` currently throws
- * "not implemented" — all cases below are expected to fail until plan
- * 02/03/04 land the real vendoring flow and pin real sha256 hashes into
- * `BGE_SMALL_EN_V1_5_MANIFEST`.
+ * These cases run `vendorModel` against a fresh temp dir, which performs a
+ * real ~127MB Hugging Face download. The default `npm test` run must stay
+ * offline-deterministic (REQ-040/REQ-044), so the whole suite is gated
+ * behind MEMORY_RUN_NETWORK_TESTS=1 (used by the one-time vendoring flow
+ * and available for manual re-verification).
  */
-describe("model-vendor (REQ-044)", () => {
+describe.runIf(RUN_NETWORK_TESTS)("model-vendor (REQ-044, network-gated)", () => {
   let dir: string;
 
   beforeEach(async () => {
@@ -40,7 +44,7 @@ describe("model-vendor (REQ-044)", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("writes the pinned fp32 file set under localModelPath", async () => {
+  it("writes the pinned fp32 file set under localModelPath", { timeout: NETWORK_TEST_TIMEOUT_MS }, async () => {
     await vendorModel(dir);
 
     const repoDir = join(dir, BGE_SMALL_EN_V1_5_MANIFEST.repo);
@@ -49,7 +53,7 @@ describe("model-vendor (REQ-044)", () => {
     }
   });
 
-  it("does NOT write quantized variant files (D-02 fp32-only)", async () => {
+  it("does NOT write quantized variant files (D-02 fp32-only)", { timeout: NETWORK_TEST_TIMEOUT_MS }, async () => {
     await vendorModel(dir);
 
     const repoDir = join(dir, BGE_SMALL_EN_V1_5_MANIFEST.repo);
@@ -58,7 +62,7 @@ describe("model-vendor (REQ-044)", () => {
     }
   });
 
-  it("throws when a vendored file's sha256 does not match the pinned manifest", async () => {
+  it("throws when a vendored file's sha256 does not match the pinned manifest", { timeout: NETWORK_TEST_TIMEOUT_MS }, async () => {
     await expect(vendorModel(dir)).rejects.toThrow();
   });
 });
