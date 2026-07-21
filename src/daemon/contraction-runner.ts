@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CanonicalEvent } from "../domain/canonical.js";
 import type { Anchor, Summary, Turn } from "../domain/types.js";
 import { DerivationInvalidator } from "../service/derivation-invalidator.js";
+import type { DerivationSupersession } from "./types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import { DeterministicSummarizer, type Summarizer } from "../summarization/summarizer.js";
 import { TopicMonitor, type CompletedTopicSpan, type RollingTopicState } from "../topic/topic-monitor.js";
@@ -15,6 +16,24 @@ import {
 
 const PROCESSOR_VERSION = "continuous-contraction/v1";
 export const DEFAULT_CONTRACTION_LIMITS = Object.freeze({ maxEvents: 250, maxMonotonicMs: 2_000 });
+
+/**
+ * Optional per-slice fast-path inputs for callers that drain many slices back-to-back over an
+ * unchanging canonical timeline (the historical bootstrap). Omit both fields for the default
+ * fresh-read behavior used by the daemon.
+ */
+export interface DrainSliceContext {
+  /** Preloaded canonical events, reused across slices instead of reloading them every call. */
+  preloadedEvents?: CanonicalEvent[];
+  /** Skip the per-slice scope re-assertion when the caller has already asserted it once for this pass. */
+  scopesAlreadyAsserted?: boolean;
+  /**
+   * `event id -> position in preloadedEvents`, built once by the caller. Turns the per-slice
+   * summary-invalidation scan from O(summaries * events) findIndex walks into O(1) lookups; this
+   * is what makes a large bootstrap (tens of thousands of accumulated summaries) tractable.
+   */
+  eventIndexById?: ReadonlyMap<string, number>;
+}
 
 export interface ContractionClock {
   now(): string;
@@ -55,7 +74,8 @@ export class ContractionRunner {
   async drainSlice(
     personId: string,
     jobId: string,
-    limits: Partial<typeof DEFAULT_CONTRACTION_LIMITS> = {}
+    limits: Partial<typeof DEFAULT_CONTRACTION_LIMITS> = {},
+    context: DrainSliceContext = {}
   ): Promise<ContractionSliceResult> {
     const parsedAuthority = WriteAuthoritySchema.safeParse(this.options.authority);
     if (!parsedAuthority.success) throw new Error("Contraction write authority is required");
@@ -68,8 +88,14 @@ export class ContractionRunner {
     const job = await this.store.getContractionJob(jobId);
     if (!job || job.personId !== personId) throw new Error("Contraction job person ownership mismatch");
 
-    const allEvents = await this.store.listCanonicalEvents(personId);
-    await this.assertEventScopes(personId, allEvents);
+    // Canonical events are immutable for the duration of a contraction pass, so a caller draining
+    // many slices in a tight loop (the historical bootstrap: ~1 slice per `maxEvents` events) can
+    // load them ONCE and inject them here. Reloading + re-scope-asserting all events on every slice
+    // was O(slices * events) = O(n^2), which made a 292k-event bootstrap take hours. The daemon,
+    // which drains at most a slice per scheduled tick, passes nothing and keeps the fresh-read path.
+    const allEvents = context.preloadedEvents ?? await this.store.listCanonicalEvents(personId);
+    if (!context.scopesAlreadyAsserted) await this.assertEventScopes(personId, allEvents);
+    const eventIndexById = context.eventIndexById ?? buildEventIndex(allEvents);
     const checkpointId = `contraction_checkpoint_${jobId}`;
     const previous = await this.store.getContractionCheckpoint(checkpointId);
     if (previous && (previous.personId !== personId || previous.jobId !== jobId)) {
@@ -94,8 +120,8 @@ export class ContractionRunner {
     }
 
     const startIndex = checkpointCanResume
-      ? resumeIndex(allEvents, previous)
-      : await this.affectedStartIndex(personId, allEvents, job.earliestAffected);
+      ? resumeIndex(allEvents, previous, eventIndexById)
+      : await this.affectedStartIndex(personId, allEvents, job.earliestAffected, eventIndexById);
     const rewindOrderKey = checkpointCanResume ? null : orderKey(allEvents[startIndex] ?? null);
     const monitor = new TopicMonitor();
     if (checkpointCanResume && previous.activeTopic) monitor.restore(previous.activeTopic);
@@ -142,21 +168,34 @@ export class ContractionRunner {
     const spans = [...completedSpans];
     if (activeTopic) spans.push({ ...activeTopic, completedAt: activeTopic.updatedAt });
     const summaries: Summary[] = [];
-    for (const span of spans) summaries.push(await this.summaryForSpan(personId, span, allEvents, turns));
+    for (const span of spans) summaries.push(await this.summaryForSpan(personId, span, allEvents));
 
-    const oldSummaries = (await this.store.listSummaries()).filter((summary) =>
-      summary.personId === personId && summary.origin === "historical_bootstrap" && summary.state !== "superseded"
-    );
-    const affectedOldIds = oldSummaries
-      .filter((summary) => summaryIntersectsAtOrAfter(summary, allEvents, startIndex))
-      .map((summary) => summary.id);
-    const supersessions = await new DerivationInvalidator(this.store).invalidateDependencies({
-      personId,
-      summaryIds: affectedOldIds,
-      canonicalEventIds: processed.map((event) => event.id),
-      preserveIds: [...summaries.map((summary) => summary.id), ...anchors.map((anchor) => anchor.id)],
-      supersededAt: this.clock.now()
-    });
+    // Superseding prior derivations is only meaningful when this slice REPROCESSES an
+    // already-derived range: a rewind, a generation change, or the first slice against an existing
+    // derived store (all of which set checkpointCanResume=false). On the forward path
+    // (checkpointCanResume=true) the slice window is entirely fresh events — nothing prior depends
+    // on them, and a continuing topic's provisional summary is re-emitted under the SAME
+    // deterministic id (an upsert, not a duplicate), so no supersession is required. Skipping the
+    // dependency scan here is what makes a bulk bootstrap tractable: invalidateDependencies loads
+    // and re-parses EVERY summary/anchor/box/proposal/trace in the store, so running it on all
+    // ~n/maxEvents forward slices was O(slices * all-derived-artifacts). The rewind path keeps the
+    // full (correct) invalidation.
+    let supersessions: DerivationSupersession[] = [];
+    if (!checkpointCanResume) {
+      const oldSummaries = (await this.store.listSummaries()).filter((summary) =>
+        summary.personId === personId && summary.origin === "historical_bootstrap" && summary.state !== "superseded"
+      );
+      const affectedOldIds = oldSummaries
+        .filter((summary) => summaryIntersectsAtOrAfter(summary, eventIndexById, startIndex))
+        .map((summary) => summary.id);
+      supersessions = await new DerivationInvalidator(this.store).invalidateDependencies({
+        personId,
+        summaryIds: affectedOldIds,
+        canonicalEventIds: processed.map((event) => event.id),
+        preserveIds: [...summaries.map((summary) => summary.id), ...anchors.map((anchor) => anchor.id)],
+        supersededAt: this.clock.now()
+      });
+    }
 
     const nextEvent = allEvents[nextIndex] ?? null;
     const processedThroughOrderKey = orderKey(processed.at(-1) ?? null);
@@ -222,7 +261,12 @@ export class ContractionRunner {
     };
   }
 
-  private async affectedStartIndex(personId: string, events: CanonicalEvent[], affected: CanonicalOrderKey): Promise<number> {
+  private async affectedStartIndex(
+    personId: string,
+    events: CanonicalEvent[],
+    affected: CanonicalOrderKey,
+    eventIndexById: ReadonlyMap<string, number>
+  ): Promise<number> {
     const earliestIndex = Math.max(0, events.findIndex((event) => compareKeys(orderKey(event)!, affected) >= 0));
     const summaries = (await this.store.listSummaries()).filter((summary) =>
       summary.personId === personId && summary.origin === "historical_bootstrap" && summary.state !== "superseded"
@@ -230,7 +274,7 @@ export class ContractionRunner {
     let boundary = earliestIndex;
     for (const summary of summaries) {
       const indices = (summary.sourceCanonicalEventIds ?? [])
-        .map((id) => events.findIndex((event) => event.id === id))
+        .map((id) => eventIndexById.get(id) ?? -1)
         .filter((index) => index >= 0);
       if (indices.length === 0) continue;
       const first = Math.min(...indices);
@@ -254,15 +298,17 @@ export class ContractionRunner {
   private async summaryForSpan(
     personId: string,
     span: CompletedTopicSpan,
-    events: CanonicalEvent[],
-    newTurns: Turn[]
+    events: CanonicalEvent[]
   ): Promise<Summary> {
     const sourceEvents = events.slice(span.sourceTurnRange.startSequence - 1, span.sourceTurnRange.endSequence);
     const first = sourceEvents[0];
     if (!first) throw new Error("Cannot contract an empty topic span");
-    const storedTurns = await this.store.listTurns(span.hostSessionId);
-    const byId = new Map([...storedTurns, ...newTurns].map((turn) => [turn.id, turn]));
-    const sourceTurns = sourceEvents.map((event) => byId.get(`personal_turn_${event.id}`)).filter((turn): turn is Turn => !!turn);
+    // Turns are a deterministic function of (event, threadId, sequence) — see turnFromEvent — so
+    // reconstruct the span's turns directly. Loading every persisted turn for the person
+    // (listTurns) was an O(all turns) scan per span, the last per-slice full-load that kept a bulk
+    // bootstrap quadratic. sourceEvents[k] sits at global sequence startSequence + k by construction.
+    const sourceTurns = sourceEvents.map((event, offset) =>
+      turnFromEvent(event, span.hostSessionId, span.sourceTurnRange.startSequence + offset));
     const draft = await this.summarizer.summarize({ span, sourceTurns });
     return {
       id: summaryId(personId, first.id, span.topicLabel),
@@ -293,21 +339,35 @@ export class ContractionRunner {
   }
 }
 
-function resumeIndex(events: CanonicalEvent[], checkpoint: ContractionCheckpoint): number {
+function buildEventIndex(events: CanonicalEvent[]): ReadonlyMap<string, number> {
+  const index = new Map<string, number>();
+  for (let position = 0; position < events.length; position += 1) index.set(events[position]!.id, position);
+  return index;
+}
+
+function resumeIndex(
+  events: CanonicalEvent[],
+  checkpoint: ContractionCheckpoint,
+  eventIndexById: ReadonlyMap<string, number>
+): number {
   const lastId = checkpoint.activeTopic?.lastEventId;
   if (lastId) {
-    const lastIndex = events.findIndex((event) => event.id === lastId);
-    if (lastIndex >= 0) return lastIndex + 1;
+    const lastIndex = eventIndexById.get(lastId);
+    if (lastIndex !== undefined) return lastIndex + 1;
   }
   if (!checkpoint.nextOrderKey) return events.length;
   const index = events.findIndex((event) => compareKeys(orderKey(event)!, checkpoint.nextOrderKey!) >= 0);
   return index < 0 ? events.length : index;
 }
 
-function summaryIntersectsAtOrAfter(summary: Summary, events: CanonicalEvent[], startIndex: number): boolean {
+function summaryIntersectsAtOrAfter(
+  summary: Summary,
+  eventIndexById: ReadonlyMap<string, number>,
+  startIndex: number
+): boolean {
   return (summary.sourceCanonicalEventIds ?? []).some((id) => {
-    const index = events.findIndex((event) => event.id === id);
-    return index >= startIndex;
+    const index = eventIndexById.get(id);
+    return index !== undefined && index >= startIndex;
   });
 }
 

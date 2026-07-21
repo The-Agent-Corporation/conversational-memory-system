@@ -125,8 +125,20 @@ export class HistoricalBootstrapper {
     let anchorsDetected = 0;
     let reset = false;
     let finalSlice: ContractionSliceResult | null = null;
+    // Canonical events are immutable across this bootstrap, so hand the already-loaded array to
+    // every slice instead of letting each drainSlice reload all events (O(slices * events) before
+    // this change). The event-index map is built once here so per-slice summary invalidation is
+    // O(1) per lookup instead of a full-array findIndex. Scopes are asserted once, then skipped.
+    const eventIndexById = new Map(events.map((event, index) => [event.id, index]));
+    let scopesAsserted = false;
     for (;;) {
-      const slice = await runner.drainSlice(personId, job.id);
+      const slice = await runner.drainSlice(
+        personId,
+        job.id,
+        {},
+        { preloadedEvents: events, scopesAlreadyAsserted: scopesAsserted, eventIndexById }
+      );
+      scopesAsserted = true;
       finalSlice = slice;
       eventsProcessed += slice.processedEvents;
       summariesUpdated += slice.immediate.summaries;
