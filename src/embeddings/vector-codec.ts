@@ -22,6 +22,10 @@ export function unpackFloat32Vector(bytes: Uint8Array, dimensions: number): numb
     );
   }
 
-  const view = new Float32Array(bytes.buffer, bytes.byteOffset, dimensions);
-  return Array.from(view);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, expectedByteLength);
+  const result = new Array<number>(dimensions);
+  for (let index = 0; index < dimensions; index += 1) {
+    result[index] = view.getFloat32(index * 4, true);
+  }
+  return result;
 }

@@ -41,4 +41,14 @@ describe("vector-codec", () => {
     const view = new Uint8Array(outer.buffer, 8, packed.byteLength);
     expect(unpackFloat32Vector(view, vector.length)).toEqual(vector);
   });
+
+  it("tolerates a non-4-byte-aligned byteOffset without throwing RangeError (WR-01)", () => {
+    const vector = [4.5, -1.25, 0.75, 2.5];
+    const packed = packFloat32Vector(vector);
+    const outer = new Uint8Array(2 + packed.byteLength);
+    outer.set(packed, 2);
+    const view = new Uint8Array(outer.buffer, 2, packed.byteLength);
+    expect(() => unpackFloat32Vector(view, vector.length)).not.toThrow();
+    expect(unpackFloat32Vector(view, vector.length)).toEqual(vector);
+  });
 });
