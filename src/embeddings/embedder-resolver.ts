@@ -45,7 +45,21 @@ export async function resolveEmbedder(databasePath: string): Promise<Embedder> {
  * broken model resolves to `{ healthy: false, reason }` instead of throwing.
  */
 export async function probeEmbedderHealth(databasePath: string): Promise<EmbedderHealth> {
-  const config = readEmbeddingsConfig(databasePath);
+  let config;
+  try {
+    config = readEmbeddingsConfig(databasePath);
+  } catch (error) {
+    // A corrupt or invalid sidecar must not crash health consumers (D-06) —
+    // it reports as enabled-unknown/unhealthy instead.
+    return {
+      enabled: true,
+      provider: "unknown",
+      model: "unknown",
+      revision: "unknown",
+      healthy: false,
+      reason: `embeddings config unreadable: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
 
   if (!config.enabled) {
     return {

@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -63,6 +63,9 @@ describe.runIf(RUN_NETWORK_TESTS)("model-vendor (REQ-044, network-gated)", () =>
   });
 
   it("throws when a vendored file's sha256 does not match the pinned manifest", { timeout: NETWORK_TEST_TIMEOUT_MS }, async () => {
-    await expect(vendorModel(dir)).rejects.toThrow();
+    await vendorModel(dir);
+    const tampered = join(dir, BGE_SMALL_EN_V1_5_MANIFEST.repo, "tokenizer_config.json");
+    await writeFile(tampered, '{"tampered": true}', "utf8");
+    await expect(vendorModel(dir)).rejects.toThrow(/sha256|integrity|mismatch/i);
   });
 });
