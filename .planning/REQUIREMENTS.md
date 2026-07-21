@@ -100,7 +100,7 @@ A fresh installation is immediately useful when it can discover approved histori
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| REQ-041 | Phase 8 — Vector Storage Foundation | Pending |
+| REQ-041 | Phase 8 — Vector Storage Foundation | Complete |
 | REQ-044 | Phase 9 — Embedding Model + Embedder | Pending |
 | REQ-051 | Phase 9 — Embedding Model + Embedder | Pending |
 | REQ-042 | Phase 10 — Embedding Backfill | Pending |
