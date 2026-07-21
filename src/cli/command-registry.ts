@@ -39,5 +39,6 @@ export const REGISTRY: Record<string, () => Promise<{ main(argv: string[]): Prom
   "hermes:roscoe-env": () => import("../integrations/hermes/roscoe-env-command.js"),
   "hermes:sleep": () => import("../integrations/hermes/sleep-command.js"),
   tune: () => import("../operations/tune-command.js"),
-  embeddings: () => import("../operations/embeddings-command.js")
+  embeddings: () => import("../operations/embeddings-command.js"),
+  "backfill-embeddings": () => import("../operations/backfill-embeddings-command.js")
 };
