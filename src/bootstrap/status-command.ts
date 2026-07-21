@@ -6,6 +6,7 @@ import { historicalBootstrapCheckpointId } from "./historical-bootstrapper.js";
 import type { HistoricalBootstrapCheckpoint } from "./types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import type { LaunchAgentStatus } from "../daemon/macos/launch-agent.js";
+import { probeEmbedderHealth, type EmbedderHealth } from "../embeddings/embedder-resolver.js";
 
 export interface DaemonStatusSnapshot {
   state: "running" | "stopping" | "stale" | "stopped";
@@ -79,6 +80,13 @@ export interface MemoryStatusCommandResult {
   /** Count of proposals awaiting review for this person. */
   pendingProposalCount: number;
   performance: HealthPerformanceSnapshot;
+  /**
+   * Embedder health (D-06): provider/model/revision/enabled/healthy/reason,
+   * sourced from the non-throwing `probeEmbedderHealth`. Enabled-but-broken
+   * reports `healthy: false` with a reason rather than throwing, so the
+   * daemon tick and this command keep running (skip + unhealthy).
+   */
+  embedder: EmbedderHealth;
 }
 
 export async function readDaemonStatusSnapshot(
@@ -149,7 +157,7 @@ export async function runMemoryStatusCommand(
   const store = new SqliteStore(parsed.databasePath);
   try {
     const startedAt = clock.now();
-    const [sources, events, imports, grants, audits, quarantine, summaries, anchors, boxes, proposals, syncOutbox, checkpoint, daemon] =
+    const [sources, events, imports, grants, audits, quarantine, summaries, anchors, boxes, proposals, syncOutbox, checkpoint, daemon, embedder] =
       await Promise.all([
         store.listSources(parsed.personId),
         store.listCanonicalEvents(parsed.personId),
@@ -163,7 +171,8 @@ export async function runMemoryStatusCommand(
         store.listProposals({ state: "proposed" }),
         store.listSyncOutboxOperations(parsed.personId),
         store.getBootstrapCheckpoint(historicalBootstrapCheckpointId(parsed.personId)),
-        readDaemonStatusSnapshot(store, new Date().toISOString(), null, parsed.personId)
+        readDaemonStatusSnapshot(store, new Date().toISOString(), null, parsed.personId),
+        probeEmbedderHealth(parsed.databasePath)
       ]);
     const dbFileSizeBytes = store.dbFileSizeBytes();
     const schemaVersion = store.getSchemaVersion();
@@ -213,7 +222,8 @@ export async function runMemoryStatusCommand(
       performance: {
         queryLatencyMs,
         indexStatsAvailable
-      }
+      },
+      embedder
     };
   } finally {
     store.close();
