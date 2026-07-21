@@ -113,3 +113,14 @@ None - no external service configuration required.
 ---
 *Phase: 08-vector-storage-foundation*
 *Completed: 2026-07-21*
+
+## Self-Check: PASSED
+
+- FOUND: tests/storage/summary-vectors.test.ts
+- FOUND: .planning/phases/08-vector-storage-foundation/08-VALIDATION.md
+- FOUND: .planning/phases/08-vector-storage-foundation/08-04-SUMMARY.md
+- FOUND commit: a5a5c15 (test(08-04): author SC3 cross-store exact-parity test)
+- FOUND commit: 58560c0 (docs(08-04): finalize phase 8 validation record)
+- Confirmed no `it.todo` test stub remains in tests/storage/summary-vectors.test.ts (only a comment references the term)
+- npm run typecheck: exit 0
+- npm test: 91 test files, 735 tests, all green
