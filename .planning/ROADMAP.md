@@ -279,7 +279,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 09-04-PLAN.md — Config sidecar + embedder-resolver (default/enabled/broken) + `memory embeddings` CLI command
+- [x] 09-04-PLAN.md — Config sidecar + embedder-resolver (default/enabled/broken) + `memory embeddings` CLI command
 
 **Wave 4** *(blocked on Wave 3)*
 
