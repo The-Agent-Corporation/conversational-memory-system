@@ -67,6 +67,31 @@
 - **REQ-039 — Auditability:** The user shall be able to inspect why an item was imported, summarized, synchronized, retrieved, expanded, approved, rejected, or deleted.
 - **REQ-040 — No mandatory external model:** Deterministic/local operation and tests shall not require an external LLM. Model-backed summarization or planning shall remain optional and adapter-gated.
 
+## Vector Recall and Traces (v1.1)
+
+- **REQ-041 — Summary embeddings:** Each summary shall have a locally computed vector embedding persisted in a dedicated vector store, tagged with the embedder provider, model, and dimensionality that produced it.
+- **REQ-042 — Embedding backfill:** The system shall backfill embeddings for all existing summaries through a resumable, idempotent, checkpointed command that can be interrupted and restarted without duplicating or corrupting vectors.
+- **REQ-043 — Incremental embedding:** The daemon shall embed newly contracted summaries incrementally, without recomputing embeddings for the existing corpus.
+- **REQ-044 — Local embedding adapter:** A real semantic embedding model shall be available as an explicit, opt-in local adapter that runs fully offline with no runtime network dependency. The deterministic keyword embedder shall remain the always-on default and fallback, consistent with REQ-040.
+- **REQ-045 — Per-device embeddings:** Embeddings shall be recomputed per device from local summaries and shall never be synchronized. The embedder provider, model, and version shall be recorded so stale-model vectors can be detected and recomputed.
+- **REQ-046 — Vector-native trace discovery:** Recurring non-contiguous traces shall be discovered by nearest-neighbor similarity above a threshold over summary embeddings, replacing the shared-term all-pairs candidate algorithm.
+- **REQ-047 — Forward-only trace discovery:** Ongoing trace discovery shall be forward-only and incremental — new summaries evaluated against existing neighbors — and shall never rescan or restage the full corpus after bootstrap.
+- **REQ-048 — Trace proposal continuity:** Vector-derived traces shall preserve the existing proposal, review, and reversible-decision flow and shall carry a human-readable rationale for why summaries were linked.
+- **REQ-049 — Semantic recall:** A user, or an agent via MCP, shall be able to retrieve summaries by semantic similarity, honoring all person, workspace, case, and sensitivity boundaries and preserving source traceability.
+- **REQ-050 — Embedding deletion propagation:** Source revocation and deletion shall invalidate the embeddings derived from affected summaries as part of the same operation, leaving no orphaned vectors.
+- **REQ-051 — Embedding determinism:** For a fixed embedder configuration, embedding output shall be deterministic and verified by a golden-vector regression test, and vector search results shall be stable for identical inputs.
+
+## Out of Scope (v1.1)
+
+- **True approximate-nearest-neighbor indexes** (HNSW / usearch / hnswlib): deferred until measured latency pain near ~500k–1M summaries. Exact brute-force vector search is sufficient at current scale and avoids a determinism regression.
+- **Anchor embeddings and anchor-based vector recall:** a likely near-term follow-up, not required for v1.1.
+- **Vector-based box discovery:** boxes remain on the existing shared-term planner for v1.1.
+- **Cross-device embedding synchronization:** explicitly excluded — embeddings are recomputed per device (REQ-045).
+
+_Deferred to discuss-phase as design decisions, not requirements: the exact embedding model pin and quantization; the vector-store mechanism (native `sqlite-vec` extension vs. pure-JS cosine over a `summary_vectors` BLOB table); similarity-threshold and top-K calibration against the real corpus; whether to retain the shared-term planner as a transition fallback._
+
 ## Initial Acceptance Outcome
 
 A fresh installation is immediately useful when it can discover approved histories, import them idempotently into one personal timeline, produce layered memory, answer an MCP search from a different agent with provenance, expand the answer to source-linked events, and continue ingesting new history in the background while offline.
+
+**v1.1 adds:** every summary carries a locally computed embedding; recurring cross-session traces are found by semantic nearest-neighbor search instead of shared-term combinatorics; the daemon discovers new traces forward-only without rescanning the corpus; a user or agent can recall summaries by meaning within all privacy boundaries; and deleting a source removes its embeddings with it.
