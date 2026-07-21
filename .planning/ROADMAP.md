@@ -244,7 +244,12 @@ Plans:
   4. The storage schema and query surface support scope-partitioned lookups (person/workspace/case) and per-vector deletion/tombstoning, verified by tests, even though nothing invokes deletion yet.
   5. The schema migration is additive and safe against the live ~3.5GB database — existing summaries, tests, and daemon startup are unaffected.
 
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
+
+- [ ] 08-01-PLAN.md — BLOB codec + MemoryStore vector contract + Wave 0 parity suite (RED)
+- [ ] 08-02-PLAN.md — SqliteStore vectors + summary_vectors migration (version 2)
+- [ ] 08-03-PLAN.md — InMemoryStore vectors (exact-parity twin)
+- [ ] 08-04-PLAN.md — SC3 cross-store exact-parity gate + full-suite verification
 
 ### Phase 9: Embedding Model + Embedder
 
