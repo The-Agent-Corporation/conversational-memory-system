@@ -1,13 +1,14 @@
-import { createHash } from "node:crypto";
 import type { Anchor, Box, MemoryProposal, MemoryTrace, Summary } from "../domain/types.js";
-import {
-  dedupeTurnRanges,
-  hasExistingProposal,
-  sharedTerms,
-  significantTerms,
-  slugify,
-  titleCase
-} from "../proposals/proposal-utils.js";
+import { dedupeTurnRanges, hasExistingProposal } from "../proposals/proposal-utils.js";
+import { buildTraceCandidates, type TraceCandidate } from "./trace-candidate-core.js";
+import { buildTraceCandidatesParallel } from "./parallel-trace-backfill.js";
+
+/**
+ * Above this many input summaries, and only when the planner was constructed with a worker count,
+ * trace-candidate generation is sharded across worker threads. The daemon's ongoing runs stay well
+ * below this (a handful of new summaries per cycle) and use the single-threaded path.
+ */
+const PARALLEL_TRACE_BACKFILL_THRESHOLD = 20_000;
 
 export interface TraceProposalPlanningRequest {
   reviewedAt: string;
@@ -30,29 +31,26 @@ export interface TraceProposalPlanner {
   proposeTraces(request: TraceProposalPlanningRequest): Promise<TraceProposalPlanningResult>;
 }
 
-interface TraceCandidate {
-  title: string;
-  traceId: string;
-  summaries: Summary[];
-  keywords: string[];
-  continuityTerms: string[];
-  boxIds: string[];
+export interface DeterministicTraceProposalPlannerOptions {
+  /** When set, whole-corpus backfills above the threshold shard candidate generation across this many workers. */
+  parallelWorkers?: number;
 }
 
-const BROAD_TRACE_TERMS = new Set(["smith", "jones", "case", "matter", "claim", "coverage"]);
-
 export class DeterministicTraceProposalPlanner implements TraceProposalPlanner {
+  constructor(private readonly options: DeterministicTraceProposalPlannerOptions = {}) {}
+
   async proposeTraces(request: TraceProposalPlanningRequest): Promise<TraceProposalPlanningResult> {
     const minimumTraceSummaries = request.minimumTraceSummaries ?? 2;
     const minimumConfidence = request.minimumConfidence ?? 0.5;
     const skippedCandidates: TraceProposalPlanningResult["skippedCandidates"] = [];
     const proposals: MemoryProposal[] = [];
 
-    for (const candidate of buildTraceCandidates(
-      request.summaries,
-      request.boxes,
-      request.idNamespace
-    )) {
+    const workers = this.options.parallelWorkers ?? 0;
+    const candidates = workers > 0 && request.summaries.length >= PARALLEL_TRACE_BACKFILL_THRESHOLD
+      ? await buildTraceCandidatesParallel(request.summaries, request.boxes, request.idNamespace, workers)
+      : buildTraceCandidates(request.summaries, request.boxes, request.idNamespace);
+
+    for (const candidate of candidates) {
       if (candidate.continuityTerms.length < 2) {
         skippedCandidates.push({
           title: candidate.title,
@@ -111,56 +109,6 @@ export class DeterministicTraceProposalPlanner implements TraceProposalPlanner {
   }
 }
 
-function buildTraceCandidates(
-  summaries: Summary[],
-  boxes: Box[],
-  idNamespace?: string
-): TraceCandidate[] {
-  const candidates = new Map<string, TraceCandidate>();
-
-  for (let leftIndex = 0; leftIndex < summaries.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < summaries.length; rightIndex += 1) {
-      const left = summaries[leftIndex];
-      const right = summaries[rightIndex];
-      const leftTerms = significantTerms(left.summaryText);
-      const rightTerms = significantTerms(right.summaryText);
-      const shared = sharedTerms(leftTerms, rightTerms);
-      if (shared.length === 0) {
-        continue;
-      }
-
-      const continuityTerms = shared.filter((term) => !BROAD_TRACE_TERMS.has(term));
-      const titleTerms = shared
-        .filter((term, index, terms) => terms.indexOf(term) === index)
-        .slice(0, 4);
-      const title = titleCase(titleTerms.join(" "));
-      const traceId = scopedId(`trace_${slugify(title)}`, idNamespace);
-      const existing = candidates.get(traceId);
-      const pairSummaries = [left, right];
-      const summariesForCandidate = existing
-        ? mergeSummaries(existing.summaries, pairSummaries)
-        : pairSummaries;
-
-      candidates.set(traceId, {
-        title,
-        traceId,
-        summaries: summariesForCandidate,
-        keywords: [...new Set([...(existing?.keywords ?? []), ...shared])],
-        continuityTerms: [...new Set([...(existing?.continuityTerms ?? []), ...continuityTerms])],
-        boxIds: matchingBoxIds(summariesForCandidate, boxes)
-      });
-    }
-  }
-
-  return [...candidates.values()];
-}
-
-function scopedId(baseId: string, namespace?: string): string {
-  if (!namespace) return baseId;
-  const suffix = createHash("sha256").update(namespace).digest("hex").slice(0, 12);
-  return `${baseId}_${suffix}`;
-}
-
 function buildTraceProposal(candidate: TraceCandidate, reviewedAt: string, confidence: number): MemoryProposal {
   const sourceSummaryIds = candidate.summaries.map((summary) => summary.id);
   const sourceTurnRanges = dedupeTurnRanges(candidate.summaries.flatMap((summary) => summary.sourceTurnRanges));
@@ -196,22 +144,6 @@ function buildTraceProposal(candidate: TraceCandidate, reviewedAt: string, confi
     targetTraceIds: [candidate.traceId],
     payload
   };
-}
-
-function mergeSummaries(existing: Summary[], additions: Summary[]): Summary[] {
-  const byId = new Map(existing.map((summary) => [summary.id, summary]));
-  for (const summary of additions) {
-    byId.set(summary.id, summary);
-  }
-  return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
-}
-
-function matchingBoxIds(summaries: Summary[], boxes: Box[]): string[] {
-  const summaryIds = new Set(summaries.map((summary) => summary.id));
-  return boxes
-    .filter((box) => box.summaryIds.some((summaryId) => summaryIds.has(summaryId)))
-    .map((box) => box.id)
-    .sort();
 }
 
 function hasNonContiguousRanges(summaries: Summary[]): boolean {
