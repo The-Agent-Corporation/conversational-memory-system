@@ -1257,7 +1257,7 @@ export class SqliteStore implements MemoryStore {
         `saveSummaryVector: dimensions (${record.dimensions}) !== vector.length (${record.vector.length}) for summary ${record.summaryId}`
       );
     }
-    if (!record.vector.every((value) => Number.isFinite(value))) {
+    if (!record.vector.every((value) => Number.isFinite(Math.fround(value)))) {
       throw new Error(`saveSummaryVector: vector contains a non-finite value for summary ${record.summaryId}`);
     }
     this.database

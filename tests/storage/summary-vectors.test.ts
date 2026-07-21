@@ -237,6 +237,11 @@ for (const backend of backends) {
       await expect(store.saveSummaryVector(record)).rejects.toThrow(/non-finite/);
     });
 
+    it("rejects saveSummaryVector when a value overflows float32 to Infinity (WR-06)", async () => {
+      const record = vectorRecord({ vector: [1, 1e39, 0, 0] });
+      await expect(store.saveSummaryVector(record)).rejects.toThrow(/non-finite/);
+    });
+
   });
 }
 
