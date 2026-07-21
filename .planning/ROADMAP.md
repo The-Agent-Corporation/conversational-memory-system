@@ -250,7 +250,7 @@ Plans:
 - [x] 08-02-PLAN.md — SqliteStore vectors + summary_vectors migration (version 2)
 - [x] 08-03-PLAN.md — InMemoryStore vectors (exact-parity twin)
 - [x] 08-04-PLAN.md — SC3 cross-store exact-parity gate + full-suite verification
-- [ ] 08-05-PLAN.md — gap closure: exact-parity under NaN/minimumScore + dimension-mismatch, codec endianness/alignment, deterministic tie-break, transactional delete
+- [x] 08-05-PLAN.md — gap closure: exact-parity under NaN/minimumScore + dimension-mismatch, codec endianness/alignment, deterministic tie-break, transactional delete
 
 ### Phase 9: Embedding Model + Embedder
 
