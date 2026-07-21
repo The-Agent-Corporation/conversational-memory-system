@@ -54,6 +54,35 @@ export interface TraceFilter {
   state?: ProposalState;
 }
 
+/** A single persisted (summaryId, provider, model) vector row (D-01/D-04), denormalizing personId/scopeIds for boundary filtering (D-06). */
+export interface SummaryVectorRecord {
+  summaryId: string;
+  provider: string;
+  model: string;
+  dimensions: number;
+  vector: number[];
+  personId: string;
+  scopeIds: string[];
+  createdAt: string;
+}
+
+/** Nearest-neighbor query input for findNearestSummaries (D-06/D-07): callers must supply the authorized person/scope boundary. */
+export interface FindNearestSummariesQuery {
+  vector: number[];
+  provider: string;
+  model: string;
+  personId: string;
+  allowedScopeIds: string[];
+  topK: number;
+  minimumScore?: number;
+}
+
+/** A single scored nearest-neighbor result. */
+export interface SummaryVectorMatch {
+  summaryId: string;
+  score: number;
+}
+
 export interface MemoryStore {
   commitHistoryImport(input: CommitHistoryImportInput): Promise<MutationCommitReceipt>;
   commitProposalDecision(input: CommitProposalDecisionInput): Promise<MutationCommitReceipt>;
@@ -160,4 +189,18 @@ export interface MemoryStore {
     deviceSequence: number
   ): Promise<SyncOutboxOperation | null>;
   listAcceptedSyncOperations(personId: string): Promise<AcceptedSyncOperation[]>;
+
+  /** Upserts one (summaryId, provider, model) vector row, keyed by summary_id+provider+model, denormalizing personId/scopeIds (D-01/D-04/D-06). */
+  saveSummaryVector(record: SummaryVectorRecord): Promise<void>;
+  getSummaryVector(summaryId: string, provider: string, model: string): Promise<SummaryVectorRecord | null>;
+  /** Stable ascending-order list of summary ids missing a (provider, model) vector row — the Phase 10 backfill resume key (D-05). */
+  listSummaryIdsMissingVector(provider: string, model: string): Promise<string[]>;
+  /** Filter-before-score nearest-neighbor search bounded by personId + allowedScopeIds (D-06/D-07); results ordered score desc then summaryId asc. */
+  findNearestSummaries(query: FindNearestSummariesQuery): Promise<SummaryVectorMatch[]>;
+  /**
+   * Tombstones vector rows for the given summary ids across all (provider, model) rows (D-09,
+   * REQ-050 storage half). Intentionally uninvoked until Phase 14 wires it into
+   * commitSourceDeletion.
+   */
+  deleteSummaryVectors(summaryIds: string[]): Promise<void>;
 }
