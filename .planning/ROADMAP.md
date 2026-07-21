@@ -270,8 +270,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 09-01-PLAN.md — AsymmetricEmbedder contract + skeleton modules + Wave 0 RED tests + D-08 golden-set fixture
-- [ ] 09-02-PLAN.md — Install @huggingface/transformers@4.2.0 behind a blocking package-legitimacy checkpoint
+- [x] 09-01-PLAN.md — AsymmetricEmbedder contract + skeleton modules + Wave 0 RED tests + D-08 golden-set fixture
+- [x] 09-02-PLAN.md — Install @huggingface/transformers@4.2.0 behind a blocking package-legitimacy checkpoint
 
 **Wave 2** *(blocked on Wave 1)*
 
