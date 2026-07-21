@@ -52,6 +52,21 @@ export interface HealthPerformanceSnapshot {
   indexStatsAvailable: boolean;
 }
 
+/**
+ * Live embedding backfill completeness snapshot (REQ-042 SC4, point-in-time half): computed by
+ * re-querying the same missing-set the backfill process drives off, so it can never drift from
+ * the actual `summary_vectors` table. No new persisted state is introduced.
+ */
+export interface EmbeddingBackfillSnapshot {
+  /** The identity backfill actually writes under -- see the disabled-case nuance below. */
+  provider: string;
+  model: string;
+  totalSummaries: number;
+  missingVectors: number;
+  /** 1 when there are no summaries at all (nothing left to backfill). */
+  completedFraction: number;
+}
+
 export interface MemoryStatusCommandResult {
   ok: true;
   personId: string;
@@ -87,6 +102,8 @@ export interface MemoryStatusCommandResult {
    * daemon tick and this command keep running (skip + unhealthy).
    */
   embedder: EmbedderHealth;
+  /** Live, ground-truth embedding backfill completeness snapshot (REQ-042 SC4). */
+  embeddingBackfill: EmbeddingBackfillSnapshot;
 }
 
 export async function readDaemonStatusSnapshot(
@@ -174,6 +191,13 @@ export async function runMemoryStatusCommand(
         readDaemonStatusSnapshot(store, new Date().toISOString(), null, parsed.personId),
         probeEmbedderHealth(parsed.databasePath)
       ]);
+    const activeProvider = embedder.enabled ? embedder.provider : "deterministic";
+    const activeModel = embedder.enabled ? embedder.model : "keyword-hash-v1";
+    const missingVectorSummaryIds = await store.listSummaryIdsMissingVector(activeProvider, activeModel);
+    const totalSummaries = summaries.length;
+    const missingVectors = missingVectorSummaryIds.length;
+    const completedFraction = totalSummaries === 0 ? 1 : (totalSummaries - missingVectors) / totalSummaries;
+
     const dbFileSizeBytes = store.dbFileSizeBytes();
     const schemaVersion = store.getSchemaVersion();
     const schemaMigrationAppliedAt = store.getLatestSchemaMigrationAppliedAt();
@@ -223,7 +247,14 @@ export async function runMemoryStatusCommand(
         queryLatencyMs,
         indexStatsAvailable
       },
-      embedder
+      embedder,
+      embeddingBackfill: {
+        provider: activeProvider,
+        model: activeModel,
+        totalSummaries,
+        missingVectors,
+        completedFraction
+      }
     };
   } finally {
     store.close();
