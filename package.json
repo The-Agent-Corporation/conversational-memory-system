@@ -9,6 +9,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:golden": "MEMORY_MODEL_PATH=./tests/fixtures/models vitest run tests/embeddings/transformer-embedder.golden.test.ts",
     "typecheck": "tsc --noEmit",
     "memory:codex:discover": "tsx src/imports/codex-discover-command.ts",
     "memory:codex:import": "tsx src/imports/codex-import-command.ts",
