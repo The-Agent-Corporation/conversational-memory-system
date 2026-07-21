@@ -887,6 +887,14 @@ export class InMemoryStore implements MemoryStore {
   }
 
   async saveSummaryVector(record: SummaryVectorRecord): Promise<void> {
+    if (record.dimensions !== record.vector.length) {
+      throw new Error(
+        `saveSummaryVector: dimensions (${record.dimensions}) !== vector.length (${record.vector.length}) for summary ${record.summaryId}`
+      );
+    }
+    if (!record.vector.every((value) => Number.isFinite(value))) {
+      throw new Error(`saveSummaryVector: vector contains a non-finite value for summary ${record.summaryId}`);
+    }
     const existingIndex = this.summaryVectors.findIndex(
       (candidate) =>
         candidate.summaryId === record.summaryId &&
@@ -928,13 +936,18 @@ export class InMemoryStore implements MemoryStore {
         record.provider === query.provider &&
         record.model === query.model &&
         record.personId === query.personId &&
+        record.dimensions === query.vector.length &&
         (record.scopeIds.length ? record.scopeIds : ["personal"]).every((scopeId) => allowedSet.has(scopeId))
     );
     const scored: SummaryVectorMatch[] = candidates.map((record) => ({
       summaryId: record.summaryId,
       score: cosineSimilarity(query.vector, record.vector)
     }));
-    scored.sort((left, right) => right.score - left.score || left.summaryId.localeCompare(right.summaryId));
+    scored.sort(
+      (left, right) =>
+        right.score - left.score ||
+        (left.summaryId < right.summaryId ? -1 : left.summaryId > right.summaryId ? 1 : 0)
+    );
     const filtered =
       query.minimumScore === undefined ? scored : scored.filter((match) => match.score >= query.minimumScore!);
     return filtered.slice(0, query.topK);

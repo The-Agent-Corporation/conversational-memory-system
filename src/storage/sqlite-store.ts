@@ -1252,6 +1252,14 @@ export class SqliteStore implements MemoryStore {
   }
 
   async saveSummaryVector(record: SummaryVectorRecord): Promise<void> {
+    if (record.dimensions !== record.vector.length) {
+      throw new Error(
+        `saveSummaryVector: dimensions (${record.dimensions}) !== vector.length (${record.vector.length}) for summary ${record.summaryId}`
+      );
+    }
+    if (!record.vector.every((value) => Number.isFinite(value))) {
+      throw new Error(`saveSummaryVector: vector contains a non-finite value for summary ${record.summaryId}`);
+    }
     this.database
       .prepare(
         `insert into summary_vectors
@@ -1316,19 +1324,32 @@ export class SqliteStore implements MemoryStore {
       const scopeIds = JSON.parse(row.scope_ids_json) as string[];
       const effectiveScopeIds = scopeIds.length ? scopeIds : ["personal"];
       if (!effectiveScopeIds.every((scopeId) => allowedScopeIds.has(scopeId))) continue;
+      if (row.dimensions !== query.vector.length) continue;
       const vector = unpackFloat32Vector(row.vector, row.dimensions);
       const score = cosineSimilarity(query.vector, vector);
-      if (query.minimumScore !== undefined && score < query.minimumScore) continue;
+      if (query.minimumScore !== undefined && !(score >= query.minimumScore)) continue;
       matches.push({ summaryId: row.summary_id, score });
     }
 
-    matches.sort((left, right) => right.score - left.score || left.summaryId.localeCompare(right.summaryId));
+    matches.sort(
+      (left, right) =>
+        right.score - left.score ||
+        (left.summaryId < right.summaryId ? -1 : left.summaryId > right.summaryId ? 1 : 0)
+    );
     return matches.slice(0, query.topK);
   }
 
   async deleteSummaryVectors(summaryIds: string[]): Promise<void> {
-    const statement = this.database.prepare("delete from summary_vectors where summary_id = ?");
-    for (const summaryId of summaryIds) statement.run(summaryId);
+    if (summaryIds.length === 0) return;
+    this.database.exec("begin immediate");
+    try {
+      const statement = this.database.prepare("delete from summary_vectors where summary_id = ?");
+      for (const summaryId of summaryIds) statement.run(summaryId);
+      this.database.exec("commit");
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
   }
 
   private summaryVectorRecordFromRow(row: SummaryVectorTableRow): SummaryVectorRecord {
