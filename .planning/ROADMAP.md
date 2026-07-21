@@ -16,7 +16,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 6: Zero-Knowledge Multi-Device Sync** — Add encrypted device convergence after threat-model and protocol approval. (completed 2026-07-19)
 - [x] **Phase 7: Onboarding and Operational Readiness** — Package the product with first-run consent, audit, migration, backup, and performance surfaces. (completed 2026-07-20)
 - [x] **Phase 8: Vector Storage Foundation** — Add a scope-safe, tombstone-ready `summary_vectors` store with exact-match parity between SqliteStore and InMemoryStore. (completed 2026-07-21)
-- [ ] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default.
+- [x] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default. (completed 2026-07-21)
 - [ ] **Phase 10: Embedding Backfill** — Resumable, idempotent, checkpointed backfill of vectors for all 135,366 existing summaries.
 - [ ] **Phase 11: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
 - [ ] **Phase 12: Forward-Only Vector Trace Discovery** — Replace shared-term all-pairs trace discovery with forward-only nearest-neighbor discovery, preserving the review flow.
@@ -283,8 +283,8 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 09-05-PLAN.md — Real vendoring run: capture manifest sha256 + revision + committed golden hashes, golden suite GREEN
-- [ ] 09-06-PLAN.md — `memory status` embedder-health surface (D-06) + `test:golden` gate + operator/CI docs
+- [x] 09-05-PLAN.md — Real vendoring run: capture manifest sha256 + revision + committed golden hashes, golden suite GREEN
+- [x] 09-06-PLAN.md — `memory status` embedder-health surface (D-06) + `test:golden` gate + operator/CI docs
 
 ### Phase 10: Embedding Backfill
 
