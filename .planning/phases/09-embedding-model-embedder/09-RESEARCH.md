@@ -507,7 +507,7 @@ describe("TransformerEmbedder golden-vector regression (REQ-051)", () => {
 
 **If this table is empty:** N/A — see entries above; none of these assumptions touch the phase's locked decisions (D-01..D-08), only implementation-mechanical details (exact repo-name casing, real file hashes, exact tokenizer option name) that resolve deterministically and loudly (via install/test failure) if wrong, rather than silently.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 None blocking planning. The two smallest open items are implementation-mechanical, not design decisions, and are already captured in the Assumptions Log:
 

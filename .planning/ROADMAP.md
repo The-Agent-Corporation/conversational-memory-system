@@ -261,7 +261,7 @@ Plans:
 
   1. The existing keyword-hash DeterministicEmbedder remains the default/fallback embedder with zero behavior change for users who take no action.
   2. An operator can explicitly opt in to a local ONNX sentence-transformer embedder that runs fully offline with no runtime network dependency.
-  3. Embedding a fixed golden set of summary texts under the pinned ONNX configuration (CPU execution provider, fixed thread count, fixed graph-optimization level) reproduces a committed golden-vector hash, verified in CI.
+  3. Embedding a fixed golden set of summary texts under the pinned ONNX configuration (CPU execution provider, fixed thread count, fixed graph-optimization level) reproduces a committed golden-vector hash, verified by the `npm run test:golden` gate (repo has no CI yet; CI adoption deferred — a ready-to-enable workflow snippet ships with this phase).
   4. For a fixed embedder configuration, re-running embedding on identical input text is deterministic and vector search results over those vectors are stable across repeated runs.
   5. Every vector produced records the embedder provider, model, and version so a later phase can detect stale-model vectors.
 
