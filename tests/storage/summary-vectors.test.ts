@@ -9,11 +9,43 @@ import type {
   MemoryStore,
   SummaryVectorRecord
 } from "../../src/storage/memory-store.js";
+import type { Summary } from "../../src/domain/types.js";
 
 const PROVIDER_A = "deterministic";
 const MODEL_A = "keyword-hash-v1";
 const PROVIDER_B = "deterministic";
 const MODEL_B = "keyword-hash-v2";
+
+/**
+ * `listSummaryIdsMissingVector` (D-05) is a set-difference against known summaries: it returns
+ * summary ids that exist but lack a vector for the queried (provider, model) pair. Callers must
+ * register the summary itself via `saveSummary` for it to be part of that universe — a vector
+ * row alone does not make a summary "known" (Rule 1 fix: the original fixture only saved vector
+ * rows and asserted results that require the summaries to exist).
+ */
+const summaryRecord = (overrides: Partial<Summary> = {}): Summary => ({
+  id: "summary_1",
+  summaryText: "Fixture summary for vector storage tests.",
+  sourceTurnRanges: [],
+  sourceSummaryIds: [],
+  boxIds: [],
+  embedding: null,
+  createdAt: "2026-07-21T12:00:00.000Z",
+  model: "test-summarizer",
+  promptVersion: "v1",
+  confidence: 0.9,
+  state: "compacted",
+  detailLevel: "brief",
+  tokenCount: 10,
+  lastAccessedAt: null,
+  version: 1,
+  strength: 0.8,
+  retrievalCount: 0,
+  retrievedAt: null,
+  halfLifeHours: 168,
+  outcomeScore: null,
+  ...overrides
+});
 
 const vectorRecord = (overrides: Partial<SummaryVectorRecord> = {}): SummaryVectorRecord => ({
   summaryId: "summary_1",
@@ -93,6 +125,10 @@ for (const backend of backends) {
     it("lists exactly the summary ids missing a (provider, model) vector, in stable ascending order (SC2, D-05)", async () => {
       const allSummaryIds = ["summary_a", "summary_b", "summary_c", "summary_d"];
       const savedUnderA = new Set(["summary_a", "summary_c"]);
+
+      for (const summaryId of allSummaryIds) {
+        await store.saveSummary(summaryRecord({ id: summaryId }));
+      }
 
       for (const summaryId of allSummaryIds) {
         if (savedUnderA.has(summaryId)) {

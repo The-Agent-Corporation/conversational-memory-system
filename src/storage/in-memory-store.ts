@@ -22,7 +22,15 @@ import {
   type MemorySource,
   type Person
 } from "../domain/canonical.js";
-import type { MemoryStore, ProposalFilter, TraceFilter } from "./memory-store.js";
+import type {
+  FindNearestSummariesQuery,
+  MemoryStore,
+  ProposalFilter,
+  SummaryVectorMatch,
+  SummaryVectorRecord,
+  TraceFilter
+} from "./memory-store.js";
+import { cosineSimilarity } from "../embeddings/embedder.js";
 import { ImportCheckpointSchema, type ImportCheckpoint } from "../imports/types.js";
 import {
   HistoricalBootstrapCheckpointSchema,
@@ -145,6 +153,7 @@ export class InMemoryStore implements MemoryStore {
   private readonly syncTombstones: SyncTombstone[] = [];
   private readonly syncQuarantine: SyncQuarantineEntry[] = [];
   private readonly syncContractionRanges: SyncContractionRange[] = [];
+  private readonly summaryVectors: SummaryVectorRecord[] = [];
 
   constructor(options: InMemoryStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
@@ -875,6 +884,67 @@ export class InMemoryStore implements MemoryStore {
     return structuredClone(this.traces.filter((trace) =>
       filter.state === undefined || trace.state === filter.state
     ));
+  }
+
+  async saveSummaryVector(record: SummaryVectorRecord): Promise<void> {
+    const existingIndex = this.summaryVectors.findIndex(
+      (candidate) =>
+        candidate.summaryId === record.summaryId &&
+        candidate.provider === record.provider &&
+        candidate.model === record.model
+    );
+    const clone = structuredClone(record);
+    if (existingIndex === -1) {
+      this.summaryVectors.push(clone);
+      return;
+    }
+    this.summaryVectors[existingIndex] = clone;
+  }
+
+  async getSummaryVector(summaryId: string, provider: string, model: string): Promise<SummaryVectorRecord | null> {
+    return structuredClone(
+      this.summaryVectors.find(
+        (candidate) => candidate.summaryId === summaryId && candidate.provider === provider && candidate.model === model
+      ) ?? null
+    );
+  }
+
+  async listSummaryIdsMissingVector(provider: string, model: string): Promise<string[]> {
+    const covered = new Set(
+      this.summaryVectors
+        .filter((candidate) => candidate.provider === provider && candidate.model === model)
+        .map((candidate) => candidate.summaryId)
+    );
+    return this.summaries
+      .map((summary) => summary.id)
+      .filter((summaryId) => !covered.has(summaryId))
+      .sort();
+  }
+
+  async findNearestSummaries(query: FindNearestSummariesQuery): Promise<SummaryVectorMatch[]> {
+    const allowedSet = new Set(query.allowedScopeIds);
+    const candidates = this.summaryVectors.filter(
+      (record) =>
+        record.provider === query.provider &&
+        record.model === query.model &&
+        record.personId === query.personId &&
+        (record.scopeIds.length ? record.scopeIds : ["personal"]).every((scopeId) => allowedSet.has(scopeId))
+    );
+    const scored: SummaryVectorMatch[] = candidates.map((record) => ({
+      summaryId: record.summaryId,
+      score: cosineSimilarity(query.vector, record.vector)
+    }));
+    scored.sort((left, right) => right.score - left.score || left.summaryId.localeCompare(right.summaryId));
+    const filtered =
+      query.minimumScore === undefined ? scored : scored.filter((match) => match.score >= query.minimumScore!);
+    return filtered.slice(0, query.topK);
+  }
+
+  async deleteSummaryVectors(summaryIds: string[]): Promise<void> {
+    const targets = new Set(summaryIds);
+    for (let index = this.summaryVectors.length - 1; index >= 0; index -= 1) {
+      if (targets.has(this.summaryVectors[index].summaryId)) this.summaryVectors.splice(index, 1);
+    }
   }
 
   async commitLocalSyncOperation(input: CommitLocalSyncOperationInput): Promise<SyncCommitReceipt> {
