@@ -332,15 +332,34 @@ export async function commitStagedGrantBatch(
   const stagedTurns = await collectStagedTurns(staging, stagedEvents);
   const receipts: ImportBatchReceipt[] = [];
 
+  // Pre-bucket staged events by resource path and staged turns by canonical event id ONCE. The
+  // checkpoint loop below runs per source file; re-filtering the full staged-event/turn arrays
+  // inside it was O(files * events), which dominates a many-file bootstrap import (e.g. one
+  // JSONL file per Claude Code session). Grouping first makes the loop O(events + turns).
+  const eventsByResource = new Map<string, typeof stagedEvents>();
+  for (const event of stagedEvents) {
+    const resource = sourceResource(event);
+    if (resource === null) continue;
+    const bucket = eventsByResource.get(resource);
+    if (bucket) bucket.push(event);
+    else eventsByResource.set(resource, [event]);
+  }
+  const turnsByEventId = new Map<string, typeof stagedTurns>();
+  for (const turn of stagedTurns) {
+    const eventId = String(turn.metadata.canonicalEventId);
+    const bucket = turnsByEventId.get(eventId);
+    if (bucket) bucket.push(turn);
+    else turnsByEventId.set(eventId, [turn]);
+  }
+
   await options.beforeCommit?.();
 
   for (const checkpoint of checkpoints) {
-    const resourceEvents = stagedEvents.filter((event) => sourceResource(event) === checkpoint.resourcePath);
+    const resourceEvents = eventsByResource.get(checkpoint.resourcePath) ?? [];
     const changed = resourceEvents.filter((event) => materiallyChanged(existing.get(event.id), event))
       .sort(compareCanonical);
-    const changedIds = new Set(changed.map((event) => event.id));
-    const turns = stagedTurns
-      .filter((turn) => changedIds.has(String(turn.metadata.canonicalEventId)))
+    const turns = changed
+      .flatMap((event) => turnsByEventId.get(event.id) ?? [])
       .map((turn) => ({ ...turn, threadId: `person:${grant.personId}` }));
     const committedAt = clock();
     const orderKeys = changed.map((event) => ({
