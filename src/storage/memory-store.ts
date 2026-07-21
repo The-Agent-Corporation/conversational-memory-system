@@ -192,6 +192,14 @@ export interface MemoryStore {
 
   /** Upserts one (summaryId, provider, model) vector row, keyed by summary_id+provider+model, denormalizing personId/scopeIds (D-01/D-04/D-06). */
   saveSummaryVector(record: SummaryVectorRecord): Promise<void>;
+  /**
+   * Batch upsert of vector rows (Phase 10 backfill throughput). SqliteStore wraps the whole
+   * batch in a single `begin immediate`/`commit` transaction (all-or-nothing on crash) reusing
+   * `saveSummaryVector`'s exact per-record validation; InMemoryStore delegates in a loop.
+   * Correctness of "what's left to backfill" still comes from `listSummaryIdsMissingVector` —
+   * this method is for atomicity/throughput, not resume state.
+   */
+  saveSummaryVectors(records: SummaryVectorRecord[]): Promise<void>;
   getSummaryVector(summaryId: string, provider: string, model: string): Promise<SummaryVectorRecord | null>;
   /** Stable ascending-order list of summary ids missing a (provider, model) vector row — the Phase 10 backfill resume key (D-05). */
   listSummaryIdsMissingVector(provider: string, model: string): Promise<string[]>;

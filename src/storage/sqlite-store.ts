@@ -1284,6 +1284,54 @@ export class SqliteStore implements MemoryStore {
       );
   }
 
+  /**
+   * Batch upsert wrapped in a single transaction (Phase 10 backfill throughput). Reuses the exact
+   * per-record validation guard from `saveSummaryVector` so the two paths cannot drift; any throw
+   * mid-batch rolls the whole batch back, leaving zero rows committed (D-05 resume correctness
+   * still comes from `listSummaryIdsMissingVector`, unaffected by this method).
+   */
+  async saveSummaryVectors(records: SummaryVectorRecord[]): Promise<void> {
+    if (records.length === 0) return;
+    this.database.exec("begin immediate");
+    try {
+      const statement = this.database.prepare(
+        `insert into summary_vectors
+           (summary_id, provider, model, dimensions, vector, person_id, scope_ids_json, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?)
+         on conflict(summary_id, provider, model) do update set
+           dimensions = excluded.dimensions,
+           vector = excluded.vector,
+           person_id = excluded.person_id,
+           scope_ids_json = excluded.scope_ids_json,
+           created_at = excluded.created_at`
+      );
+      for (const record of records) {
+        if (record.dimensions !== record.vector.length) {
+          throw new Error(
+            `saveSummaryVector: dimensions (${record.dimensions}) !== vector.length (${record.vector.length}) for summary ${record.summaryId}`
+          );
+        }
+        if (!record.vector.every((value) => Number.isFinite(Math.fround(value)))) {
+          throw new Error(`saveSummaryVector: vector contains a non-finite value for summary ${record.summaryId}`);
+        }
+        statement.run(
+          record.summaryId,
+          record.provider,
+          record.model,
+          record.dimensions,
+          packFloat32Vector(record.vector),
+          record.personId,
+          JSON.stringify(record.scopeIds),
+          record.createdAt
+        );
+      }
+      this.database.exec("commit");
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
   async getSummaryVector(summaryId: string, provider: string, model: string): Promise<SummaryVectorRecord | null> {
     const row = this.database
       .prepare(
