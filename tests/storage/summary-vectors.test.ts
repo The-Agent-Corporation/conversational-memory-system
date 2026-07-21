@@ -52,7 +52,9 @@ const vectorRecord = (overrides: Partial<SummaryVectorRecord> = {}): SummaryVect
   provider: PROVIDER_A,
   model: MODEL_A,
   dimensions: 4,
-  vector: [0.5, -0.25, 0.75, 0.1],
+  // All four values are exactly representable in float32 so SqliteStore's Float32 BLOB round-trip
+  // (encode -> decode) yields the identical JS number that InMemoryStore keeps verbatim (Wave 2 handoff).
+  vector: [0.5, -0.25, 0.75, 0.125],
   personId: "person_1",
   scopeIds: ["personal"],
   createdAt: "2026-07-21T12:00:00.000Z",
@@ -225,8 +227,81 @@ for (const backend of backends) {
       expect(matches.map((match) => match.summaryId)).not.toContain(summaryId);
     });
 
-    // Authored once both SqliteStore and InMemoryStore implement the vector surface (plan 08-04):
-    // asserts both backends return identical (summaryId, score) sequences for the same corpus/query.
-    it.todo("SqliteStore and InMemoryStore return identical (summaryId, score) sequences");
   });
 }
+
+// Cross-store exact-parity suite (plan 08-04): replaces the 08-01 `it.todo` placeholder.
+// Asserts both backends return identical (summaryId, score) sequences for the same corpus/query.
+describe("cross-store exact parity (SC3, D-07)", () => {
+  // All vectors below use only float32-exact values (0.5, -0.25, 0.75, 0.125, 1, 0) so SqliteStore's
+  // Float32 BLOB round-trip and InMemoryStore's exact number[] retention produce byte-identical
+  // cosine scores -- toEqual, not toBeCloseTo, is the whole point of this test.
+  const corpus: SummaryVectorRecord[] = [
+    vectorRecord({ summaryId: "summary_alpha", vector: [0.5, -0.25, 0.75, 0.125] }),
+    vectorRecord({ summaryId: "summary_beta", vector: [1, 0, 0, 0] }),
+    vectorRecord({ summaryId: "summary_gamma", vector: [0, 1, 0, 0] }),
+    // Engineered exact tie: summary_delta and summary_epsilon carry identical vectors, so they
+    // must score identically against the query -- proving the summary_id-ascending tie-break
+    // (D-07) resolves the order, not incidental corpus/backend iteration order.
+    vectorRecord({ summaryId: "summary_delta", vector: [0.5, 0.5, 0.5, 0.5] }),
+    vectorRecord({ summaryId: "summary_epsilon", vector: [0.5, 0.5, 0.5, 0.5] })
+  ];
+
+  const query: FindNearestSummariesQuery = {
+    vector: [0.5, 0.5, 0.5, 0.5],
+    provider: PROVIDER_A,
+    model: MODEL_A,
+    personId: "person_1",
+    allowedScopeIds: ["personal"],
+    topK: 10
+  };
+
+  async function seed(store: MemoryStore): Promise<void> {
+    for (const record of corpus) {
+      await store.saveSummaryVector(record);
+    }
+  }
+
+  it("returns byte-identical (summaryId, score) sequences from SqliteStore and InMemoryStore, including tie-break order", async () => {
+    const inMemory = await backends[0]!.create();
+    const sqlite = await backends[1]!.create();
+
+    try {
+      await seed(inMemory.store);
+      await seed(sqlite.store);
+
+      const inMemoryResult = await inMemory.store.findNearestSummaries(query);
+      const sqliteResult = await sqlite.store.findNearestSummaries(query);
+
+      expect(sqliteResult).toEqual(inMemoryResult);
+      // summary_delta and summary_epsilon are an exact cosine tie; ascending summary_id must win.
+      const tieIds = sqliteResult
+        .filter((match) => match.summaryId === "summary_delta" || match.summaryId === "summary_epsilon")
+        .map((match) => match.summaryId);
+      expect(tieIds).toEqual(["summary_delta", "summary_epsilon"]);
+    } finally {
+      await inMemory.cleanup();
+      await sqlite.cleanup();
+    }
+  });
+
+  it("slices to the same top segment when topK is smaller than the corpus", async () => {
+    const inMemory = await backends[0]!.create();
+    const sqlite = await backends[1]!.create();
+
+    try {
+      await seed(inMemory.store);
+      await seed(sqlite.store);
+
+      const narrowedQuery: FindNearestSummariesQuery = { ...query, topK: 3 };
+      const inMemoryResult = await inMemory.store.findNearestSummaries(narrowedQuery);
+      const sqliteResult = await sqlite.store.findNearestSummaries(narrowedQuery);
+
+      expect(sqliteResult).toHaveLength(3);
+      expect(sqliteResult).toEqual(inMemoryResult);
+    } finally {
+      await inMemory.cleanup();
+      await sqlite.cleanup();
+    }
+  });
+});
