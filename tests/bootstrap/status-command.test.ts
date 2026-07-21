@@ -9,7 +9,8 @@ import {
   syncEffectFingerprint,
   type CommitLocalSyncOperationInput
 } from "../../src/storage/sync-contracts.js";
-import type { MemoryProposal } from "../../src/domain/types.js";
+import type { MemoryProposal, Summary } from "../../src/domain/types.js";
+import type { SummaryVectorRecord } from "../../src/storage/memory-store.js";
 
 const localInput = (overrides: Partial<CommitLocalSyncOperationInput> = {}): CommitLocalSyncOperationInput =>
   CommitLocalSyncOperationInputSchema.parse({
@@ -125,5 +126,115 @@ describe("memory status health surface", () => {
     expect(status.syncLag.oldestPendingOutboxCreatedAt).toBeNull();
     expect(status.pendingProposalCount).toBe(0);
     expect(status.performance.queryLatencyMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("memory status embeddingBackfill snapshot (REQ-042 SC4)", () => {
+  let tempDirectory: string | undefined;
+
+  afterEach(async () => {
+    if (tempDirectory) await rm(tempDirectory, { recursive: true, force: true });
+  });
+
+  const summaryRecord = (overrides: Partial<Summary> = {}): Summary => ({
+    id: "summary_1",
+    summaryText: "Fixture summary for status backfill snapshot tests.",
+    sourceTurnRanges: [],
+    sourceSummaryIds: [],
+    boxIds: [],
+    embedding: null,
+    createdAt: "2026-07-21T12:00:00.000Z",
+    model: "test-summarizer",
+    promptVersion: "v1",
+    confidence: 0.9,
+    state: "compacted",
+    detailLevel: "brief",
+    tokenCount: 10,
+    lastAccessedAt: null,
+    version: 1,
+    strength: 0.8,
+    retrievalCount: 0,
+    retrievedAt: null,
+    halfLifeHours: 168,
+    outcomeScore: null,
+    ...overrides
+  });
+
+  const vectorRecord = (overrides: Partial<SummaryVectorRecord> = {}): SummaryVectorRecord => ({
+    summaryId: "summary_1",
+    provider: "deterministic",
+    model: "keyword-hash-v1",
+    dimensions: 4,
+    vector: [0.5, -0.25, 0.75, 0.125],
+    personId: "person_1",
+    scopeIds: ["personal"],
+    createdAt: "2026-07-21T12:00:00.000Z",
+    ...overrides
+  });
+
+  it("reports full completeness gap for a disabled-default corpus with zero vectors", async () => {
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-status-backfill-disabled-"));
+    const databasePath = join(tempDirectory, "memory.db");
+    const store = new SqliteStore(databasePath);
+    await store.savePerson({ id: "person_1", displayName: null, createdAt: "2026-07-16T10:00:00.000Z" });
+    const summaryIds = ["summary_a", "summary_b", "summary_c"];
+    for (const summaryId of summaryIds) {
+      await store.saveSummary(summaryRecord({ id: summaryId }));
+    }
+    store.close();
+
+    const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
+
+    expect(status.embeddingBackfill).toEqual({
+      provider: "deterministic",
+      model: "keyword-hash-v1",
+      totalSummaries: summaryIds.length,
+      missingVectors: summaryIds.length,
+      completedFraction: 0
+    });
+  });
+
+  it("reports a partial completeness fraction when some summaries already have vectors", async () => {
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-status-backfill-partial-"));
+    const databasePath = join(tempDirectory, "memory.db");
+    const store = new SqliteStore(databasePath);
+    await store.savePerson({ id: "person_1", displayName: null, createdAt: "2026-07-16T10:00:00.000Z" });
+    const summaryIds = ["summary_a", "summary_b", "summary_c", "summary_d"];
+    const vectoredIds = new Set(["summary_a", "summary_c"]);
+    for (const summaryId of summaryIds) {
+      await store.saveSummary(summaryRecord({ id: summaryId }));
+    }
+    for (const summaryId of summaryIds) {
+      if (vectoredIds.has(summaryId)) {
+        await store.saveSummaryVector(vectorRecord({ summaryId }));
+      }
+    }
+    store.close();
+
+    const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
+
+    const totalSummaries = summaryIds.length;
+    const missingVectors = totalSummaries - vectoredIds.size;
+    expect(status.embeddingBackfill.provider).toBe("deterministic");
+    expect(status.embeddingBackfill.model).toBe("keyword-hash-v1");
+    expect(status.embeddingBackfill.totalSummaries).toBe(totalSummaries);
+    expect(status.embeddingBackfill.missingVectors).toBe(missingVectors);
+    expect(status.embeddingBackfill.completedFraction).toBe(
+      (totalSummaries - missingVectors) / totalSummaries
+    );
+  });
+
+  it("reports a completed fraction of 1 with zero missing vectors for an empty corpus", async () => {
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-status-backfill-empty-"));
+    const databasePath = join(tempDirectory, "memory.db");
+    const store = new SqliteStore(databasePath);
+    await store.savePerson({ id: "person_1", displayName: null, createdAt: "2026-07-16T10:00:00.000Z" });
+    store.close();
+
+    const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
+
+    expect(status.embeddingBackfill.totalSummaries).toBe(0);
+    expect(status.embeddingBackfill.missingVectors).toBe(0);
+    expect(status.embeddingBackfill.completedFraction).toBe(1);
   });
 });
