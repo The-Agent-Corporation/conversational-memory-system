@@ -246,7 +246,7 @@ Plans:
 
 **Plans**: 4 plans (3 waves)
 
-- [ ] 08-01-PLAN.md — BLOB codec + MemoryStore vector contract + Wave 0 parity suite (RED)
+- [x] 08-01-PLAN.md — BLOB codec + MemoryStore vector contract + Wave 0 parity suite (RED)
 - [ ] 08-02-PLAN.md — SqliteStore vectors + summary_vectors migration (version 2)
 - [ ] 08-03-PLAN.md — InMemoryStore vectors (exact-parity twin)
 - [ ] 08-04-PLAN.md — SC3 cross-store exact-parity gate + full-suite verification
