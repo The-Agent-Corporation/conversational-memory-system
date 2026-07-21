@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 status: planning
-last_updated: "2026-07-21T16:08:34.222Z"
+last_updated: "2026-07-21T00:00:00.000Z"
 last_activity: 2026-07-21
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -15,27 +15,21 @@ progress:
 
 # Project State
 
-**Current phase:** 07
+**Current phase:** 08
 **Current plan:** Not started
-**Status:** Milestone complete
-**Last updated:** 2026-07-19
+**Status:** Roadmap approved, ready to plan Phase 8
+**Last updated:** 2026-07-21
 
 ## Completed
 
-- Host-neutral person-scoped canonical timeline.
-- Metadata-first approved importers for Codex, Claude Code, OpenClaw, and Hermes.
-- Resumable historical contraction into summaries, anchors, and review proposals.
-- Locked durable tool-call policy: name plus bounded redacted invocation, no result payload.
-- Durable source grants, audit events, and explicit revocation.
-- Confirmed source deletion with canonical removal and derived-memory invalidation.
-- Bounded redacted parser quarantine with confirmed replay and checkpoint reset.
-- Fail-closed person and retrieval-scope boundaries with derived-memory dependency filtering.
-- Continuous local daemon with approved-source reconciliation, incremental contraction, atomic lease authority, database-backed status, and verified macOS LaunchAgent lifecycle.
-- Generic sixteen-tool local MCP interface with payload-complete proposal authorization and exact atomic execute revalidation.
+- v1.0 (Phases 1-7) complete: host-neutral canonical timeline, four history importers, resumable checkpoints, deterministic historical bootstrap, source lifecycle controls, continuous local daemon, generic sixteen-tool MCP interface, zero-knowledge multi-device sync, and the operator surface (`memory` CLI, guided init, REQ-039 audit surface, migration, health/tune, encrypted backup).
+- Dogfooding 292,407 canonical events / 135,366 summaries validated the pipeline end-to-end, exposed and fixed O(n²) scaling hotspots (import, contraction, box/trace), and exposed the shared-term trace algorithm's combinatorial pathology — motivating v1.1.
+- v1.1 research complete: STACK, FEATURES, ARCHITECTURE, PITFALLS, SUMMARY all written to `.planning/research/`.
+- v1.1 ROADMAP.md written: Phases 8-14 derived from REQ-041..051, dependency-ordered per research SUMMARY.md/ARCHITECTURE.md build order.
 
 ## Active Work
 
-- Re-verify completed Phase 5 from the intact 05-09 implementation, then continue to Phase 6 planning.
+- Roadmap for v1.1 (Phases 8-14) approved. Next: `/gsd:plan-phase 8` (Vector Storage Foundation).
 
 ## Known Constraint
 
@@ -43,9 +37,9 @@ The current execution environment can edit the worktree but cannot write `.git/i
 
 ## Session
 
-**Last session:** 2026-07-20T17:50:49.486Z
-**Stopped at:** Phase 7 context gathered
-**Resume file:** .planning/phases/07-onboarding-and-operational-readiness/07-CONTEXT.md
+**Last session:** 2026-07-21
+**Stopped at:** v1.1 roadmap created (Phases 8-14), REQUIREMENTS.md traceability filled for REQ-041..051
+**Resume file:** .planning/ROADMAP.md
 
 ## Performance Metrics
 
@@ -59,6 +53,9 @@ The current execution environment can edit the worktree but cannot write `.git/i
 
 ## Decisions
 
+- [v1.1 Roadmap]: REQ-050 (embedding deletion propagation) is delivered entirely in Phase 14 — Phase 8 only designs the tombstoning-capable schema/query surface as infrastructure; the actual `commitSourceDeletion` wiring and correctness gate lands in Phase 14, per requirement-to-phase 1:1 mapping.
+- [v1.1 Roadmap]: The `createStagingStore` full-corpus-restage gap (flagged independently by FEATURES + PITFALLS research) is folded into Phase 12 (Forward-Only Vector Trace Discovery) rather than given its own phase, since it's the other half of "forward-only" for the same success criterion.
+- [v1.1 Roadmap]: Scope-boundary partitioning and embedding-determinism guards are cross-cutting concerns folded into the success criteria of the phases that introduce storage (8) and the embedder (9), rather than standalone phases, per PITFALLS.md guidance.
 - [Phase 05]: Confirmation tickets retain only process-local token and intent digests and are consumed before writes.
 - [Phase 05]: Mutation applications keep exact preview plans process-local and use only task-specific atomic store commits.
 - [Phase 05]: Proposal authorization closes every recursive summary, box, and trace dependency against profile person and scopes.
@@ -76,7 +73,7 @@ The current execution environment can edit the worktree but cannot write `.git/i
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 8 (Vector Storage Foundation) — not started
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-21 — Milestone v1.1 started
+Status: Roadmap approved for v1.1; ready for `/gsd:plan-phase 8`
+Last activity: 2026-07-21 — v1.1 roadmap created

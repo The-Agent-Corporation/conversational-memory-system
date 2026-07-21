@@ -95,3 +95,21 @@ _Deferred to discuss-phase as design decisions, not requirements: the exact embe
 A fresh installation is immediately useful when it can discover approved histories, import them idempotently into one personal timeline, produce layered memory, answer an MCP search from a different agent with provenance, expand the answer to source-linked events, and continue ingesting new history in the background while offline.
 
 **v1.1 adds:** every summary carries a locally computed embedding; recurring cross-session traces are found by semantic nearest-neighbor search instead of shared-term combinatorics; the daemon discovers new traces forward-only without rescanning the corpus; a user or agent can recall summaries by meaning within all privacy boundaries; and deleting a source removes its embeddings with it.
+
+## Traceability (v1.1)
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| REQ-041 | Phase 8 — Vector Storage Foundation | Pending |
+| REQ-044 | Phase 9 — Embedding Model + Embedder | Pending |
+| REQ-051 | Phase 9 — Embedding Model + Embedder | Pending |
+| REQ-042 | Phase 10 — Embedding Backfill | Pending |
+| REQ-043 | Phase 11 — Daemon Incremental Embedding | Pending |
+| REQ-045 | Phase 11 — Daemon Incremental Embedding | Pending |
+| REQ-046 | Phase 12 — Forward-Only Vector Trace Discovery | Pending |
+| REQ-047 | Phase 12 — Forward-Only Vector Trace Discovery | Pending |
+| REQ-048 | Phase 12 — Forward-Only Vector Trace Discovery | Pending |
+| REQ-049 | Phase 13 — Semantic Recall | Pending |
+| REQ-050 | Phase 14 — Deletion-Invalidation Closure + Operator Surface | Pending |
+
+Coverage: 11/11 v1.1 requirements mapped, no orphans, no duplicates.

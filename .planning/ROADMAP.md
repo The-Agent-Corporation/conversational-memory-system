@@ -4,6 +4,8 @@
 
 Build one local-first, person-scoped conversation timeline from explicitly approved agent histories, preserve native provenance, contract it into layered memory, and expose safe recall to any agent through MCP.
 
+**v1.1** replaces the shared-term all-pairs trace algorithm with local vector embeddings and nearest-neighbor search, and reuses those embeddings for semantic recall over summaries — without weakening REQ-040 (deterministic, local, no external models or services).
+
 ## Phases
 
 - [x] **Phase 1: Host-Neutral Core and Canonical Timeline** — Establish person ownership, canonical events, provenance, and host-neutral services.
@@ -13,6 +15,13 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 5: Generic MCP Interface** — Expose safe host-neutral memory tools to Codex, OpenClaw, Claude-compatible clients, and future agents. (completed 2026-07-19)
 - [x] **Phase 6: Zero-Knowledge Multi-Device Sync** — Add encrypted device convergence after threat-model and protocol approval. (completed 2026-07-19)
 - [x] **Phase 7: Onboarding and Operational Readiness** — Package the product with first-run consent, audit, migration, backup, and performance surfaces. (completed 2026-07-20)
+- [ ] **Phase 8: Vector Storage Foundation** — Add a scope-safe, tombstone-ready `summary_vectors` store with exact-match parity between SqliteStore and InMemoryStore.
+- [ ] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default.
+- [ ] **Phase 10: Embedding Backfill** — Resumable, idempotent, checkpointed backfill of vectors for all 135,366 existing summaries.
+- [ ] **Phase 11: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
+- [ ] **Phase 12: Forward-Only Vector Trace Discovery** — Replace shared-term all-pairs trace discovery with forward-only nearest-neighbor discovery, preserving the review flow.
+- [ ] **Phase 13: Semantic Recall** — Swap MemoryRetriever candidate selection to a vector top-K pre-filter ahead of unchanged boundary filtering.
+- [ ] **Phase 14: Deletion-Invalidation Closure + Operator Surface** — Close the embedding-deletion correctness gap and surface backfill/model health to operators.
 
 ## Phase Details
 
@@ -222,6 +231,110 @@ Plans:
 
 - [x] 07-06-PLAN.md — Encrypted backup/restore (`cms.backup.v1` domain) + clearly-labeled `export --plaintext` escape hatch.
 
+### Phase 8: Vector Storage Foundation
+
+**Goal**: Every summary can have a locally computed vector embedding persisted in a dedicated, scope-aware, deletion-tombstonable store, with exact result parity between SqliteStore and InMemoryStore.
+**Depends on**: Phase 7 (existing storage/schema-migration machinery)
+**Requirements**: REQ-041
+**Success Criteria**:
+
+  1. A vector can be saved for a summary, tagged with the embedder provider, model, and dimensionality that produced it, and retrieved by summary ID.
+  2. A query for summary IDs missing a vector under a given (provider, model) returns exactly the correct set, in stable order.
+  3. A nearest-neighbor query returns identical top-K results (same ranking, same scores, same tie-break) from SqliteStore and InMemoryStore given identical input vectors — not "closely enough," an exact match.
+  4. The storage schema and query surface support scope-partitioned lookups (person/workspace/case) and per-vector deletion/tombstoning, verified by tests, even though nothing invokes deletion yet.
+  5. The schema migration is additive and safe against the live ~3.5GB database — existing summaries, tests, and daemon startup are unaffected.
+
+**Plans**: TBD
+
+### Phase 9: Embedding Model + Embedder
+
+**Goal**: The milestone's open embedding-model decision is resolved and recorded, with a pinned-deterministic local embedder available while the keyword-hash embedder remains the always-on default and fallback.
+**Depends on**: Phase 8 (vectors need somewhere to land, though this phase does not yet call backfill)
+**Requirements**: REQ-044, REQ-051
+**Success Criteria**:
+
+  1. The existing keyword-hash DeterministicEmbedder remains the default/fallback embedder with zero behavior change for users who take no action.
+  2. An operator can explicitly opt in to a local ONNX sentence-transformer embedder that runs fully offline with no runtime network dependency.
+  3. Embedding a fixed golden set of summary texts under the pinned ONNX configuration (CPU execution provider, fixed thread count, fixed graph-optimization level) reproduces a committed golden-vector hash, verified in CI.
+  4. For a fixed embedder configuration, re-running embedding on identical input text is deterministic and vector search results over those vectors are stable across repeated runs.
+  5. Every vector produced records the embedder provider, model, and version so a later phase can detect stale-model vectors.
+
+**Plans**: TBD
+
+### Phase 10: Embedding Backfill
+
+**Goal**: All 135,366 existing summaries receive embeddings through a job that survives interruption without corrupting or duplicating work.
+**Depends on**: Phase 9 (embedder must be chosen and pinned before backfill runs at scale)
+**Requirements**: REQ-042
+**Success Criteria**:
+
+  1. Running the backfill command against the full existing corpus completes and leaves zero summaries missing a vector for the active (provider, model).
+  2. Killing the backfill process partway through and restarting it resumes from where it left off without re-embedding already-completed summaries or corrupting saved vectors.
+  3. Re-running backfill to completion a second time after it already finished performs zero additional writes.
+  4. Backfill progress (processed/total) is visible through the operator surface rather than a silent multi-minute-to-hours black box.
+
+**Plans**: TBD
+
+### Phase 11: Daemon Incremental Embedding
+
+**Goal**: The daemon embeds every newly contracted summary automatically, per device, without recomputing embeddings for the existing corpus and without ever syncing embeddings across devices.
+**Depends on**: Phase 10 (existing corpus already has vectors; incremental step only needs to handle new arrivals cleanly)
+**Requirements**: REQ-043, REQ-045
+**Success Criteria**:
+
+  1. A newly contracted summary has a persisted vector embedding within one subsequent daemon tick, without recomputing vectors for the rest of the corpus.
+  2. Per-tick embedding cost is bounded by the number of new summaries in that tick, not by total corpus size.
+  3. Embeddings never appear in any sync payload or outbox operation — a freshly paired device recomputes its own vectors locally from replicated canonical events rather than receiving them from a peer.
+  4. Each device's vectors record embedder provider/model/version, so a device running a stale model relative to its peers is detectable.
+
+**Plans**: TBD
+
+### Phase 12: Forward-Only Vector Trace Discovery
+
+**Goal**: Recurring cross-session traces are discovered via nearest-neighbor similarity over summary embeddings, evaluated forward-only against new summaries so the full corpus is never rescanned or restaged after bootstrap, while the existing proposal/review contract is preserved exactly.
+**Depends on**: Phase 11 (new summaries must already carry vectors by the time trace discovery runs)
+**Requirements**: REQ-046, REQ-047, REQ-048
+**Success Criteria**:
+
+  1. New trace proposals are produced from nearest-neighbor-above-threshold similarity over summary embeddings, not the shared-term all-pairs candidate algorithm.
+  2. A daemon trace-discovery cycle evaluates only summaries created/changed since the last successful pass against existing neighbors — it does not reload, rescan, or restage the entire person corpus to find new traces (closing the `createStagingStore` full-corpus-restage gap, not just replacing the candidate algorithm).
+  3. Vector-derived trace proposals carry the identical `TraceCandidate`/`MemoryProposal` shape as before, flow through the unchanged review/accept/reject decision path, and include a human-readable rationale explaining why the summaries were linked.
+  4. Running the trace-discovery step twice with exactly one new summary added between runs leaves every pre-existing trace assignment unchanged — no nightly churn, no collapse into an unbounded mega-trace.
+  5. Trace-discovery cost per daemon cycle stays flat as new summaries arrive at growing corpus size, rather than growing with total corpus size.
+
+**Plans**: TBD
+
+### Phase 13: Semantic Recall
+
+**Goal**: A user or agent can retrieve summaries by semantic meaning via a bounded vector top-K pre-filter, with every existing privacy boundary and traceability guarantee preserved exactly.
+**Depends on**: Phase 10 (semantic recall is only meaningful once the existing corpus has vectors); benefits from Phase 12 shipping first but has no hard code dependency on it
+**Requirements**: REQ-049
+**Success Criteria**:
+
+  1. A recall/search query returns summaries ranked by semantic similarity to the query's meaning, not solely by keyword overlap.
+  2. Candidate selection for recall is a bounded vector top-K pre-filter, computed before `applyRetrievalBoundary`, rather than scoring every summary in the corpus on every call.
+  3. All existing person/workspace/case/sensitivity retrieval boundaries are honored identically to the prior keyword-based path — a query never surfaces a summary outside the caller's authorized scope, verified with a cross-scope fixture.
+  4. Every recalled summary still carries full source traceability (source summary IDs, turn ranges, box IDs) unchanged from the prior retrieval path.
+  5. When no embedder is configured or an embedding is missing for a candidate, recall degrades gracefully to the existing keyword-overlap path with no errors.
+
+**Plans**: TBD
+
+### Phase 14: Deletion-Invalidation Closure + Operator Surface
+
+**Goal**: Source deletion leaves no orphaned embeddings, and operators can see backfill completeness and model-version skew across devices.
+**Depends on**: Phase 8 (tombstoning capability must exist in storage), Phase 10 (there must be embeddings worth invalidating to prove this works end to end)
+**Requirements**: REQ-050
+**Success Criteria**:
+
+  1. Confirming a source deletion invalidates/tombstones the embeddings of every summary affected by that deletion in the same operation as the existing deletion cascade — no separate follow-up step required.
+  2. A deleted or redacted summary's prior vector is unreachable via nearest-neighbor queries and semantic recall immediately after the deletion commits, verified by an extension of the existing source-deletion test suite.
+  3. The operator surface (`memory health`/`memory tune`) reports embedding backfill completeness — how many summaries still lack a vector for the active (provider, model).
+  4. The operator surface reports model-version skew — vectors present under a stale provider/model relative to the currently configured one — so a lagging device is visible rather than silent.
+
+**Plans**: TBD
+
 ## Sequencing Principle
 
 Lifecycle controls precede the daemon. The daemon precedes MCP. Remote synchronization cannot weaken local authority, auditability, deletion, or retrieval isolation.
+
+**v1.1 sequencing**: Storage before anything reads/writes it (Phase 8). The embedding-model decision before backfill, since backfill's worker shape and determinism guarantees depend on which embedder runs (Phase 9). Backfill before daemon incremental embedding assumes a fully-embedded history (Phase 10 → 11). Daemon incremental embedding before forward-only trace discovery, which assumes new summaries already carry vectors (Phase 11 → 12). Trace discovery lands before semantic recall because it is the milestone's stated primary motivation, though the two are otherwise independent (Phase 12, 13). Deletion-invalidation closure depends on both the storage tombstoning capability and a populated corpus to prove against, and the operator surface reports on everything above it, so it lands last (Phase 14).
