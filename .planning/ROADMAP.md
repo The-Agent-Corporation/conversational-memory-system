@@ -303,8 +303,8 @@ Plans:
 Plans:
 **Wave 1** *(disjoint files, parallel)*
 
-- [ ] 10-01-PLAN.md — Add transactional `saveSummaryVectors(records[])` batch write to MemoryStore + both stores.
-- [ ] 10-02-PLAN.md — `memory status` `embeddingBackfill` completeness snapshot (live-queried, ground-truth).
+- [x] 10-01-PLAN.md — Add transactional `saveSummaryVectors(records[])` batch write to MemoryStore + both stores.
+- [x] 10-02-PLAN.md — `memory status` `embeddingBackfill` completeness snapshot (live-queried, ground-truth).
 
 **Wave 2** *(blocked on 10-01)*
 
