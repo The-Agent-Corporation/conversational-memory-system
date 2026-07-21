@@ -298,7 +298,17 @@ Plans:
   3. Re-running backfill to completion a second time after it already finished performs zero additional writes.
   4. Backfill progress (processed/total) is visible through the operator surface rather than a silent multi-minute-to-hours black box.
 
-**Plans**: TBD
+**Plans**: 3 plans (2 waves)
+
+Plans:
+**Wave 1** *(disjoint files, parallel)*
+
+- [ ] 10-01-PLAN.md — Add transactional `saveSummaryVectors(records[])` batch write to MemoryStore + both stores.
+- [ ] 10-02-PLAN.md — `memory status` `embeddingBackfill` completeness snapshot (live-queried, ground-truth).
+
+**Wave 2** *(blocked on 10-01)*
+
+- [ ] 10-03-PLAN.md — `memory backfill-embeddings` command: missing-set-as-checkpoint resume, batch embed+save, per-batch stdout progress.
 
 ### Phase 11: Daemon Incremental Embedding
 

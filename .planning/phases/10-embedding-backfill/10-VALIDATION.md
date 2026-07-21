@@ -2,7 +2,7 @@
 phase: 10
 slug: embedding-backfill
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-21
 ---
@@ -40,7 +40,13 @@ created: 2026-07-21
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| — | — | — | REQ-042 | — | kill+restart resumes via missing-set; second run performs zero writes | unit/integration | quick command | ❌ W0 | ⬜ pending |
+| 10-01/T1 | 10-01 | 1 | REQ-042 (SC2) | T-10-01 | batch write is atomic; mid-batch throw rolls back whole batch | unit | `npx vitest run tests/storage/summary-vectors.test.ts` | ❌ W0 | ⬜ pending |
+| 10-01/T2 | 10-01 | 1 | REQ-042 (SC2) | T-10-02 | batch reuses per-record dimension/finite guard (no drift) | unit | `npx vitest run tests/storage/summary-vectors.test.ts` | ❌ W0 | ⬜ pending |
+| 10-02/T1 | 10-02 | 1 | REQ-042 (SC4) | T-10-06 | status reports identity backfill actually writes under | unit | `npx vitest run tests/bootstrap/status-command.test.ts` | ❌ W0 | ⬜ pending |
+| 10-02/T2 | 10-02 | 1 | REQ-042 (SC4) | T-10-04 | status never throws on enabled-but-broken embedder | unit | `npx vitest run tests/bootstrap/status-command.test.ts` | ❌ W0 | ⬜ pending |
+| 10-03/T1 | 10-03 | 2 | REQ-042 (SC1-SC4) | T-10-05,T-10-09,T-10-10 | kill+restart resumes via missing-set; zero-write rerun; per-person scope tag; fail-loud on missing personId | integration | `npx vitest run tests/operations/backfill-embeddings-command.test.ts` | ❌ W0 | ⬜ pending |
+| 10-03/T2 | 10-03 | 2 | REQ-042 (SC1-SC4) | T-10-08,T-10-09 | resolve embedder once; D-05/embed() throw propagates to nonzero exit; no silent provider mixing | integration | `npx vitest run tests/operations/backfill-embeddings-command.test.ts` | ❌ W0 | ⬜ pending |
+| 10-03/T3 | 10-03 | 2 | REQ-042 | — | backfill-embeddings dispatchable via unified CLI | unit | `npm run typecheck` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
