@@ -909,6 +909,17 @@ export class InMemoryStore implements MemoryStore {
     this.summaryVectors[existingIndex] = clone;
   }
 
+  /**
+   * Loop-equivalent batch write (Phase 10 backfill throughput). InMemoryStore has no transaction
+   * semantics, so this simply delegates each record to `saveSummaryVector`, reusing its exact
+   * validation/upsert behavior rather than duplicating it.
+   */
+  async saveSummaryVectors(records: SummaryVectorRecord[]): Promise<void> {
+    for (const record of records) {
+      await this.saveSummaryVector(record);
+    }
+  }
+
   async getSummaryVector(summaryId: string, provider: string, model: string): Promise<SummaryVectorRecord | null> {
     return structuredClone(
       this.summaryVectors.find(

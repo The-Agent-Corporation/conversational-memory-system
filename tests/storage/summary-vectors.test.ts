@@ -242,6 +242,107 @@ for (const backend of backends) {
       await expect(store.saveSummaryVector(record)).rejects.toThrow(/non-finite/);
     });
 
+    describe("saveSummaryVectors (batch write)", () => {
+      it("produces byte-identical stored records to N sequential saveSummaryVector calls (parity)", async () => {
+        const batch = [
+          vectorRecord({ summaryId: "summary_batch_a", vector: [0.5, -0.25, 0.75, 0.125] }),
+          vectorRecord({ summaryId: "summary_batch_b", vector: [1, 0, 0, 0] }),
+          vectorRecord({ summaryId: "summary_batch_c", vector: [0, 1, 0, 0] })
+        ];
+
+        await store.saveSummaryVectors(batch);
+
+        for (const record of batch) {
+          const loaded = await store.getSummaryVector(record.summaryId, record.provider, record.model);
+          expect(loaded).not.toBeNull();
+          expect(loaded!.vector).toEqual(record.vector);
+          expect(loaded!.provider).toBe(record.provider);
+          expect(loaded!.model).toBe(record.model);
+          expect(loaded!.dimensions).toBe(record.dimensions);
+          expect(loaded!.personId).toBe(record.personId);
+          expect(loaded!.scopeIds).toEqual(record.scopeIds);
+        }
+
+        // Compare against a fresh store populated one-record-at-a-time.
+        const fresh = await backend.create();
+        try {
+          for (const record of batch) {
+            await fresh.store.saveSummaryVector(record);
+          }
+          for (const record of batch) {
+            const viaBatch = await store.getSummaryVector(record.summaryId, record.provider, record.model);
+            const viaLoop = await fresh.store.getSummaryVector(record.summaryId, record.provider, record.model);
+            expect(viaBatch).toEqual(viaLoop);
+          }
+        } finally {
+          await fresh.cleanup();
+        }
+      });
+
+      it("treats an empty array as a no-op that touches no rows", async () => {
+        await store.saveSummary(summaryRecord({ id: "summary_untouched" }));
+
+        await store.saveSummaryVectors([]);
+
+        const missing = await store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A);
+        expect(missing).toContain("summary_untouched");
+        const loaded = await store.getSummaryVector("summary_untouched", PROVIDER_A, MODEL_A);
+        expect(loaded).toBeNull();
+      });
+
+      it("upserts an already-present (summaryId, provider, model) row in place, no duplicate row", async () => {
+        const original = vectorRecord({ summaryId: "summary_upsert", vector: [0.5, 0.5, 0.5, 0.5] });
+        await store.saveSummaryVector(original);
+
+        const updated = vectorRecord({ summaryId: "summary_upsert", vector: [1, 0, 0, 0] });
+        await store.saveSummaryVectors([updated]);
+
+        const loaded = await store.getSummaryVector("summary_upsert", PROVIDER_A, MODEL_A);
+        expect(loaded).not.toBeNull();
+        expect(loaded!.vector).toEqual(updated.vector);
+      });
+
+      it("rejects a batch containing one record with dimensions !== vector.length, same error as saveSummaryVector (CR-01)", async () => {
+        const good = vectorRecord({ summaryId: "summary_batch_good_1" });
+        const bad = vectorRecord({ summaryId: "summary_batch_bad", dimensions: 8, vector: [1, 0, 0, 0] });
+
+        await expect(store.saveSummaryVectors([good, bad])).rejects.toThrow(/dimensions/);
+      });
+
+      it("rejects a batch containing one record with a non-finite value, same error as saveSummaryVector (WR-02)", async () => {
+        const good = vectorRecord({ summaryId: "summary_batch_good_2" });
+        const bad = vectorRecord({ summaryId: "summary_batch_nonfinite", vector: [1, Number.NaN, 0, 0] });
+
+        await expect(store.saveSummaryVectors([good, bad])).rejects.toThrow(/non-finite/);
+      });
+
+      if (backend.name === "SqliteStore") {
+        it("leaves zero rows from the batch committed when the LAST record fails validation (atomicity)", async () => {
+          const summaryIds = ["summary_atomic_1", "summary_atomic_2", "summary_atomic_3"];
+          for (const summaryId of summaryIds) {
+            await store.saveSummary(summaryRecord({ id: summaryId }));
+          }
+
+          const batch = [
+            vectorRecord({ summaryId: "summary_atomic_1" }),
+            vectorRecord({ summaryId: "summary_atomic_2" }),
+            vectorRecord({ summaryId: "summary_atomic_3", dimensions: 8, vector: [1, 0, 0, 0] })
+          ];
+
+          await expect(store.saveSummaryVectors(batch)).rejects.toThrow(/dimensions/);
+
+          const missing = await store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A);
+          for (const summaryId of summaryIds) {
+            expect(missing).toContain(summaryId);
+          }
+          for (const summaryId of summaryIds) {
+            const loaded = await store.getSummaryVector(summaryId, PROVIDER_A, MODEL_A);
+            expect(loaded).toBeNull();
+          }
+        });
+      }
+    });
+
   });
 }
 
