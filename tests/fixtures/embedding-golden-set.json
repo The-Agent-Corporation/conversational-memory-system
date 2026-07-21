@@ -1,0 +1,77 @@
+[
+  {
+    "id": "passage-onboarding-summary",
+    "text": "User completed onboarding by connecting their calendar and setting a weekly review reminder for Friday afternoons.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-project-decision",
+    "text": "Team decided to migrate the billing service off the legacy queue and onto the new event bus by end of quarter.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-personal-preference",
+    "text": "User prefers terse status updates over long narrative summaries, and asked to skip small talk in future replies.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-bug-report",
+    "text": "Reported that the nightly sync job silently drops records when the source database connection resets mid-batch.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-travel-plan",
+    "text": "Planning a trip to Lisbon in October, wants recommendations for quiet coworking spaces near the coast.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-health-note",
+    "text": "Mentioned starting physical therapy twice a week for a shoulder injury and asked to be reminded before each session.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-recipe-idea",
+    "text": "Talked about trying a slow-braised short rib recipe this weekend and wanted a shopping list generated ahead of time.",
+    "mode": "passage"
+  },
+  {
+    "id": "query-search-billing",
+    "text": "What did we decide about the billing service migration timeline?",
+    "mode": "query"
+  },
+  {
+    "id": "query-search-travel",
+    "text": "Find notes about upcoming travel plans to Europe.",
+    "mode": "query"
+  },
+  {
+    "id": "query-search-health",
+    "text": "Any reminders related to physical therapy appointments?",
+    "mode": "query"
+  },
+  {
+    "id": "unicode-mixed-script",
+    "text": "User said \"ありがとう\" 🎉 for the quick turnaround and asked to keep notes in 日本語 and English side by side, üñîçødé mixed in for good measure.",
+    "mode": "passage"
+  },
+  {
+    "id": "near-empty",
+    "text": "Ok.",
+    "mode": "passage"
+  },
+  {
+    "id": "long-truncation",
+    "text": "During the quarterly planning session the team walked through a long list of open initiatives spanning infrastructure, product, and support workstreams, starting with a detailed retrospective on the migration of the billing service away from the legacy message queue and onto the newer event bus architecture, which surfaced several unresolved questions about backpressure handling, dead-letter routing, and how partial failures during a batch replay should be surfaced to on-call engineers versus silently retried in the background. The discussion then moved to the customer-facing dashboard redesign, where design and engineering debated whether to ship an incremental rollout behind a feature flag or a full cutover once the new component library reached parity with the legacy widgets, weighing the operational risk of running two parallel systems against the developer velocity cost of maintaining feature-flag branches for several months. Support raised concerns about a growing backlog of tickets related to slow report generation for large accounts, tracing the root cause to an unindexed query added during a recent schema change, and proposed both a short-term index addition and a longer-term redesign of the reporting pipeline to precompute aggregates nightly rather than on demand. Separately, the security team presented findings from a recent audit, recommending rotation of several long-lived API keys, tightening of default permission scopes for new service accounts, and the addition of anomaly detection alerts for unusual data export volumes. The meeting closed with a discussion of hiring plans for the next two quarters, including a new senior role focused specifically on data pipeline reliability, and a tentative agreement to revisit the billing migration timeline once the dashboard rollout stabilizes, with a follow-up sync scheduled for two weeks out to confirm ownership of each workstream and to unblock any cross-team dependencies that surfaced during this session.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-meeting-followup",
+    "text": "Follow-up scheduled in two weeks to confirm ownership of the reporting pipeline redesign and the API key rotation work.",
+    "mode": "passage"
+  },
+  {
+    "id": "passage-support-escalation",
+    "text": "Escalated a customer complaint about slow report generation to the data pipeline team for a permanent fix, not just a patch.",
+    "mode": "passage"
+  }
+]
