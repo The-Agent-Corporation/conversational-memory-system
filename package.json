@@ -38,6 +38,7 @@
     "hermes:smoke": "tsx src/integrations/hermes/smoke-harness.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "4.2.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "canonicalize": "3.0.0",
     "jose": "6.2.3",
