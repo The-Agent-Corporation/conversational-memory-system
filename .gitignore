@@ -5,3 +5,8 @@ coverage/
 .env
 .env.*
 .superpowers/
+
+# Vendored embedding model artifacts (large binaries; integrity captured via
+# committed sha256 manifest in src/embeddings/model-vendor.ts, not the files
+# themselves — see phase 09 plan 05).
+tests/fixtures/models/
