@@ -100,8 +100,21 @@ export class DeterministicBoxProposalPlanner implements BoxProposalPlanner {
   }
 }
 
+// Mutable accumulator for a candidate group. `keywords` is a Set so unioning a joining summary's
+// terms is O(terms) instead of rebuilding the whole array; membership tests against it are O(1).
+// The array-based CandidateGroup (below) rebuilt the keyword array and re-scanned it on every join,
+// which is O(members * vocabulary) per group -- quadratic for the large groups a bulk bootstrap
+// produces (tens of thousands of summaries sharing a title). This version is linear in total terms.
+interface WorkingGroup {
+  title: string;
+  titleTerms: string[];
+  sharedSpecificTerms: string[];
+  keywords: Set<string>;
+  summaries: Summary[];
+}
+
 function buildCandidateGroups(summaries: Summary[]): CandidateGroup[] {
-  const groups = new Map<string, CandidateGroup>();
+  const groups = new Map<string, WorkingGroup>();
 
   for (const summary of summaries) {
     const terms = significantTerms(summary.summaryText);
@@ -119,29 +132,35 @@ function buildCandidateGroups(summaries: Summary[]): CandidateGroup[] {
         title,
         titleTerms,
         sharedSpecificTerms: [...titleTerms],
-        keywords: terms,
+        keywords: new Set(terms),
         summaries: [summary]
       });
       continue;
     }
 
-    const shared = sharedTerms(existing.keywords, terms);
-    groups.set(key, {
-      ...existing,
-      sharedSpecificTerms: sharedTerms(existing.sharedSpecificTerms, terms),
-      keywords: [...new Set([...existing.keywords, ...terms])],
-      summaries: [...existing.summaries, summary]
-    });
+    // Overlap between this summary's terms and the group's accumulated keywords, computed against
+    // the keyword set BEFORE this summary is unioned in. Only its exact value is needed when it is
+    // small (< 2), in which case it has 0-1 elements and is order-independent; otherwise just the
+    // count matters. This preserves the original sharedTerms(existing.keywords, terms) semantics.
+    let sharedCount = 0;
+    for (const term of terms) if (existing.keywords.has(term)) sharedCount += 1;
+    const sharedSmall = sharedCount < 2 ? terms.filter((term) => existing.keywords.has(term)) : null;
 
-    if (shared.length < 2) {
-      groups.set(key, {
-        ...groups.get(key)!,
-        sharedSpecificTerms: shared
-      });
-    }
+    // Running intersection of the group's shared-specific terms with this summary's terms.
+    const termsSet = new Set(terms);
+    existing.sharedSpecificTerms = existing.sharedSpecificTerms.filter((term) => termsSet.has(term));
+    for (const term of terms) existing.keywords.add(term);
+    existing.summaries.push(summary);
+    if (sharedSmall) existing.sharedSpecificTerms = sharedSmall;
   }
 
-  return [...groups.values()];
+  return [...groups.values()].map((group) => ({
+    title: group.title,
+    titleTerms: group.titleTerms,
+    sharedSpecificTerms: group.sharedSpecificTerms,
+    keywords: [...group.keywords],
+    summaries: group.summaries
+  }));
 }
 
 function buildBoxProposal(
