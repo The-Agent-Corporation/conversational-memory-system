@@ -265,7 +265,26 @@ Plans:
   4. For a fixed embedder configuration, re-running embedding on identical input text is deterministic and vector search results over those vectors are stable across repeated runs.
   5. Every vector produced records the embedder provider, model, and version so a later phase can detect stale-model vectors.
 
-**Plans**: TBD
+**Plans**: 6 plans (4 waves)
+
+Plans:
+**Wave 1**
+
+- [ ] 09-01-PLAN.md — AsymmetricEmbedder contract + skeleton modules + Wave 0 RED tests + D-08 golden-set fixture
+- [ ] 09-02-PLAN.md — Install @huggingface/transformers@4.2.0 behind a blocking package-legitimacy checkpoint
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 09-03-PLAN.md — TransformerEmbedder (pinned fp32, cls-pooling, asymmetric) + hash-verified vendoring
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 09-04-PLAN.md — Config sidecar + embedder-resolver (default/enabled/broken) + `memory embeddings` CLI command
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 09-05-PLAN.md — Real vendoring run: capture manifest sha256 + revision + committed golden hashes, golden suite GREEN
+- [ ] 09-06-PLAN.md — `memory status` embedder-health surface (D-06) + `test:golden` gate + operator/CI docs
 
 ### Phase 10: Embedding Backfill
 
