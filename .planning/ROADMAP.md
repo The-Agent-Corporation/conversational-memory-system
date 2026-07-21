@@ -275,7 +275,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 09-03-PLAN.md — TransformerEmbedder (pinned fp32, cls-pooling, asymmetric) + hash-verified vendoring
+- [x] 09-03-PLAN.md — TransformerEmbedder (pinned fp32, cls-pooling, asymmetric) + hash-verified vendoring
 
 **Wave 3** *(blocked on Wave 2)*
 
