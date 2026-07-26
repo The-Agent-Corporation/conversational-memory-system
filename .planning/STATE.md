@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
-current_phase: 10
-current_plan: 1
-status: executing
-stopped_at: Phase 9 context gathered
-last_updated: "2026-07-21T21:10:55.507Z"
-last_activity: 2026-07-21 -- Phase 10 execution started
+current_phase: 11
+current_plan: 0
+status: planning
+stopped_at: Phase 11 scope insert written
+last_updated: "2026-07-26T00:00:00.000Z"
+last_activity: 2026-07-26 -- Phase 11 (Derivation Input Hygiene) inserted into v1.1 scope
 progress:
-  total_phases: 14
-  completed_phases: 7
+  total_phases: 15
+  completed_phases: 10
   total_plans: 64
   completed_plans: 61
   percent: 50
@@ -18,10 +18,10 @@ progress:
 
 # Project State
 
-**Current phase:** 10
-**Current plan:** 1
-**Status:** Executing Phase 10
-**Last updated:** 2026-07-21
+**Current phase:** 11
+**Current plan:** 0
+**Status:** Phase 11 scoped, not yet planned
+**Last updated:** 2026-07-26
 
 ## Completed
 
@@ -32,7 +32,9 @@ progress:
 
 ## Active Work
 
-- Roadmap for v1.1 (Phases 8-14) approved. Next: `/gsd:plan-phase 8` (Vector Storage Foundation).
+- Phases 8-10 complete (vector storage, embedder, backfill). Backfill machinery is built but has NOT been run against the live corpus (`~/.memory/aaron.db` is still at schema version 1, no vector table).
+- **Phase 11 — Derivation Input Hygiene inserted 2026-07-26.** Corpus audit found 64% of canonical events are tool calls, 38% of summaries contain verbatim `[Tool call:` argument text, and ~49% of "user" turns are harness-injected scaffolding — roughly 7% of the corpus is human-authored. Former Phases 11-14 renumbered to 12-15; REQ-052/053/054 added. See `.planning/phases/11-derivation-input-hygiene/11-SCOPE-INSERT.md`. Next: `/gsd:plan-phase 11`.
+- Live corpus is also 6 days stale (last import 2026-07-20) and Codex was never imported at all (4,738 session files, no grant).
 
 ## Known Constraint
 

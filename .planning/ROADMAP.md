@@ -18,10 +18,11 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 8: Vector Storage Foundation** — Add a scope-safe, tombstone-ready `summary_vectors` store with exact-match parity between SqliteStore and InMemoryStore. (completed 2026-07-21)
 - [x] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default. (completed 2026-07-21)
 - [x] **Phase 10: Embedding Backfill** — Resumable, idempotent, checkpointed backfill of vectors for all 135,366 existing summaries. (completed 2026-07-21)
-- [ ] **Phase 11: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
-- [ ] **Phase 12: Forward-Only Vector Trace Discovery** — Replace shared-term all-pairs trace discovery with forward-only nearest-neighbor discovery, preserving the review flow.
-- [ ] **Phase 13: Semantic Recall** — Swap MemoryRetriever candidate selection to a vector top-K pre-filter ahead of unchanged boundary filtering.
-- [ ] **Phase 14: Deletion-Invalidation Closure + Operator Surface** — Close the embedding-deletion correctness gap and surface backfill/model health to operators.
+- [ ] **Phase 11: Derivation Input Hygiene** — Collapse tool-call runs into activity descriptions and exclude harness-injected scaffolding from derivations, keeping the canonical timeline intact.
+- [ ] **Phase 12: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
+- [ ] **Phase 13: Forward-Only Vector Trace Discovery** — Replace shared-term all-pairs trace discovery with forward-only nearest-neighbor discovery, preserving the review flow.
+- [ ] **Phase 14: Semantic Recall** — Swap MemoryRetriever candidate selection to a vector top-K pre-filter ahead of unchanged boundary filtering.
+- [ ] **Phase 15: Deletion-Invalidation Closure + Operator Surface** — Close the embedding-deletion correctness gap and surface backfill/model health to operators.
 
 ## Phase Details
 
@@ -310,7 +311,25 @@ Plans:
 
 - [x] 10-03-PLAN.md — `memory backfill-embeddings` command: missing-set-as-checkpoint resume, batch embed+save, per-batch stdout progress.
 
-### Phase 11: Daemon Incremental Embedding
+### Phase 11: Derivation Input Hygiene
+
+**Goal**: Derivations are built from conversational content — consecutive tool-call runs collapse into compact activity descriptions and harness-injected scaffolding is excluded from summarization, embedding, trace discovery, and injection — while the canonical event timeline stays complete, immutable, and auditable.
+**Depends on**: Phase 10 (backfill machinery and its resumable/checkpointed pattern are reused for retroactive rebuild)
+**Requirements**: REQ-052, REQ-053, REQ-054
+**Scope insert**: `.planning/phases/11-derivation-input-hygiene/11-SCOPE-INSERT.md` (evidence, design decisions, open questions)
+**Success Criteria**:
+
+  1. A contraction pass over a slice containing a run of consecutive tool calls produces exactly one derived activity line naming the distinct tools and their counts, containing no invocation arguments; a slice containing a single isolated tool call summarizes it in its existing form.
+  2. Deterministic classification assigns every canonical event exactly one derivation class, is stable across repeated runs on identical input, and requires no model or network.
+  3. Summaries built under the new rules contain no verbatim harness-injected content and no `[Tool call:` argument text from collapsed runs.
+  4. Every event excluded from derivation remains retrievable through direct canonical-event queries and reports, through the audit surface, the specific rule ID and rule version that excluded it.
+  5. Rebuilding derivations for the existing corpus is resumable and idempotent: interrupting and restarting produces the same result as an uninterrupted run, with no duplicated or orphaned summaries, vectors, or trace assignments.
+  6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
+  7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
+
+**Plans**: TBD
+
+### Phase 12: Daemon Incremental Embedding
 
 **Goal**: The daemon embeds every newly contracted summary automatically, per device, without recomputing embeddings for the existing corpus and without ever syncing embeddings across devices.
 **Depends on**: Phase 10 (existing corpus already has vectors; incremental step only needs to handle new arrivals cleanly)
@@ -324,10 +343,10 @@ Plans:
 
 **Plans**: TBD
 
-### Phase 12: Forward-Only Vector Trace Discovery
+### Phase 13: Forward-Only Vector Trace Discovery
 
 **Goal**: Recurring cross-session traces are discovered via nearest-neighbor similarity over summary embeddings, evaluated forward-only against new summaries so the full corpus is never rescanned or restaged after bootstrap, while the existing proposal/review contract is preserved exactly.
-**Depends on**: Phase 11 (new summaries must already carry vectors by the time trace discovery runs)
+**Depends on**: Phase 12 (new summaries must already carry vectors by the time trace discovery runs), Phase 11 (candidate quality depends on hygienic derivation input)
 **Requirements**: REQ-046, REQ-047, REQ-048
 **Success Criteria**:
 
@@ -339,10 +358,10 @@ Plans:
 
 **Plans**: TBD
 
-### Phase 13: Semantic Recall
+### Phase 14: Semantic Recall
 
 **Goal**: A user or agent can retrieve summaries by semantic meaning via a bounded vector top-K pre-filter, with every existing privacy boundary and traceability guarantee preserved exactly.
-**Depends on**: Phase 10 (semantic recall is only meaningful once the existing corpus has vectors); benefits from Phase 12 shipping first but has no hard code dependency on it
+**Depends on**: Phase 10 (semantic recall is only meaningful once the existing corpus has vectors); benefits from Phase 13 shipping first but has no hard code dependency on it
 **Requirements**: REQ-049
 **Success Criteria**:
 
@@ -354,7 +373,7 @@ Plans:
 
 **Plans**: TBD
 
-### Phase 14: Deletion-Invalidation Closure + Operator Surface
+### Phase 15: Deletion-Invalidation Closure + Operator Surface
 
 **Goal**: Source deletion leaves no orphaned embeddings, and operators can see backfill completeness and model-version skew across devices.
 **Depends on**: Phase 8 (tombstoning capability must exist in storage), Phase 10 (there must be embeddings worth invalidating to prove this works end to end)

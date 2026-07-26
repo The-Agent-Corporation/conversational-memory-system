@@ -81,6 +81,12 @@
 - **REQ-050 — Embedding deletion propagation:** Source revocation and deletion shall invalidate the embeddings derived from affected summaries as part of the same operation, leaving no orphaned vectors.
 - **REQ-051 — Embedding determinism:** For a fixed embedder configuration, embedding output shall be deterministic and verified by a golden-vector regression test, and vector search results shall be stable for identical inputs.
 
+## Derivation Hygiene (v1.1)
+
+- **REQ-052 — Tool-activity collapse:** Consecutive tool-call events shall be contracted into a compact derived activity description naming tools and counts rather than reproducing invocation arguments verbatim. An isolated tool call shall retain normal summarization. Tool-call events shall remain intact in the canonical timeline.
+- **REQ-053 — Synthetic content classification:** Harness-injected content recorded under a user or assistant role — skill preambles, scheduler wrappers, context-injection blocks, compaction artifacts, and automated task prompts — shall be deterministically classified and excluded from summarization, embedding, trace discovery, and injection, while remaining present and queryable in the canonical timeline. Classification shall be versioned and its rationale recoverable through the audit surface.
+- **REQ-054 — Derivation rebuild on rule change:** A change to the hygiene rule version shall mark affected derivations stale, and the system shall provide a resumable, idempotent, checkpointed path to rebuild them without duplicating or corrupting summaries, vectors, or trace assignments.
+
 ## Out of Scope (v1.1)
 
 - **True approximate-nearest-neighbor indexes** (HNSW / usearch / hnswlib): deferred until measured latency pain near ~500k–1M summaries. Exact brute-force vector search is sufficient at current scale and avoids a determinism regression.
@@ -104,12 +110,15 @@ A fresh installation is immediately useful when it can discover approved histori
 | REQ-044 | Phase 9 — Embedding Model + Embedder | Complete |
 | REQ-051 | Phase 9 — Embedding Model + Embedder | Complete |
 | REQ-042 | Phase 10 — Embedding Backfill | Pending |
-| REQ-043 | Phase 11 — Daemon Incremental Embedding | Pending |
-| REQ-045 | Phase 11 — Daemon Incremental Embedding | Pending |
-| REQ-046 | Phase 12 — Forward-Only Vector Trace Discovery | Pending |
-| REQ-047 | Phase 12 — Forward-Only Vector Trace Discovery | Pending |
-| REQ-048 | Phase 12 — Forward-Only Vector Trace Discovery | Pending |
-| REQ-049 | Phase 13 — Semantic Recall | Pending |
-| REQ-050 | Phase 14 — Deletion-Invalidation Closure + Operator Surface | Pending |
+| REQ-052 | Phase 11 — Derivation Input Hygiene | Pending |
+| REQ-053 | Phase 11 — Derivation Input Hygiene | Pending |
+| REQ-054 | Phase 11 — Derivation Input Hygiene | Pending |
+| REQ-043 | Phase 12 — Daemon Incremental Embedding | Pending |
+| REQ-045 | Phase 12 — Daemon Incremental Embedding | Pending |
+| REQ-046 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
+| REQ-047 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
+| REQ-048 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
+| REQ-049 | Phase 14 — Semantic Recall | Pending |
+| REQ-050 | Phase 15 — Deletion-Invalidation Closure + Operator Surface | Pending |
 
-Coverage: 11/11 v1.1 requirements mapped, no orphans, no duplicates.
+Coverage: 14/14 v1.1 requirements mapped, no orphans, no duplicates.
