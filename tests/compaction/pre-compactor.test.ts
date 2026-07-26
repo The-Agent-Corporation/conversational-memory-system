@@ -216,4 +216,157 @@ describe("PreCompactor", () => {
       { threadId: "session_1", startSequence: 1, endSequence: 2 }
     ]);
   });
+
+  it("collapses a run of >=2 consecutive tool turns into one activity line", async () => {
+    const store = new InMemoryStore();
+    const seen: { sourceTurns: Turn[] } = { sourceTurns: [] };
+    const summarizer: Summarizer = {
+      async summarize({ span, sourceTurns }) {
+        seen.sourceTurns = sourceTurns;
+        return {
+          summaryText: sourceTurns.map((turn) => turn.content).join(" | "),
+          model: "test-summarizer",
+          promptVersion: "test-v1",
+          confidence: 0.9,
+          detailLevel: "brief",
+          tokenCount: sourceTurns.length
+        };
+      }
+    };
+
+    await store.saveTurn(makeTurn({
+      id: "turn_1",
+      sequence: 1,
+      content: "Let's talk about Smith PIP."
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_2",
+      sequence: 2,
+      role: "tool",
+      content: "[Tool call: Bash] {\"command\":\"grep -R foo\"}"
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_3",
+      sequence: 3,
+      role: "tool",
+      content: "[Tool call: Read] {\"path\":\"/etc/hosts\"}"
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_4",
+      sequence: 4,
+      role: "tool",
+      content: "[Tool call: Grep] {\"pattern\":\"xyzzy\"}"
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_5",
+      sequence: 5,
+      role: "assistant",
+      content: "Found the demand timing issue."
+    }));
+
+    const compactor = new PreCompactor(store, summarizer);
+    const result = await compactor.compactCompletedTopic(completedSpan({
+      sourceTurnRange: { threadId: "session_1", startSequence: 1, endSequence: 5 },
+      turnCount: 5
+    }));
+
+    expect(result.summary.summaryText).toContain("[Activity] ran 3 tool calls:");
+    expect(result.summary.summaryText).not.toContain("grep -R foo");
+    expect(result.summary.summaryText).not.toContain("/etc/hosts");
+    expect(result.summary.summaryText).not.toContain("xyzzy");
+    // provenance is unchanged: still the span's full raw turn range, not the hygiene-collapsed count
+    expect(result.summary.sourceTurnRanges).toEqual([
+      { threadId: "session_1", startSequence: 1, endSequence: 5 }
+    ]);
+    expect(result.sourceTurnCount).toBe(5);
+  });
+
+  it("keeps an isolated single tool turn verbatim", async () => {
+    const store = new InMemoryStore();
+    const summarizer: Summarizer = {
+      async summarize({ sourceTurns }) {
+        return {
+          summaryText: sourceTurns.map((turn) => turn.content).join(" | "),
+          model: "test-summarizer",
+          promptVersion: "test-v1",
+          confidence: 0.9,
+          detailLevel: "brief",
+          tokenCount: sourceTurns.length
+        };
+      }
+    };
+
+    await store.saveTurn(makeTurn({
+      id: "turn_1",
+      sequence: 1,
+      content: "Let's talk about Smith PIP."
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_2",
+      sequence: 2,
+      role: "tool",
+      content: "[Tool call: Bash] {\"command\":\"grep -R foo\"}"
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_3",
+      sequence: 3,
+      role: "assistant",
+      content: "Found the demand timing issue."
+    }));
+
+    const compactor = new PreCompactor(store, summarizer);
+    const result = await compactor.compactCompletedTopic(completedSpan({
+      sourceTurnRange: { threadId: "session_1", startSequence: 1, endSequence: 3 },
+      turnCount: 3
+    }));
+
+    expect(result.summary.summaryText).toContain("[Tool call: Bash] {\"command\":\"grep -R foo\"}");
+  });
+
+  it("drops a <system-reminder> turn from the summarizer input entirely", async () => {
+    const store = new InMemoryStore();
+    const summarizer: Summarizer = {
+      async summarize({ sourceTurns }) {
+        return {
+          summaryText: sourceTurns.map((turn) => turn.content).join(" | "),
+          model: "test-summarizer",
+          promptVersion: "test-v1",
+          confidence: 0.9,
+          detailLevel: "brief",
+          tokenCount: sourceTurns.length
+        };
+      }
+    };
+
+    await store.saveTurn(makeTurn({
+      id: "turn_1",
+      sequence: 1,
+      content: "Let's talk about Smith PIP."
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_2",
+      sequence: 2,
+      role: "user",
+      content: "<system-reminder>ignore this</system-reminder>"
+    }));
+    await store.saveTurn(makeTurn({
+      id: "turn_3",
+      sequence: 3,
+      role: "assistant",
+      content: "Found the demand timing issue."
+    }));
+
+    const compactor = new PreCompactor(store, summarizer);
+    const result = await compactor.compactCompletedTopic(completedSpan({
+      sourceTurnRange: { threadId: "session_1", startSequence: 1, endSequence: 3 },
+      turnCount: 3
+    }));
+
+    expect(result.summary.summaryText).not.toContain("ignore this");
+    expect(result.summary.summaryText).not.toContain("system-reminder");
+    expect(result.summary.sourceTurnRanges).toEqual([
+      { threadId: "session_1", startSequence: 1, endSequence: 3 }
+    ]);
+    expect(result.sourceTurnCount).toBe(3);
+  });
 });
