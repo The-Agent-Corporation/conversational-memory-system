@@ -1,19 +1,34 @@
 # Deferred Items — Phase 11
 
-## tests/mcp/stdio-server.test.ts flakiness (found during Plan 03 full-suite check)
+_No open deferred items. The one entry raised during execution is resolved below._
 
-- **Found during:** Plan 03, post-implementation `npx vitest run` (full suite)
-- **Symptom:** `MCP SDK-driven STDIO lifecycle contract > 05-08 Task 2 ...` fails with a stderr
-  mismatch (`MEMORY_MCP_STARTUP_FAILED` vs actual) and a companion test times out at 5000ms
-  waiting on subprocess stdin EOF.
-- **Scope:** `tests/mcp/stdio-server.test.ts` spawns a real subprocess to exercise MCP STDIO
-  server startup/shutdown. Plan 03 touches only `src/integrations/hermes/adapter.ts` and
-  `src/compaction/pre-compactor.ts` — no relation to the MCP stdio server, its startup path, or
-  process lifecycle.
-- **Action taken:** None (out of scope per executor scope-boundary rule). Not fixed, not
-  investigated further.
-- **Suspected cause (unverified):** subprocess-spawn timing sensitivity in this worktree's
-  environment; likely pre-existing/flaky rather than caused by this plan's changes.
-- **Recommendation:** Re-run `npx vitest run tests/mcp/stdio-server.test.ts` in isolation on
-  `main` (pre-Plan-03) to confirm this is not a regression before the next phase touches
-  `src/mcp/`.
+---
+
+## RESOLVED — `tests/mcp/stdio-server.test.ts` failure was a worktree artifact, not a regression or a flake
+
+- **Raised during:** Plan 03 full-suite check (and independently by Plan 02, which attributed it to a
+  missing `node_modules/tsx` inside its worktree).
+- **Symptom as reported:** `MCP SDK-driven STDIO lifecycle contract` fails with a stderr mismatch
+  (`MEMORY_MCP_STARTUP_FAILED`) plus a companion 5000ms timeout waiting on subprocess stdin EOF.
+- **Both executors characterised it as "pre-existing" — that was wrong**, and direct measurement
+  contradicts it:
+
+  | Check | HEAD | Result |
+  |---|---|---|
+  | Full suite, immediately before Wave 1 | `73d0fb2` | 785 passed / 4 skipped — **green** |
+  | `stdio-server.test.ts` alone, on the exact worktree base | `9d3f813` | 5 passed — **green** |
+  | Full suite, after merging Wave 2 | `7e54fb7` | 846 passed / 4 skipped — **green** |
+  | `stdio-server.test.ts` alone, post-merge | `7e54fb7` | 5 passed — **green** |
+
+- **Actual cause:** the test spawns a real subprocess through `tsx`, which resolves from
+  `node_modules/`. Agent worktrees do not carry `node_modules/`, so the subprocess failed to start
+  inside the worktree only. Plan 02 diagnosed this correctly; Plan 03 did not, and both then
+  mislabelled it "pre-existing".
+- **Corroborating signal:** the worktree runs also reported **21 skipped** vs the repo baseline of **4
+  skipped** — the same missing-dependency artifact, and further evidence that worktree suite numbers
+  are not comparable to the repo baseline.
+- **Standing lesson for later waves:** a full-suite run *inside an agent worktree* is not a valid
+  regression signal for anything that shells out or spawns a subprocess. The post-merge gate in the
+  main checkout is the authoritative result. Executors should judge their own work by targeted suites
+  while running in a worktree.
+- **Action required:** none. No `src/mcp/` investigation is needed before the next phase.
