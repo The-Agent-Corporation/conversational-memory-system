@@ -130,3 +130,8 @@ None.
 ---
 *Phase: 11-derivation-input-hygiene*
 *Completed: 2026-07-26*
+
+## Self-Check: PASSED
+
+All created/modified files verified present; both task commit hashes (`1e38236`, `0b60fe8`)
+verified in git log.
