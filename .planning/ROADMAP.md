@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 3/7 plans executed
+**Plans:** 5/7 plans executed
 
 Plans:
 **Wave 1**
@@ -341,8 +341,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 11-04-PLAN.md — Audit surface: `explain` reports derivation class, rule id, and rule version, recomputed on demand.
-- [ ] 11-05-PLAN.md — `memory rebuild-derivations`: resumable, idempotent, checkpointed full rebuild with vector cleanup.
+- [x] 11-04-PLAN.md — Audit surface: `explain` reports derivation class, rule id, and rule version, recomputed on demand.
+- [x] 11-05-PLAN.md — `memory rebuild-derivations`: resumable, idempotent, checkpointed full rebuild with vector cleanup.
 
 **Wave 4** *(blocked on Wave 3)*
 
