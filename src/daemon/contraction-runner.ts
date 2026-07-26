@@ -213,6 +213,7 @@ export class ContractionRunner {
       sliceCount: (previous?.sliceCount ?? 0) + 1,
       immediateStage: complete ? "complete" : "pending",
       proposalStage: checkpointCanResume ? previous.proposalStage : "pending",
+      pendingToolRun: null,
       updatedAt: now
     };
     const nextJob: ContractionJob = {

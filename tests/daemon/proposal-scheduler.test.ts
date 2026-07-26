@@ -225,6 +225,7 @@ function checkpoint(): ContractionCheckpoint {
     sliceCount: 1,
     immediateStage: "complete",
     proposalStage: "pending",
+    pendingToolRun: null,
     updatedAt: FIXED_NOW
   };
 }

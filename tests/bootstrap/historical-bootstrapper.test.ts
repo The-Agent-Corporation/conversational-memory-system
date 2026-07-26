@@ -244,6 +244,7 @@ function contractionResult(
       sliceCount,
       immediateStage: complete ? "complete" : "pending",
       proposalStage: "pending",
+      pendingToolRun: null,
       updatedAt: NOW
     }
   };
