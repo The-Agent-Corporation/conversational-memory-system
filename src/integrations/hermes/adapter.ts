@@ -14,8 +14,10 @@ import {
 import {
   TopicMonitor,
   type CompletedTopicSpan,
-  type RollingTopicState
+  type RollingTopicState,
+  type TopicMonitorResult
 } from "../../topic/topic-monitor.js";
+import { drivesTopicLabel } from "../../topic/derivation-hygiene.js";
 import {
   mapHermesTimelineRowToHostEvent,
   type HermesTimelineRow
@@ -73,7 +75,17 @@ export class HermesMemoryAdapter {
   async processTimelineRow(row: HermesTimelineRow): Promise<HermesAdapterResult> {
     const event = mapHermesTimelineRowToHostEvent(row);
     const turn = await this.service.ingestEvent(event);
-    const topicResult = this.monitor.observe(event);
+
+    // 11-CONTEXT decision 5: the live bridge applies the SAME shared hygiene classifier as
+    // the daemon/contraction path. control_signal events always reach the monitor (they close
+    // spans); conversation_turn events only drive topic labeling when drivesTopicLabel says so.
+    // Note: this live path never sets eventKind, so `role: "tool"` is the tool signal here.
+    const topicResult: TopicMonitorResult =
+      event.type === "control_signal" ||
+      drivesTopicLabel({ content: event.content, eventKind: event.eventKind, role: event.role })
+        ? this.monitor.observe(event)
+        : { current: this.monitor.current(event.hostSessionId), topicChanged: false, completed: null };
+
     const anchorResult = turn ? await this.anchorDetector.detectForTurn(turn) : { anchors: [] };
     const compaction = topicResult.completed
       ? await this.preCompactor.compactCompletedTopic(topicResult.completed)
