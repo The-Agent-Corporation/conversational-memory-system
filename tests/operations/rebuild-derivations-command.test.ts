@@ -132,6 +132,118 @@ async function buildPreHygieneCorpus(databasePath: string, events: CanonicalEven
   checkpointStore.close();
 }
 
+function toOrderKey(event: CanonicalEvent) {
+  return { occurredAt: event.occurredAt, nativeSequence: event.nativeSequence, id: event.id };
+}
+
+const EVENTS_PER_TOPIC = 7;
+
+/**
+ * Directly forges a "legacy" derived state: a completed, current-generation contraction job/checkpoint
+ * tagged with a legacy `processorVersion`, plus one hand-written pre-hygiene summary per topic window
+ * carrying raw `[Tool call:`/`[SYSTEM:` text under a summary id that can never collide with a
+ * hygiene-aware rebuild's deterministically-computed id (which is a function of first-event-id +
+ * topic label, not content — a same-boundary continuing span legitimately upserts in place rather
+ * than superseding, per Pitfall 5, so a same-id fixture would not exercise supersession at all). This
+ * is what makes the "no orphans" case's "every pre-hygiene summary is superseded" assertion meaningful:
+ * real pre-hygiene derivations differed because pre-hygiene code let tool/synthetic events drive topic
+ * labels too, which is exactly the boundary difference a fixture must reproduce to be representative.
+ */
+async function buildForgedLegacyCorpus(databasePath: string, events: CanonicalEvent[]): Promise<{ legacySummaryIds: string[] }> {
+  const store = openStore(databasePath);
+  await store.savePerson({ id: PERSON_ID, displayName: null, createdAt: NOW });
+  await store.saveSource({
+    id: `source_${PERSON_ID}`,
+    personId: PERSON_ID,
+    application: "synthetic",
+    profileId: "default",
+    instanceId: "test",
+    createdAt: NOW,
+    lastImportedAt: NOW
+  });
+  for (const item of events) await store.saveCanonicalEvent(item);
+
+  const jobId = historicalContractionJobId(PERSON_ID);
+  const checkpointId = `contraction_checkpoint_${jobId}`;
+  const firstKey = toOrderKey(events[0]!);
+  const lastKey = toOrderKey(events.at(-1)!);
+
+  await store.saveContractionJob({
+    id: jobId,
+    personId: PERSON_ID,
+    generation: 1,
+    earliestAffected: firstKey,
+    latestAffected: lastKey,
+    state: "complete",
+    attempts: 1,
+    immediateDirty: false,
+    proposalDirty: false,
+    lastProposalRunAt: null,
+    lastActivityAt: NOW,
+    nextDueAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW
+  });
+  await store.saveContractionCheckpoint({
+    id: checkpointId,
+    personId: PERSON_ID,
+    jobId,
+    processorVersion: LEGACY_PROCESSOR_VERSION,
+    generation: 1,
+    processedThroughOrderKey: lastKey,
+    nextOrderKey: null,
+    nextEventId: null,
+    activeTopic: null,
+    sliceCount: 1,
+    immediateStage: "complete",
+    proposalStage: "complete",
+    pendingToolRun: null,
+    updatedAt: NOW
+  });
+
+  const legacySummaryIds: string[] = [];
+  for (let topic = 0; topic * EVENTS_PER_TOPIC < events.length; topic += 1) {
+    const windowEvents = events.slice(topic * EVENTS_PER_TOPIC, (topic + 1) * EVENTS_PER_TOPIC);
+    if (windowEvents.length === 0) continue;
+    const legacyId = `legacy_summary_${topic}`;
+    legacySummaryIds.push(legacyId);
+    await store.saveSummary({
+      id: legacyId,
+      personId: PERSON_ID,
+      scopeIds: ["personal"],
+      origin: "historical_bootstrap",
+      summaryText: `[Tool call: Bash] ${JSON.stringify({ arg: "legacy" })} raw pre-hygiene dump for topic ${topic} [SYSTEM: harness note]`,
+      sourceTurnRanges: [
+        {
+          threadId: `person:${PERSON_ID}`,
+          startSequence: windowEvents[0]!.nativeSequence,
+          endSequence: windowEvents.at(-1)!.nativeSequence
+        }
+      ],
+      sourceCanonicalEventIds: windowEvents.map((event) => event.id),
+      sourceSummaryIds: [],
+      boxIds: [],
+      embedding: null,
+      createdAt: NOW,
+      model: "legacy-summarizer",
+      promptVersion: "v0",
+      confidence: 0.5,
+      state: "compacted",
+      detailLevel: "brief",
+      tokenCount: 20,
+      lastAccessedAt: null,
+      version: 1,
+      strength: 0.5,
+      retrievalCount: 0,
+      retrievedAt: null,
+      halfLifeHours: 168,
+      outcomeScore: null
+    });
+  }
+  store.close();
+  return { legacySummaryIds };
+}
+
 async function activeSummaryProjection(store: SqliteStore) {
   const summaries = await store.listSummaries();
   return summaries
@@ -254,19 +366,18 @@ describe("rebuild-derivations-command", () => {
 
   it("no orphans: pre-hygiene summaries are superseded (not deleted), no duplicate windows, and superseded vectors are gone", async () => {
     const databasePath = await makeTempDatabase();
-    await buildPreHygieneCorpus(databasePath, buildCorpus(TOPIC_COUNT));
+    const { legacySummaryIds } = await buildForgedLegacyCorpus(databasePath, buildCorpus(TOPIC_COUNT));
+    expect(legacySummaryIds.length).toBeGreaterThan(0);
 
     const seedStore = openStore(databasePath);
-    const preSummaries = (await seedStore.listSummaries()).filter((summary) => summary.personId === PERSON_ID);
-    expect(preSummaries.length).toBeGreaterThan(0);
-    const vectorRecords: SummaryVectorRecord[] = preSummaries.map((summary) => ({
-      summaryId: summary.id,
+    const vectorRecords: SummaryVectorRecord[] = legacySummaryIds.map((summaryId) => ({
+      summaryId,
       provider: "test-provider",
       model: "test-model",
       dimensions: 4,
       vector: [0.1, 0.2, 0.3, 0.4],
-      personId: summary.personId!,
-      scopeIds: summary.scopeIds ?? [],
+      personId: PERSON_ID,
+      scopeIds: ["personal"],
       createdAt: NOW
     }));
     await seedStore.saveSummaryVectors(vectorRecords);
@@ -281,8 +392,9 @@ describe("rebuild-derivations-command", () => {
     const superseded = allSummaries.filter((summary) => summary.personId === PERSON_ID && summary.state === "superseded");
     const supersededIds = new Set(superseded.map((summary) => summary.id));
 
-    for (const pre of preSummaries) {
-      expect(supersededIds.has(pre.id)).toBe(true);
+    // Every forged legacy summary must be marked superseded, not merely absent.
+    for (const legacyId of legacySummaryIds) {
+      expect(supersededIds.has(legacyId)).toBe(true);
     }
 
     const seenEventIds = new Set<string>();
