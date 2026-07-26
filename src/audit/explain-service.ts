@@ -3,7 +3,9 @@ import type { ProfileAuthority } from "../mcp/authority.js";
 import { SourceLifecycleService } from "../service/source-lifecycle-service.js";
 import type { JsonObject } from "../domain/types.js";
 import type { Anchor, Box, MemoryTrace, Summary } from "../domain/types.js";
+import type { CanonicalEvent } from "../domain/canonical.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { classifyEvent, HYGIENE_RULE_VERSION } from "../topic/derivation-hygiene.js";
 
 /**
  * REQ-039 "why" surface (D-01/D-03): reconstructs, for a single already-persisted item, the
@@ -34,7 +36,8 @@ export const EXPLAIN_VERBS = [
   "expanded",
   "approved",
   "rejected",
-  "deleted"
+  "deleted",
+  "classified"
 ] as const;
 
 export const ExplainVerbSchema = z.enum(EXPLAIN_VERBS);
@@ -48,7 +51,7 @@ export const ExplainEventSchema = z.object({
 }).strict();
 export type ExplainEvent = z.infer<typeof ExplainEventSchema>;
 
-export const ExplainSubjectKindSchema = z.enum(["source", "summary", "anchor", "box", "trace"]);
+export const ExplainSubjectKindSchema = z.enum(["source", "summary", "anchor", "box", "trace", "event"]);
 export type ExplainSubjectKind = z.infer<typeof ExplainSubjectKindSchema>;
 
 export const ExplainTraceSchema = z.object({
@@ -109,8 +112,34 @@ export async function explain(
     return ExplainTraceSchema.parse({ itemId: parsedItemId, kind: "source", events, count: events.length });
   }
 
+  // Last resort, after the memory-item and grant lookups both miss: `listCanonicalEvents` is a
+  // full person-scoped scan, so it must never sit ahead of the cheaper indexed lookups above.
+  const canonicalEvents = await store.listCanonicalEvents(authority.personId);
+  const canonicalEvent = canonicalEvents.find((event) => event.id === parsedItemId);
+  if (canonicalEvent) {
+    if (!scopeAuthorized([canonicalEvent.scopeId ?? "personal"])) throw new Error(UNAUTHORIZED_OR_NOT_FOUND);
+    const classifiedEvent = buildClassifiedEvent(canonicalEvent);
+    return ExplainTraceSchema.parse({ itemId: parsedItemId, kind: "event", events: [classifiedEvent], count: 1 });
+  }
+
   throw new Error(UNAUTHORIZED_OR_NOT_FOUND);
 }
+
+/** REQ-053: recomputes rule/class through the ONE shared classifier — never a second rule table. */
+const buildClassifiedEvent = (event: CanonicalEvent): ExplainEvent => {
+  const classification = classifyEvent(event);
+  return {
+    verb: "classified",
+    occurredAt: event.occurredAt,
+    detail: sanitizeAuditDetail({
+      derivationClass: classification.derivationClass,
+      ruleId: classification.ruleId,
+      ruleVersion: classification.ruleVersion,
+      eventKind: event.eventKind ?? null,
+      role: event.role
+    })
+  };
+};
 
 const dependencyScopes = (summaryIds: readonly string[], summaries: readonly Summary[]): string[] => {
   const byId = new Map(summaries.map((item) => [item.id, item]));
@@ -173,6 +202,49 @@ async function resolveMemoryItem(
   return null;
 }
 
+/** REQ-053: reports how many of a summary's source events survived derivation and which rules excluded the rest. */
+async function buildSummarizedEvent(store: MemoryStore, summary: Summary, personId: string): Promise<ExplainEvent> {
+  const sourceCanonicalEventIds = summary.sourceCanonicalEventIds ?? [];
+  const canonicalEvents = sourceCanonicalEventIds.length > 0 ? await store.listCanonicalEvents(personId) : [];
+  const byId = new Map(canonicalEvents.map((event) => [event.id, event]));
+
+  let conversationalEventCount = 0;
+  let toolActivityEventCount = 0;
+  let syntheticExcludedEventCount = 0;
+  let missingSourceEventCount = 0;
+  const excludedRuleIds = new Set<string>();
+
+  for (const eventId of sourceCanonicalEventIds) {
+    const event = byId.get(eventId);
+    if (!event) {
+      missingSourceEventCount += 1;
+      continue;
+    }
+    const classification = classifyEvent(event);
+    if (classification.derivationClass === "conversational") conversationalEventCount += 1;
+    else if (classification.derivationClass === "tool_activity") toolActivityEventCount += 1;
+    else {
+      syntheticExcludedEventCount += 1;
+      if (classification.ruleId) excludedRuleIds.add(classification.ruleId);
+    }
+  }
+
+  return {
+    verb: "summarized",
+    occurredAt: summary.createdAt,
+    detail: sanitizeAuditDetail({
+      sourceCanonicalEventCount: sourceCanonicalEventIds.length,
+      sourceSummaryCount: summary.sourceSummaryIds.length,
+      hygieneRuleVersion: HYGIENE_RULE_VERSION,
+      conversationalEventCount,
+      toolActivityEventCount,
+      syntheticExcludedEventCount,
+      missingSourceEventCount,
+      excludedRuleIds: [...excludedRuleIds].sort().join(",")
+    })
+  };
+}
+
 async function explainMemoryItem(
   store: MemoryStore,
   item: ResolvedMemoryItem,
@@ -181,14 +253,7 @@ async function explainMemoryItem(
   const events: ExplainEvent[] = [];
 
   if (item.kind === "summary" && item.summary) {
-    events.push({
-      verb: "summarized",
-      occurredAt: item.summary.createdAt,
-      detail: {
-        sourceCanonicalEventCount: (item.summary.sourceCanonicalEventIds ?? []).length,
-        sourceSummaryCount: item.summary.sourceSummaryIds.length
-      }
-    });
+    events.push(await buildSummarizedEvent(store, item.summary, personId));
   }
 
   events.push({

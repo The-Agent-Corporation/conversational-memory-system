@@ -186,7 +186,7 @@ const ExplainDetailSchema = z.record(z.string().min(1).max(128), ExplainDetailVa
 
 export const MemoryExplainOutputSchema = z.object({
   itemId: IdentifierSchema,
-  kind: z.enum(["source", "summary", "anchor", "box", "trace"]),
+  kind: z.enum(["source", "summary", "anchor", "box", "trace", "event"]),
   events: z.array(z.object({
     verb: ExplainVerbSchema,
     occurredAt: z.string().min(1).max(64),
