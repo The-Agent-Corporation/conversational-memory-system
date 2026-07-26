@@ -2194,7 +2194,11 @@ export class SqliteStore implements MemoryStore {
         const processedThroughOrderKey = Object.prototype.hasOwnProperty.call(raw, "processedThroughOrderKey")
           ? raw.processedThroughOrderKey
           : this.reconstructProcessedThroughOrderKey(row.person_id, raw.nextOrderKey);
-        const normalized = JSON.stringify(ContractionCheckpointSchema.parse({ ...raw, processedThroughOrderKey }));
+        const normalized = JSON.stringify(ContractionCheckpointSchema.parse({
+          ...raw,
+          processedThroughOrderKey,
+          ...(!Object.prototype.hasOwnProperty.call(raw, "pendingToolRun") ? { pendingToolRun: null } : {})
+        }));
         if (normalized !== row.payload) updateCheckpoint.run(normalized, row.id);
       }
       this.database.exec("commit");

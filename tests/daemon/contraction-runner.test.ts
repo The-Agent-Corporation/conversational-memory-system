@@ -6,6 +6,7 @@ import type { ContractionJob, WriteAuthority } from "../../src/daemon/types.js";
 import type { CanonicalEvent, MemorySource, Person } from "../../src/domain/canonical.js";
 import type { SourceGrant } from "../../src/domain/source-lifecycle.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
+import { HYGIENE_RULE_VERSION } from "../../src/topic/derivation-hygiene.js";
 import { FIXED_NOW, FakeDaemonClock, FaultBoundaryInjector } from "./fixtures.js";
 
 const PERSON_ID = "person_contraction";
@@ -269,6 +270,401 @@ describe("ContractionRunner", () => {
     await expect(runner.drainSlice(PERSON_ID, job.id)).rejects.toThrow(/scope|dependency/i);
     expect(await store.listTurns(`person:${OTHER_PERSON_ID}`)).toEqual([]);
   });
+
+  // --- Derivation input hygiene (REQ-052, REQ-053, REQ-054) -------------------------------------
+
+  it("excludes tool activity from topic labels", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-a-1", 1, "Switch to Alpha planning roadmap.", 0),
+      toolEvent("hygiene-a-tool-1", 2, "Bash", 1),
+      toolEvent("hygiene-a-tool-2", 3, "Read", 2),
+      toolEvent("hygiene-a-tool-3", 4, "Write", 3),
+      toolEvent("hygiene-a-tool-4", 5, "Grep", 4),
+      toolEvent("hygiene-a-tool-5", 6, "Edit", 5),
+      event("hygiene-a-2", 7, "Alpha planning roadmap follow-up.", 6, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-a", "hygiene-a-1", "hygiene-a-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    // Today's ungated implementation would open/close three spans (tool activity would each
+    // change the topic label); the label gate collapses this stretch to exactly ONE summary.
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]!.summaryText.startsWith("Alpha Planning Roadmap")).toBe(true);
+  });
+
+  it("excludes synthetic content from summaries", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-b-1", 1, "Switch to Beta compliance review.", 0),
+      syntheticEvent("hygiene-b-sys", 2, "internal harness marker XYZZY123", 1),
+      event("hygiene-b-2", 3, "Beta compliance review follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-b", "hygiene-b-1", "hygiene-b-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]!.summaryText).not.toContain("XYZZY123");
+    expect(summaries[0]!.summaryText).not.toContain("[SYSTEM:");
+  });
+
+  it("collapses a tool run into one activity line", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-c-1", 1, "Switch to Gamma incident response.", 0),
+      toolEvent("hygiene-c-tool-1", 2, "Bash", 1, "argApple"),
+      toolEvent("hygiene-c-tool-2", 3, "Bash", 2, "argBanana"),
+      toolEvent("hygiene-c-tool-3", 4, "Read", 3, "argCherry"),
+      toolEvent("hygiene-c-tool-4", 5, "Read", 4, "argDate"),
+      event("hygiene-c-2", 6, "Gamma incident response follow-up.", 5, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-c", "hygiene-c-1", "hygiene-c-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const [summary] = await store.listSummaries();
+    const activityLines = summary!.summaryText.match(/\[Activity\] ran 4 tool calls:/g) ?? [];
+    expect(activityLines).toHaveLength(1);
+    for (const arg of ["argApple", "argBanana", "argCherry", "argDate"]) {
+      expect(summary!.summaryText).not.toContain(arg);
+    }
+  });
+
+  it("keeps an isolated single tool call", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-d-1", 1, "Switch to Delta migration planning.", 0),
+      toolEvent("hygiene-d-tool", 2, "Bash", 1, "argEcho"),
+      event("hygiene-d-2", 3, "Delta migration planning follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-d", "hygiene-d-1", "hygiene-d-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const [summary] = await store.listSummaries();
+    expect(summary!.summaryText).toContain("[Tool call: Bash]");
+    expect(summary!.summaryText).not.toMatch(/\[Activity\]/);
+  });
+
+  it("provenance: sourceCanonicalEventIds and sourceTurnRanges cover the full raw window including collapsed and synthetic events", async () => {
+    const store = await seededStore();
+    const events = [
+      event("hygiene-e-1", 1, "Switch to Epsilon renewal tracking.", 0),
+      syntheticEvent("hygiene-e-sys", 2, "internal harness marker", 1),
+      toolEvent("hygiene-e-tool-1", 3, "Bash", 2),
+      toolEvent("hygiene-e-tool-2", 4, "Bash", 3),
+      event("hygiene-e-2", 5, "Epsilon renewal tracking follow-up.", 4, "assistant")
+    ];
+    await seedEvents(store, events);
+    const job = await enqueue(store, "job-hygiene-e", "hygiene-e-1", "hygiene-e-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const [summary] = await store.listSummaries();
+    expect(new Set(summary!.sourceCanonicalEventIds)).toEqual(new Set(events.map((e) => e.id)));
+    expect(summary!.sourceTurnRanges[0]).toMatchObject({ startSequence: 1, endSequence: 5 });
+  });
+
+  it("slice boundary: a tool run straddling maxEvents persists as one activity line", async () => {
+    const store = await seededStore();
+    const lead = event("hygiene-f-1", 1, "Switch to Foxtrot deployment rollout.", 0);
+    const run = toolRun("hygiene-f-tool", 300, 2, 1);
+    const trail = event("hygiene-f-2", 302, "Foxtrot deployment rollout follow-up.", 301, "assistant");
+    await seedEvents(store, [lead, ...run, trail]);
+    const job = await enqueue(store, "job-hygiene-f", "hygiene-f-1", "hygiene-f-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    const slices = await drain(runner, job);
+
+    expect(slices.length).toBeGreaterThan(1);
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    const activityLines = summaries[0]!.summaryText.match(/\[Activity\] ran \d+ tool calls:/g) ?? [];
+    expect(activityLines).toEqual(["[Activity] ran 300 tool calls:"]);
+  });
+
+  it("slice boundary: no partial tool count is ever persisted", async () => {
+    const store = await seededStore();
+    const lead = event("hygiene-f2-1", 1, "Switch to Golf onboarding audit.", 0);
+    const run = toolRun("hygiene-f2-tool", 300, 2, 1);
+    const trail = event("hygiene-f2-2", 302, "Golf onboarding audit follow-up.", 301, "assistant");
+    await seedEvents(store, [lead, ...run, trail]);
+    const job = await enqueue(store, "job-hygiene-f2", "hygiene-f2-1", "hygiene-f2-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+
+    const noPartialCountPersisted = async (): Promise<boolean> => {
+      const summaries = await store.listSummaries();
+      return !summaries.some((summary) => /\[Activity\] ran (?!300 )\d+ tool calls/.test(summary.summaryText));
+    };
+
+    let result = await runner.drainSlice(job.personId, job.id);
+    expect(await noPartialCountPersisted()).toBe(true);
+    expect(result.checkpoint.pendingToolRun).toMatchObject({
+      startEventId: "hygiene-f2-tool-1",
+      ruleVersion: HYGIENE_RULE_VERSION
+    });
+    expect(result.checkpoint.pendingToolRun!.eventCount).toBeGreaterThan(0);
+
+    while (!result.complete) {
+      result = await runner.drainSlice(job.personId, job.id);
+      expect(await noPartialCountPersisted()).toBe(true);
+    }
+
+    expect(result.checkpoint.pendingToolRun).toBeNull();
+    const summaries = await store.listSummaries();
+    expect(summaries.some((summary) => summary.summaryText.includes("[Activity] ran 300 tool calls:"))).toBe(true);
+  });
+
+  it("slice boundary: a length-1 open tail is withheld, not guessed, and later resolved as part of a run", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-f3a-1", 1, "Switch to Hotel provisioning setup.", 0),
+      toolEvent("hygiene-f3a-tool-1", 2, "Bash", 1),
+      toolEvent("hygiene-f3a-tool-2", 3, "Read", 2)
+    ]);
+    const job = await enqueue(store, "job-hygiene-f3a", "hygiene-f3a-1", "hygiene-f3a-tool-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+
+    const first = await runner.drainSlice(job.personId, job.id, { maxEvents: 2 });
+    expect(first.complete).toBe(false);
+    expect(first.checkpoint.pendingToolRun).toMatchObject({ startEventId: "hygiene-f3a-tool-1", eventCount: 1 });
+    let summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]!.summaryText).not.toContain("[Tool call: Bash]");
+    expect(summaries[0]!.summaryText).not.toMatch(/\[Activity\]/);
+
+    const second = await runner.drainSlice(job.personId, job.id);
+    expect(second.complete).toBe(true);
+    expect(second.checkpoint.pendingToolRun).toBeNull();
+    summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]!.summaryText).toContain("[Activity] ran 2 tool calls:");
+  });
+
+  it("slice boundary: a withheld length-1 tail followed by a conversational event stays an isolated single", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-f3b-1", 1, "Switch to India provisioning setup.", 0),
+      toolEvent("hygiene-f3b-tool-1", 2, "Bash", 1),
+      event("hygiene-f3b-2", 3, "India provisioning setup follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-f3b", "hygiene-f3b-1", "hygiene-f3b-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+
+    const first = await runner.drainSlice(job.personId, job.id, { maxEvents: 2 });
+    expect(first.complete).toBe(false);
+    expect(first.checkpoint.pendingToolRun).toMatchObject({ startEventId: "hygiene-f3b-tool-1", eventCount: 1 });
+
+    const second = await runner.drainSlice(job.personId, job.id);
+    expect(second.complete).toBe(true);
+    expect(second.checkpoint.pendingToolRun).toBeNull();
+    const [summary] = await store.listSummaries();
+    expect(summary!.summaryText).toContain("[Tool call: Bash]");
+    expect(summary!.summaryText).not.toMatch(/\[Activity\]/);
+  });
+
+  it("pendingToolRun drift guard forces the rewind path instead of emitting a second activity line", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-f4-1", 1, "Switch to Juliet incident postmortem.", 0),
+      toolEvent("hygiene-f4-tool-1", 2, "Bash", 1),
+      toolEvent("hygiene-f4-tool-2", 3, "Read", 2)
+    ]);
+    const job = await enqueue(store, "job-hygiene-f4", "hygiene-f4-1", "hygiene-f4-tool-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+
+    const first = await runner.drainSlice(job.personId, job.id, { maxEvents: 2 });
+    expect(first.complete).toBe(false);
+    expect(first.checkpoint.pendingToolRun).toMatchObject({ startEventId: "hygiene-f4-tool-1" });
+
+    // Mirrors the existing "resumes by stable canonical key" late-insert fixture: this new event
+    // lands (in occurredAt order) between the lead event and the recorded run start, so the
+    // recorded startEventId is no longer the first event of the open run at that position.
+    await store.saveCanonicalEvent(toolEvent("hygiene-f4-tool-late", 999, "Bash", 0.5));
+
+    const second = await runner.drainSlice(job.personId, job.id);
+    expect(second.rewindOrderKey).not.toBeNull();
+
+    const slices = [first, second];
+    while (!slices.at(-1)!.complete) slices.push(await runner.drainSlice(job.personId, job.id));
+
+    const summaries = await store.listSummaries();
+    const activityLines = summaries.flatMap((summary) => summary.summaryText.match(/\[Activity\] ran \d+ tool calls:/g) ?? []);
+    expect(activityLines).toEqual(["[Activity] ran 3 tool calls:"]);
+  });
+
+  it("corpus ending inside a run flushes it", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-f5-1", 1, "Switch to Kilo cleanup sprint.", 0),
+      toolEvent("hygiene-f5-tool-1", 2, "Bash", 1),
+      toolEvent("hygiene-f5-tool-2", 3, "Bash", 2),
+      toolEvent("hygiene-f5-tool-3", 4, "Read", 3)
+    ]);
+    const job = await enqueue(store, "job-hygiene-f5", "hygiene-f5-1", "hygiene-f5-tool-3");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    const slices = await drain(runner, job);
+
+    expect(slices.at(-1)!.complete).toBe(true);
+    expect(slices.at(-1)!.checkpoint.pendingToolRun).toBeNull();
+    const [summary] = await store.listSummaries();
+    expect(summary!.summaryText).toContain("[Activity] ran 3 tool calls:");
+  });
+
+  it("makes progress across a slice with no conversational event", async () => {
+    const store = await seededStore();
+    const lead = event("hygiene-g-1", 1, "Switch to Lima resilience testing.", 0);
+    const run = toolRun("hygiene-g-tool", 600, 2, 1);
+    await seedEvents(store, [lead, ...run]);
+    const job = await enqueue(store, "job-hygiene-g", "hygiene-g-1", "hygiene-g-tool-600");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+
+    let result = await runner.drainSlice(job.personId, job.id);
+    let sliceCount = 1;
+    expect(result.processedEvents).toBeGreaterThan(0);
+    while (!result.complete) {
+      result = await runner.drainSlice(job.personId, job.id);
+      sliceCount += 1;
+      expect(result.processedEvents).toBeGreaterThan(0);
+      if (sliceCount > 20) throw new Error("Runaway slice loop — resume cursor is not advancing");
+    }
+    expect(result.complete).toBe(true);
+  });
+
+  it("marks derivations stale when the hygiene rule version changes", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-h-1", 1, "Switch to Mike retention policy.", 0),
+      event("hygiene-h-2", 2, "Mike retention policy follow-up.", 1, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-h", "hygiene-h-1", "hygiene-h-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const checkpointId = `contraction_checkpoint_${job.id}`;
+    const checkpoint = await store.getContractionCheckpoint(checkpointId);
+    await store.saveContractionCheckpoint({ ...checkpoint!, processorVersion: "stale-processor-version" });
+
+    const result = await runner.drainSlice(job.personId, job.id);
+    expect(result.rewindOrderKey).not.toBeNull();
+  });
+
+  // --- Anchors follow derivation content (REQ-053's injection path) ------------------------------
+
+  it("excludes synthetic content from anchors", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-sys-1", 1, "Switch to Nova contract renewal.", 0),
+      syntheticEvent("hygiene-anchor-sys-2", 2, "internal deadline marker", 1),
+      event("hygiene-anchor-sys-3", 3, "Nova contract renewal follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-sys", "hygiene-anchor-sys-1", "hygiene-anchor-sys-3");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-sys-2")).toBe(false);
+  });
+
+  it("excludes collapsed tool run members from anchors", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-run-1", 1, "Switch to Oscar leverage review.", 0),
+      toolEvent("hygiene-anchor-run-2", 2, "Bash", 1, "because-leverage-1"),
+      toolEvent("hygiene-anchor-run-3", 3, "Bash", 2, "because-leverage-2"),
+      toolEvent("hygiene-anchor-run-4", 4, "Read", 3, "because-leverage-3"),
+      event("hygiene-anchor-run-5", 5, "Oscar leverage review follow-up.", 4, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-run", "hygiene-anchor-run-1", "hygiene-anchor-run-5");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    for (const id of ["hygiene-anchor-run-2", "hygiene-anchor-run-3", "hygiene-anchor-run-4"]) {
+      expect(anchors.some((anchor) => anchor.canonicalEventId === id)).toBe(false);
+    }
+  });
+
+  it("keeps anchors for an isolated single tool call", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-iso-1", 1, "Switch to Papa strategy review.", 0),
+      toolEvent("hygiene-anchor-iso-2", 2, "Bash", 1, "because-strategy"),
+      event("hygiene-anchor-iso-3", 3, "Papa strategy review follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-iso", "hygiene-anchor-iso-1", "hygiene-anchor-iso-3");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-iso-2")).toBe(true);
+  });
+
+  it("keeps conversational anchor behavior unchanged", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [event("hygiene-anchor-conv-1", 1, "Switch to Quebec deadline review.", 0)]);
+    const job = await enqueue(store, "job-hygiene-anchor-conv", "hygiene-anchor-conv-1", "hygiene-anchor-conv-1");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors).toEqual([
+      expect.objectContaining({ canonicalEventId: "hygiene-anchor-conv-1", anchorType: "deadline" })
+    ]);
+  });
+
+  it("withheld boundary: a length-1 open tail's anchor is deferred, not guessed, and the final anchor set is slice-size-independent", async () => {
+    const events = [
+      event("hygiene-anchor-f3-1", 1, "Switch to Romeo insight review.", 0),
+      toolEvent("hygiene-anchor-f3-tool-1", 2, "Bash", 1, "because-insight"),
+      event("hygiene-anchor-f3-2", 3, "Romeo insight review follow-up.", 2, "assistant")
+    ];
+
+    const boundedStore = await seededStore();
+    await seedEvents(boundedStore, events);
+    const boundedJob = await enqueue(boundedStore, "job-hygiene-anchor-f3-bounded", "hygiene-anchor-f3-1", "hygiene-anchor-f3-2");
+    const boundedRunner = new ContractionRunner(boundedStore, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    const first = await boundedRunner.drainSlice(boundedJob.personId, boundedJob.id, { maxEvents: 2 });
+    expect(first.complete).toBe(false);
+    expect((await boundedStore.listAnchors()).some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3-tool-1")).toBe(false);
+    await boundedRunner.drainSlice(boundedJob.personId, boundedJob.id);
+
+    const unboundedStore = await seededStore();
+    await seedEvents(unboundedStore, events);
+    const unboundedJob = await enqueue(unboundedStore, "job-hygiene-anchor-f3-unbounded", "hygiene-anchor-f3-1", "hygiene-anchor-f3-2");
+    await drain(
+      new ContractionRunner(unboundedStore, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() }),
+      unboundedJob
+    );
+
+    const normalize = (anchors: Array<{ canonicalEventId?: string; anchorType: string }>) =>
+      [...anchors]
+        .map((anchor) => ({ canonicalEventId: anchor.canonicalEventId ?? "", anchorType: anchor.anchorType }))
+        .sort((a, b) => a.canonicalEventId.localeCompare(b.canonicalEventId) || a.anchorType.localeCompare(b.anchorType));
+
+    expect(normalize(await boundedStore.listAnchors())).toEqual(normalize(await unboundedStore.listAnchors()));
+    expect((await boundedStore.listAnchors()).some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3-tool-1")).toBe(true);
+  });
+
+  it("withheld boundary: a length-1 open tail that becomes a run of 2 never gets an anchor", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-f3b-1", 1, "Switch to Sierra insight review.", 0),
+      toolEvent("hygiene-anchor-f3b-tool-1", 2, "Bash", 1, "because-insight-1"),
+      toolEvent("hygiene-anchor-f3b-tool-2", 3, "Read", 2, "because-insight-2")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-f3b", "hygiene-anchor-f3b-1", "hygiene-anchor-f3b-tool-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await runner.drainSlice(job.personId, job.id, { maxEvents: 2 });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3b-tool-1")).toBe(false);
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3b-tool-2")).toBe(false);
+  });
 });
 
 describe("ProposalScheduler", () => {
@@ -447,6 +843,36 @@ function event(
     parserVersion: "synthetic/v1",
     metadata: {}
   };
+}
+
+/** A tool-activity event: `eventKind: "tool_call"`, role `assistant`, `[Tool call: NAME] {args}` content. */
+function toolEvent(
+  id: string,
+  nativeSequence: number,
+  toolName: string,
+  minuteOffset: number,
+  argSuffix = "value"
+): CanonicalEvent {
+  return {
+    ...event(id, nativeSequence, `[Tool call: ${toolName}] ${JSON.stringify({ arg: argSuffix })}`, minuteOffset, "assistant"),
+    eventKind: "tool_call"
+  };
+}
+
+/** A synthetic/harness-injected event using the `[SYSTEM: ...]` rule from derivation-hygiene.ts. */
+function syntheticEvent(id: string, nativeSequence: number, body: string, minuteOffset: number): CanonicalEvent {
+  return event(id, nativeSequence, `[SYSTEM: ${body}]`, minuteOffset, "assistant");
+}
+
+/** A consecutive run of `count` tool-activity events alternating Bash/Read, starting at `startSequence`. */
+function toolRun(prefix: string, count: number, startSequence: number, startMinuteOffset: number): CanonicalEvent[] {
+  return Array.from({ length: count }, (_, index) =>
+    toolEvent(
+      `${prefix}-${index + 1}`,
+      startSequence + index,
+      index % 2 === 0 ? "Bash" : "Read",
+      startMinuteOffset + index
+    ));
 }
 
 async function enqueue(

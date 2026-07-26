@@ -2,9 +2,17 @@ import { createHash } from "node:crypto";
 import type { CanonicalEvent } from "../domain/canonical.js";
 import type { Anchor, Summary, Turn } from "../domain/types.js";
 import { DerivationInvalidator } from "../service/derivation-invalidator.js";
-import type { DerivationSupersession } from "./types.js";
+import type { DerivationSupersession, PendingToolRun } from "./types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import { DeterministicSummarizer, type Summarizer } from "../summarization/summarizer.js";
+import {
+  HYGIENE_RULE_VERSION,
+  classifyEvent,
+  derivationContents,
+  drivesTopicLabel,
+  openToolRunStart,
+  toolNameOf
+} from "../topic/derivation-hygiene.js";
 import { TopicMonitor, type CompletedTopicSpan, type RollingTopicState } from "../topic/topic-monitor.js";
 import {
   WriteAuthoritySchema,
@@ -14,7 +22,9 @@ import {
   type WriteAuthority
 } from "./types.js";
 
-const PROCESSOR_VERSION = "continuous-contraction/v1";
+// PROCESSOR_VERSION embeds HYGIENE_RULE_VERSION so a hygiene rule-version bump automatically marks
+// every existing checkpoint stale via the existing (non-resume/rewind) invalidation path — REQ-054.
+const PROCESSOR_VERSION = `continuous-contraction/v1+${HYGIENE_RULE_VERSION}`;
 export const DEFAULT_CONTRACTION_LIMITS = Object.freeze({ maxEvents: 250, maxMonotonicMs: 2_000 });
 
 /**
@@ -57,6 +67,7 @@ export interface ContractionSliceResult {
   complete: boolean;
   checkpoint: ContractionCheckpoint;
   immediate: { summaries: number; anchors: number };
+  supersessions: DerivationSupersession[];
 }
 
 export class ContractionRunner {
@@ -74,7 +85,7 @@ export class ContractionRunner {
   async drainSlice(
     personId: string,
     jobId: string,
-    limits: Partial<typeof DEFAULT_CONTRACTION_LIMITS> = {},
+    limits: { maxEvents?: number; maxMonotonicMs?: number } = {},
     context: DrainSliceContext = {}
   ): Promise<ContractionSliceResult> {
     const parsedAuthority = WriteAuthoritySchema.safeParse(this.options.authority);
@@ -102,10 +113,18 @@ export class ContractionRunner {
       throw new Error("Contraction checkpoint person ownership mismatch");
     }
 
+    // Drift guard (11-CONTEXT decision 6 / T-11-09): a withheld open run recorded in the checkpoint
+    // must still be exactly the trailing open run at that position. A late import landing inside the
+    // withheld range (the same late-insert path the "resumes by stable canonical key" test pins) or a
+    // hygiene rule-version bump invalidates the recorded run, so fail closed to the full
+    // rewind/invalidation path instead of silently emitting a second activity line for the same run.
     const checkpointCanResume = previous !== null &&
       previous.generation === job.generation &&
+      previous.processorVersion === PROCESSOR_VERSION &&
       (previous.processedThroughOrderKey === null ||
-        compareKeys(job.earliestAffected, previous.processedThroughOrderKey) >= 0);
+        compareKeys(job.earliestAffected, previous.processedThroughOrderKey) >= 0) &&
+      (previous.pendingToolRun === null ||
+        pendingToolRunStillOpen(previous.pendingToolRun, allEvents, eventIndexById));
 
     if (checkpointCanResume && previous.immediateStage === "complete" && job.state === "complete") {
       return {
@@ -115,7 +134,8 @@ export class ContractionRunner {
         yielded: false,
         complete: true,
         checkpoint: previous,
-        immediate: { summaries: 0, anchors: 0 }
+        immediate: { summaries: 0, anchors: 0 },
+        supersessions: []
       };
     }
 
@@ -135,7 +155,7 @@ export class ContractionRunner {
     const startedAt = this.clock.monotonicNow();
     const turns: Turn[] = [];
     const anchors: Anchor[] = [];
-    const completedSpans: CompletedTopicSpan[] = [];
+    const spanWindows: SpanWindow[] = [];
     const processed: CanonicalEvent[] = [];
     const threadId = `person:${personId}`;
 
@@ -143,20 +163,35 @@ export class ContractionRunner {
       const event = allEvents[index];
       const turn = turnFromEvent(event, threadId, index + 1);
       turns.push(turn);
-      anchors.push(...anchorsForTurn(turn));
-      const observed = monitor.observe({
-        id: event.id,
-        host: "unknown",
-        profileId: personId,
-        hostSessionId: threadId,
-        sequence: index + 1,
-        type: "conversation_turn",
-        role: event.role,
-        content: event.content,
-        createdAt: event.occurredAt,
-        metadata: turn.metadata
-      });
-      if (observed.completed) completedSpans.push(observed.completed);
+      // Anchors are generated below, per span window, gated on whether an event's OWN text
+      // survives into derivation (REQ-053) — not unconditionally per event as before.
+      // Only conversational events reach TopicMonitor — this is the count-reduction mechanism
+      // (REQ-052/REQ-053): tool-activity and synthetic events can neither open a span nor change a
+      // topic label. They are still turned into Turn rows and still counted in `processed` above.
+      if (drivesTopicLabel(event)) {
+        const observed = monitor.observe({
+          id: event.id,
+          host: "unknown",
+          profileId: personId,
+          hostSessionId: threadId,
+          sequence: index + 1,
+          type: "conversation_turn",
+          role: event.role,
+          content: event.content,
+          createdAt: event.occurredAt,
+          metadata: turn.metadata
+        });
+        // A completed span ends on a label-driving event (by definition not tool activity), so its
+        // window's derivable text always equals its full raw window — it can never straddle an open run.
+        if (observed.completed) {
+          spanWindows.push({
+            span: observed.completed,
+            windowStart: observed.completed.sourceTurnRange.startSequence - 1,
+            windowEnd: index,
+            derivationEnd: index
+          });
+        }
+      }
       processed.push(event);
       await this.options.afterEvent?.(event);
       if (this.clock.monotonicNow() - startedAt >= maxMonotonicMs) break;
@@ -165,10 +200,62 @@ export class ContractionRunner {
     const nextIndex = startIndex + processed.length;
     const complete = nextIndex >= allEvents.length;
     const activeTopic = monitor.current(threadId);
-    const spans = [...completedSpans];
-    if (activeTopic) spans.push({ ...activeTopic, completedAt: activeTopic.updatedAt });
+
+    // Events preceding the first span ever created (corpus head with no active topic yet) belong to
+    // no window and are legitimately left unsummarized.
+    let pendingToolRun: PendingToolRun | null = null;
+    if (activeTopic) {
+      const windowStart = activeTopic.sourceTurnRange.startSequence - 1;
+      const windowEnd = nextIndex;
+      let derivationEnd = windowEnd;
+      // Open-run withholding (11-CONTEXT decision 6): only the trailing active span of a
+      // NON-complete slice can end inside an open run. A run at the end of the corpus (complete ===
+      // true) cannot grow, so it is always flushed rather than withheld (Task 2 case f5).
+      if (!complete) {
+        const openStart = openToolRunStart(allEvents.slice(windowStart, windowEnd));
+        if (openStart !== null) {
+          derivationEnd = windowStart + openStart;
+          const withheldEvents = allEvents.slice(derivationEnd, windowEnd);
+          pendingToolRun = {
+            startEventId: withheldEvents[0]!.id,
+            eventCount: withheldEvents.length,
+            toolCounts: tallyToolCounts(withheldEvents.map((event) => toolNameOf(event.content))),
+            ruleVersion: HYGIENE_RULE_VERSION
+          };
+        }
+      }
+      spanWindows.push({
+        span: { ...activeTopic, completedAt: activeTopic.updatedAt },
+        windowStart,
+        windowEnd,
+        derivationEnd
+      });
+    }
+
     const summaries: Summary[] = [];
-    for (const span of spans) summaries.push(await this.summaryForSpan(personId, span, allEvents));
+    for (const window of spanWindows) {
+      summaries.push(await this.summaryForSpan(
+        personId,
+        window.span,
+        allEvents,
+        window.windowStart,
+        window.windowEnd,
+        window.derivationEnd
+      ));
+      // Anchors follow derivation content exactly (REQ-053): an event produces anchors only when it
+      // contributed its OWN text to the summary — conversational events and ISOLATED single tool
+      // calls. Synthetic events and members of a collapsed run (>=2) never produce anchors. Gating on
+      // `[windowStart, derivationEnd)` — the exact same range summaryForSpan derives text from — means
+      // a withheld open run's anchors are deferred along with its text: they are emitted only once the
+      // run closes and its own-text survival is known (isolated single vs. run of >=2), on whichever
+      // future slice recomputes this span's (bounded, run-length-sized) window. `anchorsForTurn`
+      // itself is unchanged; only its call site is gated.
+      for (const relativeIndex of survivingDerivationIndices(allEvents.slice(window.windowStart, window.derivationEnd))) {
+        const globalIndex = window.windowStart + relativeIndex;
+        const event = allEvents[globalIndex]!;
+        anchors.push(...anchorsForTurn(turnFromEvent(event, threadId, globalIndex + 1)));
+      }
+    }
 
     // Superseding prior derivations is only meaningful when this slice REPROCESSES an
     // already-derived range: a rewind, a generation change, or the first slice against an existing
@@ -213,6 +300,7 @@ export class ContractionRunner {
       sliceCount: (previous?.sliceCount ?? 0) + 1,
       immediateStage: complete ? "complete" : "pending",
       proposalStage: checkpointCanResume ? previous.proposalStage : "pending",
+      pendingToolRun,
       updatedAt: now
     };
     const nextJob: ContractionJob = {
@@ -257,7 +345,8 @@ export class ContractionRunner {
       yielded: !complete,
       complete,
       checkpoint: nextCheckpoint,
-      immediate: { summaries: summaries.length, anchors: anchors.length }
+      immediate: { summaries: summaries.length, anchors: anchors.length },
+      supersessions
     };
   }
 
@@ -298,25 +387,39 @@ export class ContractionRunner {
   private async summaryForSpan(
     personId: string,
     span: CompletedTopicSpan,
-    events: CanonicalEvent[]
+    events: CanonicalEvent[],
+    windowStart: number,
+    windowEnd: number,
+    derivationEnd: number
   ): Promise<Summary> {
-    const sourceEvents = events.slice(span.sourceTurnRange.startSequence - 1, span.sourceTurnRange.endSequence);
+    // The FULL raw window — including collapsed tool events, withheld open-run events, and excluded
+    // synthetic events. Provenance is never narrowed by a content (derivation) decision (Pitfall 3):
+    // DerivationInvalidator, affectedStartIndex, and summaryIntersectsAtOrAfter all key off this list.
+    const sourceEvents = events.slice(windowStart, windowEnd);
     const first = sourceEvents[0];
     if (!first) throw new Error("Cannot contract an empty topic span");
     // Turns are a deterministic function of (event, threadId, sequence) — see turnFromEvent — so
     // reconstruct the span's turns directly. Loading every persisted turn for the person
     // (listTurns) was an O(all turns) scan per span, the last per-slice full-load that kept a bulk
-    // bootstrap quadratic. sourceEvents[k] sits at global sequence startSequence + k by construction.
-    const sourceTurns = sourceEvents.map((event, offset) =>
-      turnFromEvent(event, span.hostSessionId, span.sourceTurnRange.startSequence + offset));
+    // bootstrap quadratic. sourceEvents[k] sits at global sequence windowStart + 1 + k by construction.
+    const rawTurns = sourceEvents.map((event, offset) => turnFromEvent(event, span.hostSessionId, windowStart + 1 + offset));
+    // `derivationEnd` narrows the TEXT the summarizer sees only (never provenance, above). It equals
+    // `windowEnd` for every span except a trailing active span with a withheld open run, where it is
+    // the run's start index — the intermediate "N tool calls so far" count must never be observable.
+    const derivable = sourceEvents.slice(0, derivationEnd - windowStart);
+    // Ephemeral hygiene view used ONLY for summarization input; never mutate rawTurns and never
+    // persist these ephemeral turns to the store (Pitfall 2 — the positional invariant).
+    const sourceTurns = derivationContents(derivable).map(({ index, content }) => ({ ...rawTurns[index]!, content }));
     const draft = await this.summarizer.summarize({ span, sourceTurns });
     return {
+      // A topic-label change deliberately changes this id; DerivationInvalidator finds the OLD
+      // summary by sourceCanonicalEventIds intersection, not by id equality (Pitfall 5).
       id: summaryId(personId, first.id, span.topicLabel),
       personId,
       scopeIds: [...new Set(sourceEvents.map((event) => event.scopeId ?? "personal"))].sort(),
       origin: "historical_bootstrap",
       summaryText: draft.summaryText,
-      sourceTurnRanges: [span.sourceTurnRange],
+      sourceTurnRanges: [{ threadId: span.sourceTurnRange.threadId, startSequence: windowStart + 1, endSequence: windowEnd }],
       sourceCanonicalEventIds: sourceEvents.map((event) => event.id),
       sourceSummaryIds: [],
       boxIds: [],
@@ -339,10 +442,79 @@ export class ContractionRunner {
   }
 }
 
+/** A span's raw event window, plus the exclusive index up to which its own text may be derived. */
+interface SpanWindow {
+  span: CompletedTopicSpan;
+  windowStart: number;
+  windowEnd: number;
+  derivationEnd: number;
+}
+
 function buildEventIndex(events: CanonicalEvent[]): ReadonlyMap<string, number> {
   const index = new Map<string, number>();
   for (let position = 0; position < events.length; position += 1) index.set(events[position]!.id, position);
   return index;
+}
+
+/**
+ * Indices (relative to `events`) whose OWN text survives into derivation: conversational events and
+ * ISOLATED single tool calls. Synthetic events and members of a collapsed run of >=2 are excluded —
+ * mirrors `derivationContents`'/`openToolRunStart`'s shared synthetic-drop + run-detection walk, but
+ * exposes per-member membership instead of collapsed entries (needed to gate anchor generation on
+ * REQ-053, since a run's collapsed entry is keyed at the run's start index but does not carry any
+ * single member's own text).
+ */
+function survivingDerivationIndices(events: readonly { content: string; eventKind?: string | null; role?: string | null }[]): Set<number> {
+  const survivors = new Set<number>();
+  let currentRun: number[] = [];
+  const flushRun = (): void => {
+    if (currentRun.length === 1) survivors.add(currentRun[0]!);
+    currentRun = [];
+  };
+  events.forEach((event, index) => {
+    const { derivationClass } = classifyEvent(event);
+    if (derivationClass === "synthetic_injected") return;
+    if (derivationClass === "tool_activity") {
+      currentRun.push(index);
+      return;
+    }
+    flushRun();
+    survivors.add(index);
+  });
+  flushRun();
+  return survivors;
+}
+
+/** Count-desc/name-asc tally matching `collapseText`'s rendering, without re-implementing the string build. */
+function tallyToolCounts(names: string[]): PendingToolRun["toolCounts"] {
+  const counts = new Map<string, number>();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tool, count]) => ({ tool, count }));
+}
+
+/**
+ * Drift guard: re-derives whether `pending.startEventId` is STILL the first event of an open tool
+ * run at its recorded position, rather than trusting the stored `eventCount`. Recomputing
+ * `openToolRunStart` over the full prefix up to the last processed event is safe because run
+ * segmentation is local — an earlier conversational event always flushes any prior run — so scanning
+ * from the corpus start cannot misattribute the trailing run's true start index.
+ */
+function pendingToolRunStillOpen(
+  pending: PendingToolRun,
+  events: CanonicalEvent[],
+  eventIndexById: ReadonlyMap<string, number>
+): boolean {
+  if (pending.ruleVersion !== HYGIENE_RULE_VERSION) return false;
+  const startIndex = eventIndexById.get(pending.startEventId);
+  if (startIndex === undefined) return false;
+  // The boundary is always the pending run's start plus its withheld length: the last event
+  // processed by the slice that recorded this checkpoint.
+  const boundaryIndex = startIndex + pending.eventCount - 1;
+  if (boundaryIndex < 0 || boundaryIndex >= events.length) return false;
+  const recomputedStart = openToolRunStart(events.slice(0, boundaryIndex + 1));
+  return recomputedStart === startIndex;
 }
 
 function resumeIndex(
@@ -350,6 +522,17 @@ function resumeIndex(
   checkpoint: ContractionCheckpoint,
   eventIndexById: ReadonlyMap<string, number>
 ): number {
+  // Resume from the last PROCESSED event, not the last LABEL-DRIVING event: under hygiene,
+  // `activeTopic.lastEventId` is the last event that drove a topic label, so a slice whose tail (or
+  // entirety) is tool activity would otherwise resume before events it already processed — in the
+  // pathological all-tool-activity slice, it would never advance at all (T-11-06). The late-insert
+  // semantics of the existing 250-event test are preserved because `processedThroughOrderKey.id` is
+  // exactly the last processed event either way.
+  const processedId = checkpoint.processedThroughOrderKey?.id;
+  if (processedId) {
+    const processedIndex = eventIndexById.get(processedId);
+    if (processedIndex !== undefined) return processedIndex + 1;
+  }
   const lastId = checkpoint.activeTopic?.lastEventId;
   if (lastId) {
     const lastIndex = eventIndexById.get(lastId);

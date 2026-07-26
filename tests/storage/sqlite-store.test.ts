@@ -1,12 +1,58 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CanonicalEvent, MemorySource, Person } from "../../src/domain/canonical.js";
+import type { ContractionCheckpoint, ContractionJob } from "../../src/daemon/types.js";
 import type { ImportCheckpoint } from "../../src/imports/types.js";
 import type { HistoricalBootstrapCheckpoint } from "../../src/bootstrap/types.js";
 import type { Anchor, Box, InjectionPacket, MemoryProposal, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require("node:sqlite") as {
+  DatabaseSync: new (location: string) => {
+    prepare(sql: string): { run(...args: unknown[]): void };
+    close(): void;
+  };
+};
+
+const makeContractionJob = (overrides: Partial<ContractionJob> = {}): ContractionJob => ({
+  id: "job_1",
+  personId: "person_1",
+  generation: 1,
+  earliestAffected: { occurredAt: "2026-07-16T10:00:00.000Z", nativeSequence: 1, id: "event_1" },
+  latestAffected: { occurredAt: "2026-07-16T10:00:00.000Z", nativeSequence: 1, id: "event_1" },
+  state: "pending",
+  attempts: 0,
+  immediateDirty: true,
+  proposalDirty: true,
+  lastProposalRunAt: null,
+  lastActivityAt: "2026-07-16T10:00:00.000Z",
+  nextDueAt: "2026-07-16T10:00:00.000Z",
+  createdAt: "2026-07-16T10:00:00.000Z",
+  updatedAt: "2026-07-16T10:00:00.000Z",
+  ...overrides
+});
+
+const makeContractionCheckpoint = (overrides: Partial<ContractionCheckpoint> = {}): ContractionCheckpoint => ({
+  id: "checkpoint_1",
+  personId: "person_1",
+  jobId: "job_1",
+  processorVersion: "continuous-contraction/v1",
+  generation: 1,
+  processedThroughOrderKey: null,
+  nextOrderKey: null,
+  nextEventId: null,
+  activeTopic: null,
+  sliceCount: 1,
+  immediateStage: "pending",
+  proposalStage: "pending",
+  pendingToolRun: null,
+  updatedAt: "2026-07-16T10:00:00.000Z",
+  ...overrides
+});
 
 const makeTurn = (overrides: Partial<Turn> = {}): Turn => ({
   id: "turn_1",
@@ -287,6 +333,51 @@ describe("SqliteStore", () => {
     await expect(
       store.saveBootstrapCheckpoint(makeBootstrapCheckpoint({ personId: "person_2" }))
     ).rejects.toThrow(/different person/i);
+  });
+
+  it("defaults pendingToolRun to null for checkpoint payloads written before the field existed, idempotently", async () => {
+    await store.savePerson(makePerson());
+    await store.saveContractionJob(makeContractionJob());
+
+    const legacyPayload: Record<string, unknown> = makeContractionCheckpoint({ id: "checkpoint_legacy" });
+    delete legacyPayload.pendingToolRun;
+    store.close();
+
+    const raw = new DatabaseSync(databasePath);
+    raw.prepare(
+      "insert into daemon_contraction_checkpoint (id, person_id, job_id, payload) values (?, ?, ?, ?)"
+    ).run("checkpoint_legacy", "person_1", "job_1", JSON.stringify(legacyPayload));
+    raw.close();
+
+    store = new SqliteStore(databasePath);
+    const loaded = await store.getContractionCheckpoint("checkpoint_legacy");
+    expect(loaded?.pendingToolRun).toBeNull();
+
+    // Reopening again must be a no-op: the migration already rewrote the payload above.
+    store.close();
+    store = new SqliteStore(databasePath);
+    const loadedAgain = await store.getContractionCheckpoint("checkpoint_legacy");
+    expect(loadedAgain).toEqual(loaded);
+  });
+
+  it("round-trips a checkpoint with a populated pendingToolRun", async () => {
+    await store.savePerson(makePerson());
+    await store.saveContractionJob(makeContractionJob());
+
+    const checkpoint = makeContractionCheckpoint({
+      id: "checkpoint_with_pending_run",
+      pendingToolRun: {
+        startEventId: "event_tool_1",
+        eventCount: 2,
+        toolCounts: [{ tool: "Bash", count: 2 }],
+        ruleVersion: "hygiene-rules/v1"
+      }
+    });
+    await store.saveContractionCheckpoint(checkpoint);
+    store.close();
+
+    store = new SqliteStore(databasePath);
+    await expect(store.getContractionCheckpoint("checkpoint_with_pending_run")).resolves.toEqual(checkpoint);
   });
 
   it("orders the personal timeline globally and keeps people isolated", async () => {

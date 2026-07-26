@@ -95,6 +95,17 @@ export const ContractionJobSchema = z.object({
   updatedAt: IsoDateTimeSchema
 }).strict();
 
+// `toolCounts` is stored already-ordered (count desc, then name asc, matching `collapseText`'s
+// rendering) so the withheld run's activity line can be rebuilt on flush without re-sorting.
+export const PendingToolRunSchema = z.object({
+  startEventId: z.string().min(1),
+  eventCount: z.number().int().positive(),
+  toolCounts: z.array(z.object({ tool: z.string().min(1), count: z.number().int().positive() }).strict()).min(1),
+  // Stored on the pending run itself (in addition to `processorVersion`) so a hygiene rule-version
+  // bump can be detected against an in-flight withheld run specifically, not only at the checkpoint level.
+  ruleVersion: z.string().min(1)
+}).strict();
+
 export const ContractionCheckpointSchema = z.object({
   id: z.string().min(1),
   personId: z.string().min(1),
@@ -108,6 +119,7 @@ export const ContractionCheckpointSchema = z.object({
   sliceCount: z.number().int().nonnegative(),
   immediateStage: z.enum(["pending", "running", "complete"]),
   proposalStage: z.enum(["pending", "running", "complete"]),
+  pendingToolRun: PendingToolRunSchema.nullable(),
   updatedAt: IsoDateTimeSchema
 }).strict();
 
@@ -239,6 +251,7 @@ export type DaemonSourceState = z.infer<typeof DaemonSourceStateSchema>;
 export type ImportBatchReceipt = z.infer<typeof ImportBatchReceiptSchema>;
 export type ContractionJob = z.infer<typeof ContractionJobSchema>;
 export type ContractionCheckpoint = z.infer<typeof ContractionCheckpointSchema>;
+export type PendingToolRun = z.infer<typeof PendingToolRunSchema>;
 export type DerivationSupersession = z.infer<typeof DerivationSupersessionSchema>;
 export type DaemonWriteAuthority = z.infer<typeof DaemonWriteAuthoritySchema>;
 export type ForegroundWriteAuthority = z.infer<typeof ForegroundWriteAuthoritySchema>;

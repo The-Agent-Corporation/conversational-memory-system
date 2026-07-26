@@ -231,6 +231,7 @@ function contractionResult(
     yielded: !complete,
     complete,
     immediate: { summaries: 1, anchors: 1 },
+    supersessions: [],
     checkpoint: {
       id: "contraction_checkpoint_test",
       personId: "person_1",
@@ -244,6 +245,7 @@ function contractionResult(
       sliceCount,
       immediateStage: complete ? "complete" : "pending",
       proposalStage: "pending",
+      pendingToolRun: null,
       updatedAt: NOW
     }
   };
