@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { ContractionRunner } from "../../src/daemon/contraction-runner.js";
+import type { CanonicalEvent } from "../../src/domain/canonical.js";
 import type { Anchor, Box, MemoryTrace, Summary } from "../../src/domain/types.js";
 import type { Embedder } from "../../src/embeddings/embedder.js";
 import { MemoryRetriever } from "../../src/retrieval/memory-retriever.js";
@@ -763,4 +765,162 @@ describe("MemoryRetriever", () => {
     expect(packet?.sourceTraceIds).toEqual([]);
     expect(packet?.sourceSummaryIds[0]).toBe("summary_case_smith");
   });
+
+  // Phase 11 Plan 06, Task 2 (SC7, T-11-20): a topic discussed across two sessions with heavy
+  // tool use between the human turns must retrieve at least as well after hygiene as it did
+  // before. Drives the real ContractionRunner end to end (not a reimplementation), the same
+  // way Task 1's ratio test does, then feeds the resulting summaries into the real
+  // MemoryRetriever and compares top-match scores between a pre-hygiene reference (tool calls
+  // relabeled as ordinary label-driving messages, reproducing pre-Phase-11 fragmentation) and
+  // the unmodified hygiene run.
+  it("ranks a topic discussed across two tool-interrupted sessions at least as high after hygiene as before it", async () => {
+    const hygieneSummaries = await deriveSummaries(buildCrossSessionCorpus());
+    const preHygieneSummaries = await deriveSummaries(buildCrossSessionCorpus().map(relabelForPreHygiene));
+
+    // Sanity: hygiene keeps the topic in ONE summary; pre-hygiene fragments it (T-11-20 guard —
+    // this positive assertion would be meaningless if both variants already behaved the same).
+    expect(hygieneSummaries).toHaveLength(1);
+    expect(preHygieneSummaries.length).toBeGreaterThan(1);
+
+    const query =
+      "budget forecast kickoff outlining followup finalizing revision numbers deadline";
+
+    const hygieneScore = await topMatchScore(hygieneSummaries, query);
+    const preHygieneScore = await topMatchScore(preHygieneSummaries, query);
+
+    expect(hygieneScore).toBeGreaterThanOrEqual(preHygieneScore);
+    // Hygiene keeps both sessions' vocabulary in the one merged summary; no pre-hygiene fragment
+    // ever holds both halves, so this is a genuine (not merely tied) improvement.
+    expect(hygieneScore).toBeGreaterThan(preHygieneScore);
+  });
 });
+
+const CROSS_SESSION_PERSON_ID = "person_hygiene_sc7";
+const CROSS_SESSION_SCOPE_ID = "scope_hygiene_sc7";
+const CROSS_SESSION_FIXED_NOW = "2026-01-01T00:00:00.000Z";
+
+/**
+ * Session A discusses a budget forecast, then ~15 unrelated tool calls run, then session B
+ * continues the SAME topic (shares "budget"/"forecast" vocabulary with session A) with new
+ * details. Real `[Tool call: NAME] ...` content, `eventKind: "tool_call"`, matching
+ * `derivation-hygiene.ts`'s classifier exactly.
+ */
+function buildCrossSessionCorpus(): CanonicalEvent[] {
+  const events: CanonicalEvent[] = [];
+  let sequence = 0;
+  const push = (content: string, role: CanonicalEvent["role"], eventKind?: CanonicalEvent["eventKind"]): void => {
+    const occurredAt = new Date(Date.parse(CROSS_SESSION_FIXED_NOW) + sequence * 60_000).toISOString();
+    events.push({
+      id: `sc7-${sequence}`,
+      personId: CROSS_SESSION_PERSON_ID,
+      sourceId: `source_${CROSS_SESSION_PERSON_ID}`,
+      sourceApplication: "synthetic",
+      sourceProfileId: "default",
+      scopeId: CROSS_SESSION_SCOPE_ID,
+      nativeSessionId: "session-sc7",
+      nativeEventId: `sc7-${sequence}`,
+      nativeSequence: sequence,
+      causalParentId: null,
+      eventKind,
+      role,
+      content,
+      occurredAt,
+      importedAt: occurredAt,
+      provenance: role === "user" ? "direct_user_input" : "assistant_output",
+      trustLevel: role === "user" ? "high" : "medium",
+      contentHash: `hash-sc7-${sequence}`,
+      parserVersion: "hygiene-sc7/v1",
+      metadata: {}
+    });
+    sequence += 1;
+  };
+
+  push("Budget forecast kickoff review outlining revenue assumptions for Q3.", "user");
+  for (let i = 0; i < 15; i += 1) {
+    const name = i % 2 === 0 ? "Bash" : "Read";
+    push(
+      `[Tool call: ${name}] argument payload for tool invocation ${i} carrying representative filler text of realistic tool call length`,
+      "assistant",
+      "tool_call"
+    );
+  }
+  push("Budget forecast followup finalizing revision numbers before the deadline.", "assistant");
+
+  return events;
+}
+
+/** Mirrors Task 1's `relabelForPreHygiene`: strips the bracket marker and drops `eventKind`. */
+function relabelForPreHygiene(event: CanonicalEvent): CanonicalEvent {
+  if (event.eventKind !== "tool_call") return event;
+  return {
+    ...event,
+    eventKind: "message",
+    content: event.content.replace(/^\[[^\]]*\]\s*/, "")
+  };
+}
+
+async function deriveSummaries(events: CanonicalEvent[]): Promise<Summary[]> {
+  const store = new InMemoryStore();
+  await store.savePerson({ id: CROSS_SESSION_PERSON_ID, displayName: null, createdAt: CROSS_SESSION_FIXED_NOW });
+  await store.saveSource({
+    id: `source_${CROSS_SESSION_PERSON_ID}`,
+    personId: CROSS_SESSION_PERSON_ID,
+    application: "synthetic",
+    profileId: "default",
+    instanceId: "test",
+    scopeId: CROSS_SESSION_SCOPE_ID,
+    createdAt: CROSS_SESSION_FIXED_NOW,
+    lastImportedAt: CROSS_SESSION_FIXED_NOW
+  });
+  for (const event of events) await store.saveCanonicalEvent(event);
+
+  const first = events[0]!;
+  const last = events.at(-1)!;
+  const job = {
+    id: "job-sc7",
+    personId: CROSS_SESSION_PERSON_ID,
+    generation: 1,
+    earliestAffected: { occurredAt: first.occurredAt, nativeSequence: first.nativeSequence, id: first.id },
+    latestAffected: { occurredAt: last.occurredAt, nativeSequence: last.nativeSequence, id: last.id },
+    state: "pending" as const,
+    attempts: 0,
+    immediateDirty: true,
+    proposalDirty: true,
+    lastProposalRunAt: null,
+    lastActivityAt: CROSS_SESSION_FIXED_NOW,
+    nextDueAt: CROSS_SESSION_FIXED_NOW,
+    createdAt: CROSS_SESSION_FIXED_NOW,
+    updatedAt: CROSS_SESSION_FIXED_NOW
+  };
+  await store.saveContractionJob(job);
+
+  const runner = new ContractionRunner(store, {
+    authority: { kind: "foreground", personId: CROSS_SESSION_PERSON_ID, operation: "historical-bootstrap" }
+  });
+  for (;;) {
+    const result = await runner.drainSlice(CROSS_SESSION_PERSON_ID, job.id);
+    if (result.complete) break;
+  }
+
+  return store.listSummaries();
+}
+
+/** Highest keyword-overlap score across every summary for `query`, via the real MemoryRetriever. */
+async function topMatchScore(summaries: Summary[], query: string): Promise<number> {
+  const store = new InMemoryStore();
+  for (const summary of summaries) await store.saveSummary(summary);
+
+  const retriever = new MemoryRetriever(store);
+  const packet = await retriever.prepareInjection({
+    host: "test",
+    profileId: "default",
+    hostSessionId: "session_sc7",
+    currentTopicSummary: query,
+    requestedAt: CROSS_SESSION_FIXED_NOW,
+    maxMemoryTokens: 10_000,
+    personId: CROSS_SESSION_PERSON_ID,
+    allowedScopeIds: [CROSS_SESSION_SCOPE_ID]
+  });
+
+  return packet?.confidence ?? 0;
+}
