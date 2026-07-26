@@ -74,7 +74,7 @@ export class ContractionRunner {
   async drainSlice(
     personId: string,
     jobId: string,
-    limits: Partial<typeof DEFAULT_CONTRACTION_LIMITS> = {},
+    limits: { maxEvents?: number; maxMonotonicMs?: number } = {},
     context: DrainSliceContext = {}
   ): Promise<ContractionSliceResult> {
     const parsedAuthority = WriteAuthoritySchema.safeParse(this.options.authority);
