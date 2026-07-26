@@ -2,9 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Box, MemoryProposal, MemoryTrace, Summary } from "../../src/domain/types.js";
+import type { Box, CanonicalEvent, MemoryProposal, MemoryTrace, Summary } from "../../src/domain/types.js";
 import { createProfileAuthority, type ProfileAuthority } from "../../src/mcp/authority.js";
 import { explain } from "../../src/audit/explain-service.js";
+import { HYGIENE_RULE_VERSION } from "../../src/topic/derivation-hygiene.js";
 import { SourceLifecycleService } from "../../src/service/source-lifecycle-service.js";
 import { emitLocalSyncOperation, DEFAULT_LOCAL_SYNC_DEVICE_ID } from "../../src/sync/materialization/sync-materializer.js";
 import { mutationEffectsFingerprint } from "../../src/storage/mcp-mutation-contracts.js";
@@ -121,6 +122,38 @@ const proposal = (input: {
     sourceSummaryIds: input.sourceSummaryIds,
     sourceTurnRanges: [{ threadId: "synthetic-thread", startSequence: 1, endSequence: 2 }]
   }
+});
+
+const canonicalEvent = (input: {
+  id: string;
+  personId?: string;
+  scopeId?: string;
+  content: string;
+  eventKind?: "message" | "tool_call";
+  role?: CanonicalEvent["role"];
+  nativeSequence?: number;
+  occurredAt?: string;
+}): CanonicalEvent => ({
+  id: input.id,
+  personId: input.personId ?? PERSON_ID,
+  sourceId: "source-explain",
+  sourceApplication: "synthetic-host",
+  sourceProfileId: "synthetic-profile",
+  scopeId: input.scopeId ?? "scope-a",
+  nativeSessionId: "session-explain",
+  nativeEventId: input.id,
+  nativeSequence: input.nativeSequence ?? 1,
+  causalParentId: null,
+  eventKind: input.eventKind,
+  role: input.role ?? "user",
+  content: input.content,
+  occurredAt: input.occurredAt ?? NOW,
+  importedAt: NOW,
+  provenance: "direct_user_input",
+  trustLevel: "high",
+  contentHash: `hash-${input.id}`,
+  parserVersion: "synthetic/v1",
+  metadata: {}
 });
 
 describe("explain() REQ-039 lifecycle verb coverage", () => {
@@ -290,5 +323,159 @@ describe("explain() REQ-039 lifecycle verb coverage", () => {
     expect(restrictedMessage).toBe("UNAUTHORIZED_OR_NOT_FOUND");
     expect(missingMessage).toBe("UNAUTHORIZED_OR_NOT_FOUND");
     expect(restrictedMessage).toBe(missingMessage);
+  });
+});
+
+describe("explain() REQ-053 hygiene rationale (derivation input hygiene)", () => {
+  let tempDir: string | undefined;
+  let store: SqliteStore | undefined;
+
+  afterEach(async () => {
+    store?.close();
+    if (tempDir) await rm(tempDir, { recursive: true, force: true });
+    tempDir = undefined;
+    store = undefined;
+  });
+
+  const openStore = async (): Promise<{ store: SqliteStore; databasePath: string }> => {
+    tempDir = await mkdtemp(join(tmpdir(), "memory-explain-hygiene-"));
+    const databasePath = join(tempDir, "memory.sqlite");
+    store = new SqliteStore(databasePath);
+    return { store, databasePath };
+  };
+
+  const conversationalEvent = canonicalEvent({
+    id: "event-conversational",
+    content: "Plain conversational content that should never leak into an audit trace.",
+    role: "user",
+    nativeSequence: 1
+  });
+  const toolEventFixture = canonicalEvent({
+    id: "event-tool",
+    content: "[Tool call: Bash] {\"command\":\"ls\"}",
+    eventKind: "tool_call",
+    role: "assistant",
+    nativeSequence: 2
+  });
+  const syntheticEventFixture = canonicalEvent({
+    id: "event-synthetic",
+    content: "[SYSTEM: harness preamble content that should never leak into an audit trace.]",
+    role: "assistant",
+    nativeSequence: 3
+  });
+
+  const seedHygieneEvents = async (db: SqliteStore): Promise<void> => {
+    await db.saveCanonicalEvent(conversationalEvent);
+    await db.saveCanonicalEvent(toolEventFixture);
+    await db.saveCanonicalEvent(syntheticEventFixture);
+  };
+
+  it("hygiene: explaining a synthetic-injected event reports derivationClass, ruleId, and ruleVersion", async () => {
+    const { store: db, databasePath } = await openStore();
+    await seedHygieneEvents(db);
+
+    const trace = await explain(db, "event-synthetic", authority(["scope-a"], databasePath));
+
+    expect(trace.kind).toBe("event");
+    const classified = trace.events.find((e) => e.verb === "classified");
+    expect(classified).toBeDefined();
+    expect(classified?.detail?.derivationClass).toBe("synthetic_injected");
+    expect(classified?.detail?.ruleId).toBe("harness-system");
+    expect(classified?.detail?.ruleVersion).toBe(HYGIENE_RULE_VERSION);
+  });
+
+  it("hygiene: explaining a tool_activity event reports derivationClass tool_activity with a null ruleId", async () => {
+    const { store: db, databasePath } = await openStore();
+    await seedHygieneEvents(db);
+
+    const trace = await explain(db, "event-tool", authority(["scope-a"], databasePath));
+
+    expect(trace.kind).toBe("event");
+    const classified = trace.events.find((e) => e.verb === "classified");
+    expect(classified?.detail?.derivationClass).toBe("tool_activity");
+    expect(classified?.detail?.ruleId).toBe(null);
+    expect(classified?.detail?.ruleVersion).toBe(HYGIENE_RULE_VERSION);
+  });
+
+  it("hygiene: explaining a conversational event reports derivationClass conversational with a null ruleId", async () => {
+    const { store: db, databasePath } = await openStore();
+    await seedHygieneEvents(db);
+
+    const trace = await explain(db, "event-conversational", authority(["scope-a"], databasePath));
+
+    expect(trace.kind).toBe("event");
+    const classified = trace.events.find((e) => e.verb === "classified");
+    expect(classified?.detail?.derivationClass).toBe("conversational");
+    expect(classified?.detail?.ruleId).toBe(null);
+    expect(classified?.detail?.ruleVersion).toBe(HYGIENE_RULE_VERSION);
+  });
+
+  it("hygiene: the classified detail never contains raw event content (ADR 0044)", async () => {
+    const { store: db, databasePath } = await openStore();
+    await seedHygieneEvents(db);
+
+    const trace = await explain(db, "event-synthetic", authority(["scope-a"], databasePath));
+
+    const serialized = JSON.stringify(trace);
+    expect(serialized).not.toContain(syntheticEventFixture.content);
+  });
+
+  it("hygiene: a cross-person event, an out-of-scope event, and a nonexistent id all throw the SAME UNAUTHORIZED_OR_NOT_FOUND", async () => {
+    const { store: db, databasePath } = await openStore();
+    await seedHygieneEvents(db);
+    await db.saveCanonicalEvent(canonicalEvent({
+      id: "event-other-person",
+      personId: "person-someone-else",
+      content: "Belongs to another person entirely.",
+      nativeSequence: 4
+    }));
+    await db.saveCanonicalEvent(canonicalEvent({
+      id: "event-out-of-scope",
+      scopeId: "scope-restricted",
+      content: "Belongs to a scope the caller cannot see.",
+      nativeSequence: 5
+    }));
+
+    const messageFor = async (itemId: string): Promise<string | undefined> => {
+      try {
+        await explain(db, itemId, authority(["scope-a"], databasePath));
+        return undefined;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    };
+
+    const crossPersonMessage = await messageFor("event-other-person");
+    const outOfScopeMessage = await messageFor("event-out-of-scope");
+    const missingMessage = await messageFor("event-does-not-exist");
+
+    expect(crossPersonMessage).toBe("UNAUTHORIZED_OR_NOT_FOUND");
+    expect(outOfScopeMessage).toBe("UNAUTHORIZED_OR_NOT_FOUND");
+    expect(missingMessage).toBe("UNAUTHORIZED_OR_NOT_FOUND");
+  });
+
+  it("hygiene: explaining a summary reports hygiene counts and rule ids for its source events", async () => {
+    const { store: db, databasePath } = await openStore();
+    await seedHygieneEvents(db);
+    await db.saveSummary(summary({
+      id: "summary-hygiene",
+      scopeIds: ["scope-a"]
+    }));
+    await db.saveSummary({
+      ...summary({ id: "summary-hygiene", scopeIds: ["scope-a"] }),
+      sourceCanonicalEventIds: ["event-conversational", "event-tool", "event-synthetic"]
+    });
+
+    const trace = await explain(db, "summary-hygiene", authority(["scope-a"], databasePath));
+
+    const summarized = trace.events.find((e) => e.verb === "summarized");
+    expect(summarized).toBeDefined();
+    expect(summarized?.detail?.sourceCanonicalEventCount).toBe(3);
+    expect(summarized?.detail?.sourceSummaryCount).toBe(0);
+    expect(summarized?.detail?.hygieneRuleVersion).toBe(HYGIENE_RULE_VERSION);
+    expect(summarized?.detail?.conversationalEventCount).toBe(1);
+    expect(summarized?.detail?.toolActivityEventCount).toBe(1);
+    expect(summarized?.detail?.syntheticExcludedEventCount).toBe(1);
+    expect(summarized?.detail?.excludedRuleIds).toBe("harness-system");
   });
 });
