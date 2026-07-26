@@ -24,7 +24,9 @@ import {
 
 // PROCESSOR_VERSION embeds HYGIENE_RULE_VERSION so a hygiene rule-version bump automatically marks
 // every existing checkpoint stale via the existing (non-resume/rewind) invalidation path — REQ-054.
-const PROCESSOR_VERSION = `continuous-contraction/v1+${HYGIENE_RULE_VERSION}`;
+// Exported (additive, no behavior change) so `rebuild-derivations-command.ts` can detect a stale
+// checkpoint without duplicating the version string (REQ-054).
+export const PROCESSOR_VERSION = `continuous-contraction/v1+${HYGIENE_RULE_VERSION}`;
 export const DEFAULT_CONTRACTION_LIMITS = Object.freeze({ maxEvents: 250, maxMonotonicMs: 2_000 });
 
 /**
