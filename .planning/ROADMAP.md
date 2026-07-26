@@ -327,7 +327,30 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans**: TBD
+**Plans:** 7 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 11-01-PLAN.md — Shared pure classify/collapse module (`derivation-hygiene.ts`) + rule-table tests + sim rewired onto production code.
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 11-02-PLAN.md — Hygiene-aware `drainSlice`/`summaryForSpan`: label-input gating, per-span raw windows, provenance preserved, rule-version staleness gate, anchor gating.
+- [ ] 11-03-PLAN.md — Apply the same module to the live Hermes seam (`hermes/adapter.ts` + `pre-compactor.ts`).
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 11-04-PLAN.md — Audit surface: `explain` reports derivation class, rule id, and rule version, recomputed on demand.
+- [ ] 11-05-PLAN.md — `memory rebuild-derivations`: resumable, idempotent, checkpointed full rebuild with vector cleanup.
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 11-06-PLAN.md — CI-safe proportional-corpus count-AND-volume guard, blast-radius sweep (boxes/traces/retrieval), ADR 0048.
+
+**Wave 5** *(blocked on Wave 4)*
+
+- [ ] 11-07-PLAN.md — Live-corpus measurement re-run + human rebuild/recall sign-off (SC5/SC6/SC7).
 
 ### Phase 12: Daemon Incremental Embedding
 
