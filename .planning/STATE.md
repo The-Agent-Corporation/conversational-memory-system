@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 0
-status: planning
-stopped_at: Phase 11 scope insert written
+current_plan: 1
+status: planned
+stopped_at: Phase 11 planned (7 plans, 5 waves)
 last_updated: "2026-07-26T00:00:00.000Z"
-last_activity: 2026-07-26 -- Phase 11 (Derivation Input Hygiene) inserted into v1.1 scope
+last_activity: 2026-07-26 -- Phase 11 planned: 7 plans across 5 waves, checker passed
 progress:
   total_phases: 15
   completed_phases: 10
-  total_plans: 64
+  total_plans: 71
   completed_plans: 61
   percent: 50
 ---
@@ -19,8 +19,8 @@ progress:
 # Project State
 
 **Current phase:** 11
-**Current plan:** 0
-**Status:** Phase 11 scoped, not yet planned
+**Current plan:** 1
+**Status:** Phase 11 planned — ready to execute
 **Last updated:** 2026-07-26
 
 ## Completed
@@ -33,7 +33,9 @@ progress:
 ## Active Work
 
 - Phases 8-10 complete (vector storage, embedder, backfill). Backfill machinery is built but has NOT been run against the live corpus (`~/.memory/aaron.db` is still at schema version 1, no vector table).
-- **Phase 11 — Derivation Input Hygiene inserted 2026-07-26.** Corpus audit found 64% of canonical events are tool calls, 38% of summaries contain verbatim `[Tool call:` argument text, and ~49% of "user" turns are harness-injected scaffolding — roughly 7% of the corpus is human-authored. Former Phases 11-14 renumbered to 12-15; REQ-052/053/054 added. See `.planning/phases/11-derivation-input-hygiene/11-SCOPE-INSERT.md`. Next: `/gsd:plan-phase 11`.
+- **Phase 11 — Derivation Input Hygiene inserted 2026-07-26.** Corpus audit found 64% of canonical events are tool calls, 38% of summaries contain verbatim `[Tool call:` argument text, and ~49% of "user" turns are harness-injected scaffolding — roughly 7% of the corpus is human-authored. Former Phases 11-14 renumbered to 12-15; REQ-052/053/054 added. See `.planning/phases/11-derivation-input-hygiene/11-SCOPE-INSERT.md`.
+- **Phase 11 planned 2026-07-26**: 7 plans / 5 waves, plan-checker PASSED (1 warning, see below). Simulation against the live corpus projects 135,366 -> 55,930 summaries (-59%) and 228.9 MB -> 77.6 MB (-66%). Next: `/gsd:execute-phase 11`.
+- **Open warning on Phase 11**: plan 11-02 implements CONTEXT.md decision 6 (slice-straddling tool runs) via stable-id upsert of the active span's provisional summary rather than by extending `ContractionCheckpoint` with pending-run state. Reasoning independently verified against `contraction-runner.ts` (summaryForSpan slices the full span window from allEvents; saveSummary upserts; summaryId is stable as a span extends) and covered by tests 11-02 Task 1(f)/(g). Needs owner sign-off or a CONTEXT.md addendum.
 - Live corpus is also 6 days stale (last import 2026-07-20) and Codex was never imported at all (4,738 session files, no grant).
 
 ## Known Constraint
