@@ -7,6 +7,7 @@ import {
 } from "../summarization/summarizer.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import type { CompletedTopicSpan } from "../topic/topic-monitor.js";
+import { derivationContents } from "../topic/derivation-hygiene.js";
 
 export interface PreCompactionResult {
   summary: Summary;
@@ -31,7 +32,15 @@ export class PreCompactor {
         turn.sequence >= span.sourceTurnRange.startSequence &&
         turn.sequence <= span.sourceTurnRange.endSequence
     );
-    const draft = await this.summarizer.summarize({ span, sourceTurns: turnsInSpan });
+    // 11-CONTEXT decision 5: hygiene-transform the summarizer input via the SAME shared
+    // module the daemon/contraction path uses. This changes text only; sourceTurnRanges and
+    // sourceTurnCount below are still computed from the raw turnsInSpan — hygiene never
+    // changes provenance.
+    const hygieneTurns = derivationContents(turnsInSpan).map(({ index, content }) => ({
+      ...turnsInSpan[index],
+      content
+    }));
+    const draft = await this.summarizer.summarize({ span, sourceTurns: hygieneTurns });
     const embedding = this.embedder ? await this.embedder.embed(draft.summaryText) : null;
 
     const summary: Summary = {
