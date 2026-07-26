@@ -55,6 +55,19 @@ Assistant-role (measured 2026-07-26, resolving open question 2): `silent-sentine
 - **Both contraction paths, one shared module.** Research surfaced a second live path: `src/integrations/hermes/adapter.ts:54` runs its own `TopicMonitor`, and `src/compaction/pre-compactor.ts` its own summarizer, entirely parallel to `ContractionRunner`. Classification and collapse live in **one pure module** applied at **both** seams, so memory quality never depends on which route ingested an event. The Hermes bridge is the live agent path — changes there affect running agent behavior (AGENTS.md), so it needs explicit test coverage.
 - **Tool runs straddling a slice boundary must still collapse to one line.** `DEFAULT_CONTRACTION_LIMITS.maxEvents` is 250 and slices also end on a time budget, so a run can span two `drainSlice` calls at a point that varies with interruption timing. `ContractionCheckpoint` is **extended to carry pending-run state**. The alternative (accept two activity lines) would make output depend on where an interruption fell, directly violating success criterion 5. The unbounded simulation never encountered this case, so it is untested by the measurement.
 - **Collapse text format is fixed and deterministic:** raw tool names with counts, ordered by count descending then name ascending, never arguments — matching `11-hygiene-sim.ts` so implementation output stays comparable to the measured targets.
+
+### Addendum 2026-07-26 — decision 6 reaffirmed (owner sign-off)
+
+The plan-checker flagged that Plan 11-02's first draft satisfied decision 6 *implicitly* — relying on `summaryForSpan` recomputing the active span's window from `allEvents` every slice, so a provisional summary written mid-run is upserted with the complete run next slice — rather than by extending `ContractionCheckpoint`. **The owner rejected the implicit form and reaffirmed the literal checkpoint extension.** Plan 11-02 was revised accordingly.
+
+Rationale for the record: the implicit design is eventually-correct but not per-slice-correct. It durably persists an intermediate summary carrying a tool count that is still growing (`ran 120 tool calls` for a run that will reach 300). That state is observable — a crash leaves it final, Phase 12's incremental embedder can embed it, and `memory explain` can report it. The same gap applies to a length-1 tail at a boundary, where isolated-single (keep verbatim) and run-head (collapse) are indistinguishable until the next event arrives.
+
+Implementation shape:
+- `ContractionCheckpoint` gains `pendingToolRun: { startEventId, eventCount, toolCounts, ruleVersion } | null`. Checkpoints persist as a JSON `payload` blob, so this needs **no DDL and no schema-version bump** — only a `null` default for pre-existing payloads in the already-idempotent `migrateDaemonContractionPayloads`. `in-memory-store.ts` is untouched.
+- A non-complete slice whose trailing active span ends inside an open tool run **withholds** that run from the summary's derivation text and records it in the checkpoint. Provenance is unaffected: `sourceCanonicalEventIds` still covers the full window.
+- On resume the runner re-derives the open run and **fails closed to the rewind/invalidation path** if the recorded `startEventId` no longer heads an open run there — the guard against a late import landing inside a withheld run.
+- `complete === true` always flushes: a run at the end of the corpus cannot grow.
+- Consequence carried into Plan 11-02 Task 4: anchors for a withheld run are also deferred and re-emitted (idempotently, by deterministic id) when the run closes, so the anchor set is slice-size-independent.
 </decisions>
 
 <canonical_refs>

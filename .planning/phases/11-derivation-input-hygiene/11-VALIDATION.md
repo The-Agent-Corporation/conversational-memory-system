@@ -52,6 +52,10 @@ created: 2026-07-26
 | TBD | TBD | 2 | REQ-054 — rule version bump marks derivations stale | unit | `npx vitest run tests/service/` | ✅ extend | ⬜ pending |
 | TBD | TBD | 2 | REQ-054 — rebuild resumable/idempotent; interrupt+resume == uninterrupted | integration | `npx vitest run tests/operations/rebuild-derivations-command.test.ts` | ❌ W0 | ⬜ pending |
 | TBD | TBD | 1 | Tool run straddling a slice boundary still collapses to one line | integration | `npx vitest run tests/daemon/contraction-runner.test.ts -t "slice boundary"` | ✅ extend | ⬜ pending |
+| TBD | TBD | 1 | No persisted summary ever carries a growable tool count — asserted after EVERY slice, not only at the end | integration | `npx vitest run tests/daemon/contraction-runner.test.ts -t "slice boundary"` | ✅ extend | ⬜ pending |
+| TBD | TBD | 1 | `pendingToolRun` drift guard — a late insert inside a withheld run forces the rewind path, never a second activity line | integration | `npx vitest run tests/daemon/contraction-runner.test.ts -t "drift guard"` | ✅ extend | ⬜ pending |
+| TBD | TBD | 1 | Anchor set is identical under any slice size (withheld runs re-emit on close) | integration | `npx vitest run tests/daemon/contraction-runner.test.ts` | ✅ extend | ⬜ pending |
+| TBD | TBD | 1 | Checkpoint payloads written before `pendingToolRun` still parse, defaulted to null | unit | `npx vitest run tests/storage/sqlite-store.test.ts` | ✅ extend | ⬜ pending |
 | TBD | TBD | 1 | `sourceCanonicalEventIds` remains the FULL raw event list after collapse | unit | `npx vitest run tests/daemon/contraction-runner.test.ts -t "provenance"` | ✅ extend | ⬜ pending |
 | TBD | TBD | 2 | Quarantine contract — replayed `tool.result` enters as `tool_activity` | unit | `npx vitest run tests/imports/` | ✅ extend | ⬜ pending |
 | TBD | TBD | 3 | SC7 — recall does not regress (boxes/traces/retrieval consume summaryText) | regression | `npx vitest run tests/boxes/ tests/traces/ tests/retrieval/` | ✅ existing | ⬜ pending |

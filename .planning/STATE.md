@@ -5,22 +5,22 @@ milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 1
 status: planned
-stopped_at: Phase 11 planned (7 plans, 5 waves)
-last_updated: "2026-07-26T00:00:00.000Z"
-last_activity: 2026-07-26 -- Phase 11 planned: 7 plans across 5 waves, checker passed
+stopped_at: Phase 11 replanned (11-02 revised to checkpoint pending-run state); ready to execute
+last_updated: "2026-07-26T22:01:01.171Z"
+last_activity: 2026-07-26 -- Phase 11 execution halted at owner request; 11-01/11-02 replanned for ContractionCheckpoint.pendingToolRun
 progress:
   total_phases: 15
-  completed_phases: 10
+  completed_phases: 8
   total_plans: 71
-  completed_plans: 61
-  percent: 50
+  completed_plans: 64
+  percent: 53
 ---
 
 # Project State
 
 **Current phase:** 11
 **Current plan:** 1
-**Status:** Phase 11 planned — ready to execute
+**Status:** Phase 11 replanned — ready to execute
 **Last updated:** 2026-07-26
 
 ## Completed
@@ -35,12 +35,12 @@ progress:
 - Phases 8-10 complete (vector storage, embedder, backfill). Backfill machinery is built but has NOT been run against the live corpus (`~/.memory/aaron.db` is still at schema version 1, no vector table).
 - **Phase 11 — Derivation Input Hygiene inserted 2026-07-26.** Corpus audit found 64% of canonical events are tool calls, 38% of summaries contain verbatim `[Tool call:` argument text, and ~49% of "user" turns are harness-injected scaffolding — roughly 7% of the corpus is human-authored. Former Phases 11-14 renumbered to 12-15; REQ-052/053/054 added. See `.planning/phases/11-derivation-input-hygiene/11-SCOPE-INSERT.md`.
 - **Phase 11 planned 2026-07-26**: 7 plans / 5 waves, plan-checker PASSED (1 warning, see below). Simulation against the live corpus projects 135,366 -> 55,930 summaries (-59%) and 228.9 MB -> 77.6 MB (-66%). Next: `/gsd:execute-phase 11`.
-- **Open warning on Phase 11**: plan 11-02 implements CONTEXT.md decision 6 (slice-straddling tool runs) via stable-id upsert of the active span's provisional summary rather than by extending `ContractionCheckpoint` with pending-run state. Reasoning independently verified against `contraction-runner.ts` (summaryForSpan slices the full span window from allEvents; saveSummary upserts; summaryId is stable as a span extends) and covered by tests 11-02 Task 1(f)/(g). Needs owner sign-off or a CONTEXT.md addendum.
+- **Phase 11 warning RESOLVED 2026-07-26 (owner decision).** The plan-checker warning on 11-02 — that it satisfied CONTEXT decision 6 implicitly via stable-id upsert rather than by extending `ContractionCheckpoint` — was resolved in favor of the **literal checkpoint extension**. The implicit form is eventually-correct but persists an observable intermediate summary carrying a still-growing tool count. 11-02 was replanned: `ContractionCheckpoint` gains `pendingToolRun` (JSON payload field, no DDL, no schema-version bump), a non-complete slice withholds a trailing open run from derivation text, a drift guard fails closed to the rewind path on late inserts, and corpus-end always flushes. 11-01 gained an `openToolRunStart` export; 11-02 is now 4 tasks and also touches `src/daemon/types.ts` + `src/storage/sqlite-store.ts`. Recorded as an addendum in `11-CONTEXT.md`; `11-VALIDATION.md` gained 5 rows. **Phase 11 has no open warnings — ready to execute.**
 - Live corpus is also 6 days stale (last import 2026-07-20) and Codex was never imported at all (4,738 session files, no grant).
 
 ## Known Constraint
 
-The current execution environment can edit the worktree but cannot write `.git/index.lock`; commits must be created later from a git-writable environment.
+(Cleared 2026-07-26 — the `.git/index.lock` write restriction no longer applies; commits work normally.)
 
 ## Session
 
@@ -63,6 +63,7 @@ The current execution environment can edit the worktree but cannot write `.git/i
 - [v1.1 Roadmap]: REQ-050 (embedding deletion propagation) is delivered entirely in Phase 14 — Phase 8 only designs the tombstoning-capable schema/query surface as infrastructure; the actual `commitSourceDeletion` wiring and correctness gate lands in Phase 14, per requirement-to-phase 1:1 mapping.
 - [v1.1 Roadmap]: The `createStagingStore` full-corpus-restage gap (flagged independently by FEATURES + PITFALLS research) is folded into Phase 12 (Forward-Only Vector Trace Discovery) rather than given its own phase, since it's the other half of "forward-only" for the same success criterion.
 - [v1.1 Roadmap]: Scope-boundary partitioning and embedding-determinism guards are cross-cutting concerns folded into the success criteria of the phases that introduce storage (8) and the embedder (9), rather than standalone phases, per PITFALLS.md guidance.
+- [Phase 11]: Slice-straddling tool runs are handled by extending `ContractionCheckpoint` with `pendingToolRun`, not by stable-id upsert of a provisional summary. — Upsert is eventually-correct but durably persists a tool count that is still growing; a crash, Phase 12 incremental embedding, or `memory explain` can consume that intermediate state as final.
 - [Phase 05]: Confirmation tickets retain only process-local token and intent digests and are consumed before writes.
 - [Phase 05]: Mutation applications keep exact preview plans process-local and use only task-specific atomic store commits.
 - [Phase 05]: Proposal authorization closes every recursive summary, box, and trace dependency against profile person and scopes.
@@ -80,7 +81,7 @@ The current execution environment can edit the worktree but cannot write `.git/i
 
 ## Current Position
 
-Phase: 10 (embedding-backfill) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 10
-Last activity: 2026-07-21 -- Phase 10 execution started
+Phase: 11 (derivation-input-hygiene) — PLANNED
+Plan: 1 of 7
+Status: Replanned, ready to execute
+Last activity: 2026-07-26 -- 11-02 revised to the literal checkpoint extension per owner decision
