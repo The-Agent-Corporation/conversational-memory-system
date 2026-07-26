@@ -120,3 +120,7 @@ None — no external service configuration required.
 ---
 *Phase: 11-derivation-input-hygiene*
 *Completed: 2026-07-26*
+
+## Self-Check: PASSED
+
+All created/modified files verified present on disk; all four task commit hashes (`e3f0f2e`, `05c15dd`, `f45dc3d`, `7aac802`) plus this summary's commit (`d6aa02f`) verified in `git log`.
