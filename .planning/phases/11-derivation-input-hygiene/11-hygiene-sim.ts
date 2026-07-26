@@ -17,6 +17,12 @@
  */
 import { createRequire } from "node:module";
 import { TopicMonitor, type CompletedTopicSpan } from "./src/topic/topic-monitor.js";
+import {
+  HYGIENE_RULE_VERSION,
+  classifyEvent,
+  collapseText,
+  toolNameOf
+} from "./src/topic/derivation-hygiene.js";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (p: string, o?: unknown) => any };
@@ -36,41 +42,14 @@ interface Row {
   content: string;
 }
 
-/** Deterministic, anchored rules. Conservative: unmatched stays conversational. */
-const SYNTHETIC_RULES: ReadonlyArray<{ id: string; test: (c: string) => boolean }> = [
-  { id: "skill-invocation", test: (c) => c.startsWith("[IMPORTANT: The user has invoked") },
-  { id: "harness-system", test: (c) => c.startsWith("[SYSTEM:") },
-  { id: "cron-session-tag", test: (c) => c.startsWith("[cron:") },
-  { id: "automated-followup", test: (c) => c.startsWith("### Task:") && c.includes("follow-up questions") },
-  { id: "automated-task-block", test: (c) => c.startsWith("### Task:") },
-  { id: "skill-body-injection", test: (c) => c.startsWith("Base directory for this skill:") },
-  { id: "context-compaction", test: (c) => c.startsWith("[CONTEXT COMPACTION") },
-  { id: "session-continuation", test: (c) => c.startsWith("This session is being continued from a previous conversation") },
-  { id: "local-command-stdout", test: (c) => c.startsWith("<local-command-stdout>") },
-  { id: "system-reminder-only", test: (c) => c.startsWith("<system-reminder>") },
-  { id: "city-harness-preamble", test: (c) => /^\[[a-z0-9-]+-city\]\s+\S+\s+•\s+20\d\d-/.test(c) }
-];
-
+/**
+ * Thin adapter over the shared production classifier so the sim and implementation
+ * cannot drift. `eventKind` is coalesced to `"message"` by the SQL query below, so a
+ * real tool-call row still carries `eventKind: "tool_call"` — pass it straight through.
+ */
 const classify = (row: Row): { klass: Klass; rule: string | null } => {
-  if (row.eventKind === "tool_call") return { klass: "tool_activity", rule: null };
-  const c = row.content.trimStart();
-  for (const rule of SYNTHETIC_RULES) {
-    if (rule.test(c)) return { klass: "synthetic_injected", rule: rule.id };
-  }
-  return { klass: "conversational", rule: null };
-};
-
-const TOOL_NAME = /^\[Tool call:\s*([^\]]+)\]/;
-const toolNameOf = (content: string): string => TOOL_NAME.exec(content)?.[1]?.trim() ?? "unknown";
-
-/** REQ-052 collapse text: names distinct tools and counts, never arguments. */
-const collapseText = (names: string[]): string => {
-  const counts = new Map<string, number>();
-  for (const n of names) counts.set(n, (counts.get(n) ?? 0) + 1);
-  const parts = [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([name, n]) => `${n} ${name}`);
-  return `[Activity] ran ${names.length} tool calls: ${parts.join(", ")}`;
+  const result = classifyEvent({ content: row.content, eventKind: row.eventKind, role: row.role });
+  return { klass: result.derivationClass, rule: result.ruleId };
 };
 
 /** Mirrors DeterministicSummarizer.buildSummaryText. */
@@ -210,6 +189,9 @@ const main = async (): Promise<void> => {
   const pct = (n: number, d: number): string => `${((n / d) * 100).toFixed(1)}%`;
   const mb = (chars: number): string => `${(chars / 1_048_576).toFixed(1)} MB`;
 
+  console.log(`\nHygiene rule version: ${HYGIENE_RULE_VERSION}`);
+  console.log(`Note: silent-sentinel and structured-json-emission (assistant-role rules) are new`);
+  console.log(`since the 2026-07-26 measurement and will shift these numbers vs. that baseline.`);
   console.log(`\n=== Corpus (${total.toLocaleString()} events) ===`);
   for (const [k, v] of Object.entries(classCounts)) {
     console.log(`  ${k.padEnd(20)} ${v.toLocaleString().padStart(9)}  ${pct(v, total)}`);
