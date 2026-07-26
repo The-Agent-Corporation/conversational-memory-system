@@ -64,8 +64,10 @@ Derivations are built from conversational content. Machine-generated tool invoca
 **D-1 — Hygiene is a derivation-layer filter, never an import-time drop.**
 Canonical events are the durable record (Phase 1 premise); summaries, boxes, and traces are rebuildable derivations, and `src/service/derivation-invalidator.ts` already exists to rebuild them. Dropping at parse time would be irreversible without re-importing 1.1 GB of source history, and would break the `explain`/audit surface (REQ-039) and "what did I actually do on the 9th" queries. Every event keeps being imported and stays queryable; only what feeds summarization changes.
 
-**D-2 — Tool calls collapse by run, not by deletion.**
+**D-2 — Tool calls collapse by run, and never drive topic labels.** *(amended 2026-07-26 after measurement — see `11-MEASUREMENT.md`)*
 A consecutive run of ≥2 tool-call events within a contraction slice collapses into a single derived activity line — `ran 12 terminal commands, 3 file edits, 2 web fetches` — naming distinct tools and counts, not arguments. A single isolated tool call is summarized normally, in its existing form: one deliberate action between two messages is usually the point of the exchange, and losing it loses the "why." Run boundaries are determined by canonical order within the slice, so the rule stays deterministic and slice-local.
+
+Additionally, neither form feeds topic-label extraction or topic-change detection. Simulation showed collapse alone cuts summary volume by 61% but summary count by only 14%, because `TopicMonitor.isTopicChange` ends a span whenever consecutive labels share zero significant words — and an activity line shares no vocabulary with the surrounding conversation, so it still opens its own span. The same mechanism means tool calls have been fragmenting real conversations all along. Making tool activity contribute span *content* but not span *labels* yields 55,930 summaries (41% of baseline) at 77.6 MB (34% of baseline).
 
 **D-3 — Synthetic classification is deterministic, versioned, and recorded.**
 Classification runs on deterministic anchored patterns (no model), emitting a `derivationClass` of `conversational` | `tool_activity` | `synthetic_injected` plus the matched rule ID. The rule set carries a version string; a version bump marks affected derivations stale so they can be rebuilt, exactly as `parserVersion` already works for importers. Classification results are persisted, not recomputed ad hoc, so `memory explain` can answer "why isn't this in my memory?" with a specific rule.
@@ -85,6 +87,15 @@ This phase lands before daemon incremental embedding and before vector trace dis
 - **REQ-053 — Synthetic content classification:** Harness-injected content recorded under a user or assistant role — skill preambles, scheduler wrappers, context-injection blocks, compaction artifacts, and automated task prompts — shall be deterministically classified and excluded from summarization, embedding, trace discovery, and injection, while remaining present and queryable in the canonical timeline. Classification shall be versioned and its rationale recoverable through the audit surface.
 - **REQ-054 — Derivation rebuild on rule change:** A change to the hygiene rule version shall mark affected derivations stale, and the system shall provide a resumable, idempotent, checkpointed path to rebuild them without duplicating or corrupting summaries, vectors, or trace assignments.
 
+## Measured impact
+
+Simulated against the live corpus with the real `TopicMonitor` and summarizer (`11-MEASUREMENT.md`); the baseline pass reproduces the persisted 135,366 summaries exactly, so the projection is trustworthy.
+
+| | Summaries | Volume |
+|---|---|---|
+| Today | 135,366 | 228.9 MB |
+| After Phase 11 | **55,930 (−59%)** | **77.6 MB (−66%)** |
+
 ## Success criteria
 
 1. A contraction pass over a slice containing a run of consecutive tool calls produces exactly one derived activity line naming the distinct tools and their counts, containing no invocation arguments; a slice containing a single isolated tool call summarizes it in its existing form.
@@ -99,9 +110,9 @@ This phase lands before daemon incremental embedding and before vector trace dis
 
 1. **Storage of `derivationClass`** — new column on `canonical_events` (migration + backfill across 292k rows), a sidecar classification table, or computed at contraction time from a persisted rule version? Affects the Phase 8 migration surface and both store implementations.
 2. **Assistant-side synthetic content** — the evidence above quantifies the `user` role only. Assistant-role harness output (thinking-only blocks, which are currently quarantined rather than imported, and structured status emissions) needs the same measurement before rules are written.
-3. **Rebuild scope on the live corpus** — rebuild all 135,366 summaries, or only the 51,266 with detected noise? Full rebuild is simpler to reason about and idempotent by construction; partial is faster but needs a defensible selection predicate.
+3. ~~**Rebuild scope on the live corpus**~~ — **answered:** full rebuild. 59% of summaries disappear under the recommended design and survivors' text changes, so a selective predicate buys nothing.
 4. **Quarantine replay interaction** — 290,107 pending quarantine records include 23,878 OpenClaw `tool.result` entries. If tool results are ever replayed in, they must enter as `tool_activity`, not as conversational content. Decide whether this phase sets that contract or defers it.
-5. **Threshold for run collapse** — is 2 the right minimum, or should short runs (2–3) stay verbatim and only longer runs collapse?
+5. ~~**Threshold for run collapse**~~ — **answered:** 2 is correct. With tool activity no longer driving labels, the threshold affects only text density inside a span, not fragmentation.
 
 ## Roadmap and requirements changes
 
