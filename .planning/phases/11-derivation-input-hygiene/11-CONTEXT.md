@@ -49,6 +49,12 @@ Assistant-role (measured 2026-07-26, resolving open question 2): `silent-sentine
 
 ### Ordering
 - This phase lands **before** daemon incremental embedding (Phase 12) and vector trace discovery (Phase 13), so embedding compute is never spent on content the system has already decided is not recallable (D-6).
+
+### Resolved during research (2026-07-26)
+
+- **Both contraction paths, one shared module.** Research surfaced a second live path: `src/integrations/hermes/adapter.ts:54` runs its own `TopicMonitor`, and `src/compaction/pre-compactor.ts` its own summarizer, entirely parallel to `ContractionRunner`. Classification and collapse live in **one pure module** applied at **both** seams, so memory quality never depends on which route ingested an event. The Hermes bridge is the live agent path — changes there affect running agent behavior (AGENTS.md), so it needs explicit test coverage.
+- **Tool runs straddling a slice boundary must still collapse to one line.** `DEFAULT_CONTRACTION_LIMITS.maxEvents` is 250 and slices also end on a time budget, so a run can span two `drainSlice` calls at a point that varies with interruption timing. `ContractionCheckpoint` is **extended to carry pending-run state**. The alternative (accept two activity lines) would make output depend on where an interruption fell, directly violating success criterion 5. The unbounded simulation never encountered this case, so it is untested by the measurement.
+- **Collapse text format is fixed and deterministic:** raw tool names with counts, ordered by count descending then name ascending, never arguments — matching `11-hygiene-sim.ts` so implementation output stays comparable to the measured targets.
 </decisions>
 
 <canonical_refs>
@@ -114,4 +120,6 @@ Expected residual: ~11,571 summaries still containing `[Tool call:` — isolated
 - **Over-aggressive rules eating real conversation.** A prefix like `### Task:` can appear in genuine user text. Mitigation: conservative anchoring, rule-by-rule hit counts reviewed against the measured baseline, and a spot-check that no rule's hit count exceeds its measured expectation by a wide margin.
 - **Silent divergence between simulation and implementation.** Mitigation: re-run `11-hygiene-sim.ts` after implementation; the real pipeline must land on 55,930 summaries / 77.6 MB for the same corpus.
 - **Topic-label change altering unrelated behavior.** `TopicMonitor` output feeds anchors and spans beyond summaries. Mitigation: assert anchor behavior is unchanged for conversational events.
+- **Provenance loss in `summaryForSpan`.** It reconstructs turns positionally (`sourceEvents[k]` sits at `startSequence + k`). Collapsing N events into one derived line breaks that assumption if handled naively. `sourceCanonicalEventIds` must remain the FULL raw event list so provenance and deletion-invalidation stay correct — only the text fed to the summarizer changes. Research flags this as the highest-risk detail.
+- **Downstream consumers keying off summary text.** `src/boxes/box-assigner.ts`, trace candidate generation, and `src/retrieval/memory-retriever.ts` all read `summary.summaryText` directly, so count/content changes ripple into box assignment, trace candidates, and retrieval scoring. Success criterion 7 must be tested against these, not just against summary counts.
 </risk_summary>
