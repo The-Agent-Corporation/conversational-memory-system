@@ -112,7 +112,7 @@ A fresh installation is immediately useful when it can discover approved histori
 | REQ-042 | Phase 10 — Embedding Backfill | Pending |
 | REQ-052 | Phase 11 — Derivation Input Hygiene | Complete |
 | REQ-053 | Phase 11 — Derivation Input Hygiene | Complete |
-| REQ-054 | Phase 11 — Derivation Input Hygiene | Pending |
+| REQ-054 | Phase 11 — Derivation Input Hygiene | Complete |
 | REQ-043 | Phase 12 — Daemon Incremental Embedding | Pending |
 | REQ-045 | Phase 12 — Daemon Incremental Embedding | Pending |
 | REQ-046 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |

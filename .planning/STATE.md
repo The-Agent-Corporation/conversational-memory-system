@@ -5,14 +5,14 @@ milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 1
 status: executing
-stopped_at: Phase 9 context gathered
-last_updated: "2026-07-26T22:25:33.043Z"
+stopped_at: Completed 11-06-PLAN.md
+last_updated: "2026-07-26T23:19:06.615Z"
 last_activity: 2026-07-26
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 71
-  completed_plans: 65
+  completed_plans: 70
   percent: 53
 ---
 
@@ -44,8 +44,8 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-26T22:22:20.283Z
-**Stopped at:** Phase 9 context gathered
+**Last session:** 2026-07-26T23:19:06.603Z
+**Stopped at:** Completed 11-06-PLAN.md
 **Resume file:** None
 
 ## Performance Metrics
@@ -58,6 +58,7 @@ progress:
 | Phase 05 P08 | 12min | 2 tasks | 9 files |
 | Phase 05 P09 | 15min | 2 tasks | 6 files |
 | Phase 11 P01 | 3min | 3 tasks | 3 files |
+| Phase 11 P06 | 55min | 3 tasks | 4 files |
 
 ## Decisions
 
@@ -81,10 +82,11 @@ progress:
 - [Phase 05]: Bind normalized startup scopes and exact present-or-absent dependency state, then revalidate it with one shared pure validator before either adapter writes.
 - [Phase 11]: Promoted the rule table, toolNameOf, and collapseText from 11-hygiene-sim.ts verbatim so implementation output stays comparable to the measured 55,930-summary / 77.6 MB targets
 - [Phase 11]: derivationContents and openToolRunStart share one internal computeSegments walk so they can never disagree about where a tool run begins
+- [Phase 11]: Slice-straddling tool runs handled via literal ContractionCheckpoint.pendingToolRun (owner decision 2026-07-26), documented in ADR 0048 — Upsert-and-correct is eventually-correct but durably persists a still-growing tool count that a crash, incremental embedding, or memory explain could consume as final
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-07-26
