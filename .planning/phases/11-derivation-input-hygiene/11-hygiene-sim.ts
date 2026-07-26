@@ -16,13 +16,13 @@
  *     (src/summarization/summarizer.ts buildSummaryText)
  */
 import { createRequire } from "node:module";
-import { TopicMonitor, type CompletedTopicSpan } from "./src/topic/topic-monitor.js";
+import { TopicMonitor, type CompletedTopicSpan } from "../../../src/topic/topic-monitor.js";
 import {
   HYGIENE_RULE_VERSION,
   classifyEvent,
   collapseText,
   toolNameOf
-} from "./src/topic/derivation-hygiene.js";
+} from "../../../src/topic/derivation-hygiene.js";
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (p: string, o?: unknown) => any };
