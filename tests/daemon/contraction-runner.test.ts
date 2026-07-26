@@ -551,6 +551,120 @@ describe("ContractionRunner", () => {
     const result = await runner.drainSlice(job.personId, job.id);
     expect(result.rewindOrderKey).not.toBeNull();
   });
+
+  // --- Anchors follow derivation content (REQ-053's injection path) ------------------------------
+
+  it("excludes synthetic content from anchors", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-sys-1", 1, "Switch to Nova contract renewal.", 0),
+      syntheticEvent("hygiene-anchor-sys-2", 2, "internal deadline marker", 1),
+      event("hygiene-anchor-sys-3", 3, "Nova contract renewal follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-sys", "hygiene-anchor-sys-1", "hygiene-anchor-sys-3");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-sys-2")).toBe(false);
+  });
+
+  it("excludes collapsed tool run members from anchors", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-run-1", 1, "Switch to Oscar leverage review.", 0),
+      toolEvent("hygiene-anchor-run-2", 2, "Bash", 1, "because-leverage-1"),
+      toolEvent("hygiene-anchor-run-3", 3, "Bash", 2, "because-leverage-2"),
+      toolEvent("hygiene-anchor-run-4", 4, "Read", 3, "because-leverage-3"),
+      event("hygiene-anchor-run-5", 5, "Oscar leverage review follow-up.", 4, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-run", "hygiene-anchor-run-1", "hygiene-anchor-run-5");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    for (const id of ["hygiene-anchor-run-2", "hygiene-anchor-run-3", "hygiene-anchor-run-4"]) {
+      expect(anchors.some((anchor) => anchor.canonicalEventId === id)).toBe(false);
+    }
+  });
+
+  it("keeps anchors for an isolated single tool call", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-iso-1", 1, "Switch to Papa strategy review.", 0),
+      toolEvent("hygiene-anchor-iso-2", 2, "Bash", 1, "because-strategy"),
+      event("hygiene-anchor-iso-3", 3, "Papa strategy review follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-iso", "hygiene-anchor-iso-1", "hygiene-anchor-iso-3");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-iso-2")).toBe(true);
+  });
+
+  it("keeps conversational anchor behavior unchanged", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [event("hygiene-anchor-conv-1", 1, "Switch to Quebec deadline review.", 0)]);
+    const job = await enqueue(store, "job-hygiene-anchor-conv", "hygiene-anchor-conv-1", "hygiene-anchor-conv-1");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors).toEqual([
+      expect.objectContaining({ canonicalEventId: "hygiene-anchor-conv-1", anchorType: "deadline" })
+    ]);
+  });
+
+  it("withheld boundary: a length-1 open tail's anchor is deferred, not guessed, and the final anchor set is slice-size-independent", async () => {
+    const events = [
+      event("hygiene-anchor-f3-1", 1, "Switch to Romeo insight review.", 0),
+      toolEvent("hygiene-anchor-f3-tool-1", 2, "Bash", 1, "because-insight"),
+      event("hygiene-anchor-f3-2", 3, "Romeo insight review follow-up.", 2, "assistant")
+    ];
+
+    const boundedStore = await seededStore();
+    await seedEvents(boundedStore, events);
+    const boundedJob = await enqueue(boundedStore, "job-hygiene-anchor-f3-bounded", "hygiene-anchor-f3-1", "hygiene-anchor-f3-2");
+    const boundedRunner = new ContractionRunner(boundedStore, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    const first = await boundedRunner.drainSlice(boundedJob.personId, boundedJob.id, { maxEvents: 2 });
+    expect(first.complete).toBe(false);
+    expect((await boundedStore.listAnchors()).some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3-tool-1")).toBe(false);
+    await boundedRunner.drainSlice(boundedJob.personId, boundedJob.id);
+
+    const unboundedStore = await seededStore();
+    await seedEvents(unboundedStore, events);
+    const unboundedJob = await enqueue(unboundedStore, "job-hygiene-anchor-f3-unbounded", "hygiene-anchor-f3-1", "hygiene-anchor-f3-2");
+    await drain(
+      new ContractionRunner(unboundedStore, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() }),
+      unboundedJob
+    );
+
+    const normalize = (anchors: Array<{ canonicalEventId?: string; anchorType: string }>) =>
+      [...anchors]
+        .map((anchor) => ({ canonicalEventId: anchor.canonicalEventId ?? "", anchorType: anchor.anchorType }))
+        .sort((a, b) => a.canonicalEventId.localeCompare(b.canonicalEventId) || a.anchorType.localeCompare(b.anchorType));
+
+    expect(normalize(await boundedStore.listAnchors())).toEqual(normalize(await unboundedStore.listAnchors()));
+    expect((await boundedStore.listAnchors()).some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3-tool-1")).toBe(true);
+  });
+
+  it("withheld boundary: a length-1 open tail that becomes a run of 2 never gets an anchor", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("hygiene-anchor-f3b-1", 1, "Switch to Sierra insight review.", 0),
+      toolEvent("hygiene-anchor-f3b-tool-1", 2, "Bash", 1, "because-insight-1"),
+      toolEvent("hygiene-anchor-f3b-tool-2", 3, "Read", 2, "because-insight-2")
+    ]);
+    const job = await enqueue(store, "job-hygiene-anchor-f3b", "hygiene-anchor-f3b-1", "hygiene-anchor-f3b-tool-2");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await runner.drainSlice(job.personId, job.id, { maxEvents: 2 });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3b-tool-1")).toBe(false);
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3b-tool-2")).toBe(false);
+  });
 });
 
 describe("ProposalScheduler", () => {

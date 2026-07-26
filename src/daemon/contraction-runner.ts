@@ -7,6 +7,7 @@ import type { MemoryStore } from "../storage/memory-store.js";
 import { DeterministicSummarizer, type Summarizer } from "../summarization/summarizer.js";
 import {
   HYGIENE_RULE_VERSION,
+  classifyEvent,
   derivationContents,
   drivesTopicLabel,
   openToolRunStart,
@@ -162,7 +163,8 @@ export class ContractionRunner {
       const event = allEvents[index];
       const turn = turnFromEvent(event, threadId, index + 1);
       turns.push(turn);
-      anchors.push(...anchorsForTurn(turn));
+      // Anchors are generated below, per span window, gated on whether an event's OWN text
+      // survives into derivation (REQ-053) — not unconditionally per event as before.
       // Only conversational events reach TopicMonitor — this is the count-reduction mechanism
       // (REQ-052/REQ-053): tool-activity and synthetic events can neither open a span nor change a
       // topic label. They are still turned into Turn rows and still counted in `processed` above.
@@ -240,6 +242,19 @@ export class ContractionRunner {
         window.windowEnd,
         window.derivationEnd
       ));
+      // Anchors follow derivation content exactly (REQ-053): an event produces anchors only when it
+      // contributed its OWN text to the summary — conversational events and ISOLATED single tool
+      // calls. Synthetic events and members of a collapsed run (>=2) never produce anchors. Gating on
+      // `[windowStart, derivationEnd)` — the exact same range summaryForSpan derives text from — means
+      // a withheld open run's anchors are deferred along with its text: they are emitted only once the
+      // run closes and its own-text survival is known (isolated single vs. run of >=2), on whichever
+      // future slice recomputes this span's (bounded, run-length-sized) window. `anchorsForTurn`
+      // itself is unchanged; only its call site is gated.
+      for (const relativeIndex of survivingDerivationIndices(allEvents.slice(window.windowStart, window.derivationEnd))) {
+        const globalIndex = window.windowStart + relativeIndex;
+        const event = allEvents[globalIndex]!;
+        anchors.push(...anchorsForTurn(turnFromEvent(event, threadId, globalIndex + 1)));
+      }
     }
 
     // Superseding prior derivations is only meaningful when this slice REPROCESSES an
@@ -439,6 +454,35 @@ function buildEventIndex(events: CanonicalEvent[]): ReadonlyMap<string, number> 
   const index = new Map<string, number>();
   for (let position = 0; position < events.length; position += 1) index.set(events[position]!.id, position);
   return index;
+}
+
+/**
+ * Indices (relative to `events`) whose OWN text survives into derivation: conversational events and
+ * ISOLATED single tool calls. Synthetic events and members of a collapsed run of >=2 are excluded —
+ * mirrors `derivationContents`'/`openToolRunStart`'s shared synthetic-drop + run-detection walk, but
+ * exposes per-member membership instead of collapsed entries (needed to gate anchor generation on
+ * REQ-053, since a run's collapsed entry is keyed at the run's start index but does not carry any
+ * single member's own text).
+ */
+function survivingDerivationIndices(events: readonly { content: string; eventKind?: string | null; role?: string | null }[]): Set<number> {
+  const survivors = new Set<number>();
+  let currentRun: number[] = [];
+  const flushRun = (): void => {
+    if (currentRun.length === 1) survivors.add(currentRun[0]!);
+    currentRun = [];
+  };
+  events.forEach((event, index) => {
+    const { derivationClass } = classifyEvent(event);
+    if (derivationClass === "synthetic_injected") return;
+    if (derivationClass === "tool_activity") {
+      currentRun.push(index);
+      return;
+    }
+    flushRun();
+    survivors.add(index);
+  });
+  flushRun();
+  return survivors;
 }
 
 /** Count-desc/name-asc tally matching `collapseText`'s rendering, without re-implementing the string build. */
