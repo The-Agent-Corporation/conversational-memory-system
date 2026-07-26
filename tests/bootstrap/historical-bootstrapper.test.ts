@@ -231,6 +231,7 @@ function contractionResult(
     yielded: !complete,
     complete,
     immediate: { summaries: 1, anchors: 1 },
+    supersessions: [],
     checkpoint: {
       id: "contraction_checkpoint_test",
       personId: "person_1",
