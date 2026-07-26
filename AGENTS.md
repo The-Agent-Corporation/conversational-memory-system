@@ -1,8 +1,8 @@
 # Conversational Memory System Agent Instructions
 
-This repo is **conversational-memory-system**: a standalone/resumable conversation memory layer for Hermes/Roscoe-style agents. The durable object is the conversation thread, enriched with summarization, anchors, boxes, sleep review, proposals, retrieval, injection, and resume flows.
+This repo is **conversational-memory-system**: a host-neutral personal memory layer for any agent host (Claude Code, Codex, OpenClaw, Hermes). Each host is a *source*; the durable object is the canonical event timeline, enriched with summarization, anchors, boxes, traces, sleep review, proposals, retrieval, injection, and resume flows. Hermes/Roscoe is the first live consumer, not the home.
 
-These instructions apply to autonomous coding agents working in this repo.
+These instructions apply to autonomous coding agents working in this repo. `CLAUDE.md` carries the same architecture map plus commands and code conventions; keep the two in sync when the layout changes.
 
 ## Product rule
 
@@ -12,29 +12,41 @@ Do not create behavior that silently injects sensitive or stale memory into unre
 
 ## Current architecture map
 
-Primary directories:
+Data flow: host history files → importers → canonical events → summaries/turns → anchors, boxes, traces, proposals → retrieval → injection packets.
 
-- `src/domain/` — shared domain types and events.
-- `src/service/` — memory service orchestration.
-- `src/storage/` — storage adapters: SQLite, memory, in-memory.
-- `src/summarization/` — summarizer interface and OpenRouter/runtime selection.
+Core:
+
+- `src/domain/` — Zod schemas that define the contract. `canonical.ts` (Person, MemorySource, CanonicalEvent) is the spine; `types.ts` holds the derived objects (Turn, Summary, Anchor, Box, MemoryTrace, MemoryProposal, InjectionPacket); `source-lifecycle.ts` covers grants, revocation, quarantine.
+- `src/storage/` — `memory-store.ts` is the single `MemoryStore` interface, implemented in full by both `sqlite-store.ts` (`node:sqlite` `DatabaseSync`) and `in-memory-store.ts`; interface changes must land in both. Multi-row writes go through named `commit*` methods whose contracts live in `mcp-mutation-contracts.ts`, `sync-contracts.ts`, and `daemon/types.ts`. `schema-migrations.ts` owns versioned DDL; `backup/` holds encrypted backup/restore/plaintext-export.
+- `src/service/` — `memory-service.ts` orchestration seam (ingest, retrieval, sync emission), plus source-lifecycle service and derivation invalidation.
+
+Ingest and derivation:
+
+- `src/imports/` — discovery + importer pair per host (`claude-`, `codex-`, `openclaw-`, `hermes-`), through `secret-redactor.ts` and `quarantine-service.ts`; source revoke/delete commands.
+- `src/bootstrap/` — guided `init`, resumable historical bootstrap, status.
 - `src/compaction/` — pre-compaction summaries and budget-aware packing.
-- `src/anchors/` — deterministic anchor detection.
-- `src/boxes/` — box assignment, review, and box proposal planning.
-- `src/proposals/` — proposal utilities, reviewer, OpenRouter proposal planner.
-- `src/retrieval/` — memory retrieval, trace-aware retrieval, source deduplication.
-- `src/resume/` — conversation resume expansion.
-- `src/sleep/` — sleep review and memory decay/revival workflows.
-- `src/topic/` — topic monitor.
-- `src/traces/` — trace proposal planner.
-- `src/embeddings/` — embedder abstraction and embedding-backed retrieval.
-- `src/integrations/hermes/` — Hermes CLI commands and adapter contract.
-- `src/adapters/` — host adapter surface.
-- `tests/` — Vitest coverage mirroring the subsystem layout.
-- `docs/adr/` — architecture decision records, currently through ADR 0039.
-- `docs/integrations/roscoe-hermes.md` — Roscoe/Hermes integration readiness notes.
-- `docs/superpowers/` — plans/specs from the build process.
-- `tasks/`, `workflows/`, `queue.md`, `PROJECT.md` — project management notes.
+- `src/summarization/` — summarizer interface with OpenRouter/runtime selection.
+- `src/anchors/`, `src/boxes/`, `src/traces/`, `src/proposals/`, `src/sleep/`, `src/topic/`, `src/resume/` — deterministic derivation subsystems, each with an optional OpenRouter-backed planner. The deterministic path must always work offline.
+- `src/retrieval/` — memory retrieval, query service, subject expansion, source deduplication.
+- `src/embeddings/` — `embedder-resolver.ts` chooses `DeterministicEmbedder` (hash, default) vs `transformer-embedder.ts` (ONNX, opt-in via the `${dbPath}.embeddings.json` sidecar); vector codec and model vendoring.
+
+Surfaces:
+
+- `src/cli/` — `command-registry.ts` is a closed static subcommand → dynamic-import allow-list behind `bin/memory`.
+- `src/mcp/` — generic MCP server: closed catalog of 7 read + 10 mutation tools (`tool-catalog.ts` → `tools/`), with authority, confirmation, disclosure labels, response envelopes, continuation cursors.
+- `src/daemon/` — continuous local runner: lease-based single writer, watch controller, contraction and proposal schedulers, macOS notification path; all checkpointed to resume rather than restart.
+- `src/sync/` + `src/relay/` — zero-knowledge multi-device sync (ADR 0047). Relay stores opaque ciphertext only; keys stay client-side (`sync/crypto` libsodium, `sync/secrets` macOS Keychain).
+- `src/operations/`, `src/audit/` — tune, embeddings enable/backfill, `explain`, and audit-log surfaces (REQ-039).
+- `src/integrations/hermes/`, `src/adapters/` — Hermes CLI bridge and host adapter surface.
+
+Supporting:
+
+- `tests/` — Vitest coverage mirroring the subsystem layout (96 test files); most tests drive `InMemoryStore`.
+- `docs/adr/` — architecture decision records, currently through ADR 0047.
+- `docs/integrations/` — Roscoe/Hermes, Codex history, universal history import, local MCP clients.
+- `.planning/` — GSD state, roadmap (v1.0 = Phases 1–7 complete; v1.1 Phases 8–14 in progress), REQ-### requirements, per-phase artifacts.
+- `docs/superpowers/`, `tasks/`, `workflows/`, `queue.md`, `PROJECT.md` — legacy/project management notes.
+- `example/` — vendored reference memory systems; not production code.
 
 ## Graphify repo map
 
@@ -44,7 +56,7 @@ Current graph summary from `graphify-out/GRAPH_REPORT.md`:
 
 - Corpus: 1,292 files, about 1,465,973 words.
 - Graph: 20,377 nodes, 29,085 edges, 2,449 communities.
-- Built from commit: `7f9e2392`.
+- Built from commit: `7f9e2392` — **stale: ~250 commits behind `main`**, predating the CLI, MCP, daemon, sync, relay, and embeddings subsystems. Re-run `graphify update` before trusting it, or fall back to local file search.
 - Cost: AST-only/no API tokens.
 - `graph.html` is absent/skipped because the graph is too large.
 
@@ -89,6 +101,18 @@ Use npm scripts from `package.json`:
 npm test
 npm run typecheck
 npm run hermes:smoke
+npm run test:golden   # embedder golden tests; needs vendored model fixtures
+```
+
+There is no build step: `bin/memory` runs the TypeScript entry point through `tsx`, and every npm script is a thin `tsx src/**/*-command.ts` wrapper around the same module the `memory` CLI dispatches to. Node 22+ required (`node:sqlite`).
+
+Operator CLI (`memory <cmd>`, or the matching `npm run memory:*` script):
+
+```bash
+memory init | status | discover | import | bootstrap | daemon | mcp
+memory explain | audit-log | tune | embeddings | backfill-embeddings
+memory backup | restore | export
+memory quarantine | source:revoke | source:delete
 ```
 
 Hermes integration commands:
@@ -114,7 +138,7 @@ npx vitest run tests/compaction/pre-compactor.test.ts
 
 ## Hard constraints
 
-1. Keep workspace/thread isolation strict. Do not leak memory across users, cases, clients, or operational workspaces.
+1. Keep person/scope isolation strict. Retrieval and vector queries take an explicit `personId` + `allowedScopeIds`; unscoped retrieval only via the explicit `allowLegacyUnscopedRetrieval` opt-in. Do not leak memory across users, cases, clients, or operational workspaces.
 2. Memory summaries and retrieved context are not authoritative. Preserve source IDs, trace IDs, timestamps, confidence, and provenance where the system already tracks them.
 3. Human approval gates matter. Do not auto-approve proposals, box changes, sleep-review conclusions, or injected memory that should require review.
 4. Do not store raw secrets, API keys, tokens, passwords, private keys, or client documents in memory artifacts. Redact as `[REDACTED]`.
@@ -122,6 +146,9 @@ npx vitest run tests/compaction/pre-compactor.test.ts
 6. Keep budget packing deterministic and testable. When modifying injection, resume, or compaction behavior, include tests for limits, ordering, and fallback/stub behavior.
 7. Preserve unrelated dirty work. Run `git status --short` before editing and do not clean or revert files outside the task.
 8. Treat `example/` as reference/vendor-style material unless the task explicitly targets it.
+9. Changes to the `MemoryStore` interface must land in both `sqlite-store.ts` and `in-memory-store.ts`. Multi-row writes go through a named `commit*` method, not ad-hoc statements.
+10. The sync relay must never be able to read plaintext. Keys and materialization stay client-side; nothing decryptable belongs in `src/relay/`.
+11. Local imports use the `.js` extension (ESM `NodeNext`), e.g. `./memory-store.js`.
 
 ## Integration cautions
 
