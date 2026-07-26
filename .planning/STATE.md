@@ -4,15 +4,15 @@ milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 1
-status: planned
-stopped_at: Phase 11 replanned (11-02 revised to checkpoint pending-run state); ready to execute
-last_updated: "2026-07-26T22:01:01.171Z"
-last_activity: 2026-07-26 -- Phase 11 execution halted at owner request; 11-01/11-02 replanned for ContractionCheckpoint.pendingToolRun
+status: executing
+stopped_at: Phase 9 context gathered
+last_updated: "2026-07-26T22:25:33.043Z"
+last_activity: 2026-07-26
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 71
-  completed_plans: 64
+  completed_plans: 65
   percent: 53
 ---
 
@@ -20,7 +20,7 @@ progress:
 
 **Current phase:** 11
 **Current plan:** 1
-**Status:** Phase 11 replanned — ready to execute
+**Status:** Ready to execute
 **Last updated:** 2026-07-26
 
 ## Completed
@@ -44,9 +44,9 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-21T19:17:18.455Z
+**Last session:** 2026-07-26T22:22:20.283Z
 **Stopped at:** Phase 9 context gathered
-**Resume file:** .planning/phases/09-embedding-model-embedder/09-CONTEXT.md
+**Resume file:** None
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ progress:
 | Phase 05 P07 | 7min | 2 tasks | 3 files |
 | Phase 05 P08 | 12min | 2 tasks | 9 files |
 | Phase 05 P09 | 15min | 2 tasks | 6 files |
+| Phase 11 P01 | 3min | 3 tasks | 3 files |
 
 ## Decisions
 
@@ -78,10 +79,12 @@ progress:
 - [Phase 05]: Require structural Vitest JSON plus exact five-row validation approval for final signoff. — Prevents prose, skipped tests, or malformed validation artifacts from appearing green.
 - [Phase 05]: Authorize the union of declared, payload, recursive Summary, Box, Trace, and next-effect dependencies before constructing proposal decisions.
 - [Phase 05]: Bind normalized startup scopes and exact present-or-absent dependency state, then revalidate it with one shared pure validator before either adapter writes.
+- [Phase 11]: Promoted the rule table, toolNameOf, and collapseText from 11-hygiene-sim.ts verbatim so implementation output stays comparable to the measured 55,930-summary / 77.6 MB targets
+- [Phase 11]: derivationContents and openToolRunStart share one internal computeSegments walk so they can never disagree about where a tool run begins
 
 ## Current Position
 
-Phase: 11 (derivation-input-hygiene) — PLANNED
-Plan: 1 of 7
-Status: Replanned, ready to execute
-Last activity: 2026-07-26 -- 11-02 revised to the literal checkpoint extension per owner decision
+Phase: 11 (derivation-input-hygiene) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-07-26
