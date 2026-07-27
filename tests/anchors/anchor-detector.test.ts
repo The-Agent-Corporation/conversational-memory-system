@@ -74,6 +74,59 @@ describe("AnchorDetector", () => {
     await expect(store.listAnchors()).resolves.toEqual([]);
   });
 
+  // GAP-11-D: anchor detection previously ran on every turn with no hygiene gate, so tool-call and
+  // harness-injected turns minted anchors carrying raw payload text straight into injection packets.
+  // The frozen 12-query recall probe measured 10/12 packets containing tool-call text AFTER the full
+  // summary-hygiene rebuild, because the winning memory was an anchor, not a summary.
+  describe("derivation-input hygiene (GAP-11-D)", () => {
+    it("creates no anchors for a tool-call turn whose payload reads like planning prose", async () => {
+      const store = new InMemoryStore();
+      const detector = new AnchorDetector(store);
+
+      const result = await detector.detectForTurn(makeTurn({
+        id: "turn_tool",
+        role: "assistant",
+        content:
+          '[Tool call: Write] {"file_path":"/repo/.planning/ADR-0007.md","content":"We decided the ' +
+          'strategy is to wait because the coverage limit creates leverage."}',
+        provenance: "assistant_output"
+      }));
+
+      expect(result.anchors).toEqual([]);
+      await expect(store.listAnchors()).resolves.toEqual([]);
+    });
+
+    it("creates no anchors for a turn with role tool even without the bracket prefix", async () => {
+      const store = new InMemoryStore();
+      const detector = new AnchorDetector(store);
+
+      const result = await detector.detectForTurn(makeTurn({
+        id: "turn_tool_role",
+        role: "tool",
+        content: "We decided the deadline is June 1 because the policy limit is confirmed."
+      }));
+
+      expect(result.anchors).toEqual([]);
+      await expect(store.listAnchors()).resolves.toEqual([]);
+    });
+
+    it("still creates anchors for genuine conversational turns carrying the same signals", async () => {
+      const store = new InMemoryStore();
+      const detector = new AnchorDetector(store);
+
+      const result = await detector.detectForTurn(makeTurn({
+        id: "turn_human",
+        content: "We decided the strategy is to wait because the coverage limit creates leverage."
+      }));
+
+      expect(result.anchors.map((anchor) => anchor.anchorType)).toEqual([
+        "decision",
+        "key_fact",
+        "strategic_insight"
+      ]);
+    });
+  });
+
   it("upserts deterministic anchor ids when the same turn is processed again", async () => {
     const store = new InMemoryStore();
     const detector = new AnchorDetector(store);

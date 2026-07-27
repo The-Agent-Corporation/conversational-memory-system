@@ -1,5 +1,6 @@
 import type { Anchor, Turn } from "../domain/types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { drivesTopicLabel } from "../topic/derivation-hygiene.js";
 
 export interface AnchorDetectionResult {
   anchors: Anchor[];
@@ -9,6 +10,16 @@ export class AnchorDetector {
   constructor(private readonly store: MemoryStore) {}
 
   async detectForTurn(turn: Turn): Promise<AnchorDetectionResult> {
+    // GAP-11-D: anchors are a derivation over turn content, so they answer to the same hygiene
+    // classifier as topic labeling and contraction. Without this gate `buildAnchor` stored
+    // `turn.content` verbatim, so a `[Tool call: Write] {...}` turn whose argument payload happened
+    // to contain planning prose ("decided", "because", "strategy") minted high-scoring anchors that
+    // then outranked hygienic summary text in prepareInjection. The gate lives here rather than at
+    // the call site so every caller inherits it.
+    if (!drivesTopicLabel({ content: turn.content, role: turn.role })) {
+      return { anchors: [] };
+    }
+
     const anchorTypes = detectAnchorTypes(turn.content);
     const anchors = anchorTypes.map((anchorType) => buildAnchor(turn, anchorType));
 
