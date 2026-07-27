@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 20
+current_plan: 21
 status: executing
-stopped_at: "Plan 11-20 complete — censused the live 292,407-event corpus (read-only clone, mtime/size unchanged), added task-notification and local-command-caveat synthetic rules (1,182 events reclassified), bumped HYGIENE_RULE_VERSION to hygiene-rules/v2 (marks every existing contraction checkpoint stale per REQ-054), and appended the v2 addendum to ADR 0048. [phase:X] orchestration prompts (~1,676 events) deferred to Plan 11-23 as needs-owner. No live database rebuild run — owner-gated to Plans 11-23/11-25. Next: Plan 11-21 (live re-baseline)."
+stopped_at: "Plan 11-21 complete — corrected re-baseline done. Three arms on the v2 harness: before-v2 (36 items, 19 tool-call, 9/12 Q), after-filter-v2 (34 items, 22 tool-call, 10/12 Q), current-v2 (33 items, 6 tool-call, 4/12 Q). Confirmed the v1 harness under-counted harness text 4x (1/12 -> 4/12 on the same corpus); whole-packet scanning changed little because packets hold only ~3 items. All six contaminated items in current-v2 are kind=summary with historical_summary_ ids, classifying conversational while carrying tool-call text; one reports markersFound=['task-notification'] yet still classifies conversational because every SYNTHETIC_RULE is an anchored startsWith and the marker is mid-body. Next: Plan 11-22 (GAP-11-E root cause) must determine whether this is a collapse-rule leak, an unfiltered summarizer input path, or summaries the rebuild never regenerated — before any remediation is chosen."
 last_updated: "2026-07-27T22:01:30.113Z"
 last_activity: 2026-07-27
 progress:
@@ -19,7 +19,7 @@ progress:
 # Project State
 
 **Current phase:** 11
-**Current plan:** 20
+**Current plan:** 21
 **Status:** Ready to execute
 **Last updated:** 2026-07-27
 
