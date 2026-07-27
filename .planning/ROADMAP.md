@@ -386,7 +386,7 @@ Plans:
 
 **Wave 14** *(blocked on Wave 13)*
 
-- [ ] 11-17-PLAN.md — `memory prune-unhygienic-anchors`: dry-run default, fail-closed backup gate, resumable batches, registry entry.
+- [x] 11-17-PLAN.md — `memory prune-unhygienic-anchors`: dry-run default, fail-closed backup gate, resumable batches, registry entry.
 
 **Wave 15** *(blocked on Wave 14)*
 
