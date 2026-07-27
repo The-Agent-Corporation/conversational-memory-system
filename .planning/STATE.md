@@ -3,23 +3,23 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 18
+current_plan: 19
 status: executing
-stopped_at: "Plan 11-18 complete — GAP-11-D CLOSED. Live anchor prune applied to ~/.memory/aaron.db under owner authorization: 26,643 unhygienic anchors deleted (8,911 tool_activity + 17,732 synthetic_injected), 19,268 conversational retained, 214,615,234 payload bytes freed, 92 batches; backup ~/.memory/aaron.db.pre-anchor-prune. Frozen 12-query probe re-run: containsToolCallText 10/12 -> 4/12, elapsed 523,680 -> 388,817 ms. SC7 STILL NOT MET: all four surviving queries (Q1/Q3/Q4/Q10) have non-empty sourceSummaryIds, so the residual tool-call text is SUMMARY-derived, not anchor-derived — raised as GAP-11-E. Outstanding: GAP-11-E (blocks SC7), Plan 11-13 Tasks 2/3 (superseded-summary prune, still withheld, unrelated to SC7), Plan 11-14 wave 16 (owner SC7 sign-off — honest input is 'anchor path closed, summary path leaking')."
-last_updated: "2026-07-27T19:05:00.000Z"
+stopped_at: "Plan 11-19 complete — recall probe corrected to classify via the shipped 13-rule `classifyEvent`/`SYNTHETIC_MARKERS` and attribute every selected memory to a rank/kind/id/rule, with a fidelity-guarded reconstruction proving the attribution matches the real packet. `11-MEASUREMENT-CORRECTION.md` written. No live database touched. Next: Plan 11-20 (`<task-notification>` rule) or Plan 11-21 (live re-baseline)."
+last_updated: "2026-07-27T21:46:51.648Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
-  total_plans: 82
-  completed_plans: 80
+  total_plans: 90
+  completed_plans: 82
   percent: 53
 ---
 
 # Project State
 
 **Current phase:** 11
-**Current plan:** 18
+**Current plan:** 19
 **Status:** Executing
 **Last updated:** 2026-07-27
 
@@ -42,6 +42,7 @@ progress:
 - **GAP-11-D forward gate landed (`4d17978`, prior to this plan):** `AnchorDetector.detectForTurn` now returns `{ anchors: [] }` for any turn where `drivesTopicLabel({ content, role })` is false — the same predicate topic labeling already uses. Stops new unhygienic anchors from being created; does not touch the 45,911 anchors already in the live corpus.
 - **GAP-11-D CLOSED 2026-07-27** by plans 11-16 (store method `commitUnhygienicAnchorPrune` + person-scoped `listAnchorIds` + `summarizeAnchorDerivationClasses` in both stores, ADR 0051), 11-17 (`memory prune-unhygienic-anchors`, dry-run default + fail-closed backup gate), and 11-18 (owner-authorized live prune). Receipt: 26,643 anchors deleted (8,911 tool_activity + 17,732 synthetic_injected), 19,268 conversational retained, 214,615,234 bytes freed, 92 batches, backup `~/.memory/aaron.db.pre-anchor-prune`. Frozen probe re-run: **containsToolCallText 10/12 -> 4/12**, no query's top memory is a raw `[Tool call: ...]` payload any more; elapsed 523,680 -> 388,817 ms. A dry-run/apply asymmetry was found and fixed while authorizing (`b7ae28b`): the preview classified content-only and reported 25,792 where apply would delete 26,643 — both stores now enrich role/eventKind from the canonical event, with a parity case pinning `preview.unhygienicCount === receipt.prunedAnchorIds.length`.
 - **GAP-11-E RAISED 2026-07-27 (blocks SC7):** the 4 surviving tool-call queries (Q1/Q3/Q4/Q10) all have non-empty `sourceSummaryIds` (2/3/2/3), so the residual text is **summary-derived**, not anchor-derived. The hygiene rebuild reduced tool-call text in summaries without eliminating it — a different defect from GAP-11-D, not a reopening of it. Two anomalies recorded alongside: harness text went 1/12 -> 0/12 -> 1/12 (Q2 likely had a harness summary masked by a since-pruned anchor), and Q12's preview is visibly `<task-notification>` scaffolding while `containsHarnessText` reports false — the probe's harness detector may under-count in all three runs. See `.planning/phases/11-derivation-input-hygiene/11-GAP-11-E.md`.
+- **Plan 11-19 complete 2026-07-27 (recall probe measurement correction, makes GAP-11-E measurable).** Verified and fixed three probe defects: (1) the harness detector was a hand-rolled 3-pattern subset of the 13 shipped `SYNTHETIC_RULES` — Q7/Q8's `automated-task-block`/`automated-followup` misses in `after-filter` are a demonstrated consequence; (2) the probe reported one packet-wide boolean with no attribution, and `sourceSummaryIds` is a packet-wide union across ALL selected items, not a property of whichever one carries the offending text — GAP-11-E's four-survivor inference rests on exactly that union and is therefore unproven (not necessarily wrong); (3) `<task-notification>` is in neither the probe nor the product's rules (deferred to Plan 11-20). Exported `SYNTHETIC_MARKERS` (11 literal markers driving `SYNTHETIC_RULES.test` bodies, so the two cannot drift) and `TOOL_CALL_PREFIX` from `derivation-hygiene.ts`; exported `applyRetrievalBoundary`/`rankMemories`/`selectMemories`/`addParentBoxContext` from `memory-retriever.ts` (pure functions, no other change). The corrected probe reconstructs `selected[]` via those four functions strictly BEFORE each `prepareInjection` call (which itself writes) and asserts the reconstructed join equals `packet.selectedMemory`, throwing on mismatch rather than reporting an unattributable number. `11-MEASUREMENT-CORRECTION.md` records the comparability table and the SC3/isolated-tool-call/11-13-must_have scope tension, deferred to Plan 11-22. `11-RECALL-QUERIES.md` and `11-RECALL-PROBE.md` byte-unchanged; no live database touched. Full suite green (1002 passed / 4 skipped), typecheck clean.
 - **Plan 11-16 complete 2026-07-27 (GAP-11-D store-layer closure).** Built `commitUnhygienicAnchorPrune` / `listAnchorIds` / `summarizeAnchorDerivationClasses` identically in `SqliteStore` and `InMemoryStore`, contracted in `mcp-mutation-contracts.ts`, mirroring `commitSupersededSummaryPrune`'s in-transaction, caller-list-is-a-request eligibility model. Classification enriches an anchor's content with its resolved canonical event's role/eventKind (a superset of the forward gate's inputs), so the 25,792-row content-only census is a floor, not a target. ADR 0051 records the no-anchor-lifecycle decision (an anchor has zero inbound references, unlike a summary, so there is no reference-protection class of skip to preserve) and the gate-forward/prune-backward split. 28/28 new tests pass against both stores; full suite 986 passed / 4 skipped; typecheck clean. This plan touches no live database — the `memory prune-unhygienic-anchors` operator command (Plan 11-17) and the owner-authorized live anchor prune against `~/.memory/aaron.db` (Plan 11-18) remain outstanding before GAP-11-D is fully closed and Plan 11-13/11-14's SC7 sign-off can proceed.
 - **Plan 11-17 complete 2026-07-27 (GAP-11-D operator-command closure).** Built `memory prune-unhygienic-anchors`, mirroring `memory prune-superseded`'s shape exactly: dry-run default (calls `summarizeAnchorDerivationClasses` directly, no page loop needed since anchors have no reference-protection class), `--apply` gated on a `statSync`-verified `--confirm-backup` path (exists/regular-file/non-empty), and an apply loop paging `listAnchorIds` ascending over exactly one person's anchors, advancing past skips so a `retained_conversational` row can never wedge the cursor. Owns no deletion SQL — every removal goes through `commitUnhygienicAnchorPrune`. Registered in the closed CLI allow-list beside `prune-superseded`. Ten-case suite (a)-(j) green, covering dry-run snapshot equality, the three-part backup-gate refusal, exact-class pruning with control-count equality, `retained_conversational` tally + person-scoped cursor isolation, interrupted/resumed convergence, idempotence, unknown-person fail-loud, and progress-line monotonicity. Full suite green (995 passed / 4 skipped; one unrelated pre-existing `tests/mcp/mutation-tools.test.ts` timing flake under full-parallel-suite load, isolated-run green, logged in `deferred-items.md`, not fixed — out of this plan's scope). This plan touches no live database. Plan 11-18 (owner-authorized live anchor prune against `~/.memory/aaron.db`) is now unblocked.
 - **Live corpus rebuilt 2026-07-26**: 292,407 events -> 50,551 active summaries / 74.1 MB, exactly matching the simulation. Canonical events unchanged. Backup at `~/.memory/aaron.db.pre-phase11` — keep until GAP-11-A is closed. DB migrated to `user_version: 2`.
@@ -53,9 +54,9 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T19:05:00.000Z
-**Stopped at:** Plan 11-17 complete — GAP-11-D operator-command closure (`memory prune-unhygienic-anchors`: dry-run default, fail-closed backup gate, resumable batches, registered in the CLI allow-list). No live database touched. Next: Plan 11-18 (owner-authorized live anchor prune against `~/.memory/aaron.db`, then the frozen probe's `after-anchor-prune` column).
-**Resume file:** .planning/phases/11-derivation-input-hygiene/11-18-PLAN.md
+**Last session:** 2026-07-27T20:10:00.000Z
+**Stopped at:** Plan 11-19 complete — recall probe corrected to classify via the shipped 13-rule `classifyEvent`/`SYNTHETIC_MARKERS` and attribute every selected memory to a rank/kind/id/rule, with a fidelity-guarded reconstruction proving the attribution matches the real packet. `11-MEASUREMENT-CORRECTION.md` written. No live database touched. Next: Plan 11-20 (`<task-notification>` rule) or Plan 11-21 (live re-baseline).
+**Resume file:** .planning/phases/11-derivation-input-hygiene/11-20-PLAN.md
 
 ## Performance Metrics
 
@@ -77,6 +78,7 @@ progress:
 | Phase 11 P13 (partial) | 45min | 1/3 tasks | 2 files |
 | Phase 11 P16 | 25min | 3 tasks | 4 files |
 | Phase 11 P17 | 20min | 2 tasks | 3 files |
+| Phase 11 P19 | 35min | 3 tasks | 6 files |
 
 ## Decisions
 
@@ -122,10 +124,13 @@ progress:
 - [Phase 11]: `commitUnhygienicAnchorPrune` recomputes eligibility authoritatively inside the transaction from the anchor's content enriched with its resolved canonical event's role/eventKind (a superset of the forward gate's inputs) — the caller's `anchorIds` list is never trusted; the 25,792-row content-only census is a floor, not a target, since role-gated rules cannot fire on content alone.
 - [Phase 11]: `listAnchorIds`'s person-scoped cursor uses the identical `json_extract(payload,'$.personId') = ?` + `id > ?` predicate as `listSupersededSummaryIds`, with no schema migration — `anchors` has the same `(id, payload)` shape as `summaries`; unindexed, so a table scan per page, accepted as a one-time-cleanup tradeoff.
 - [Phase 11]: `memory prune-unhygienic-anchors`'s apply loop pages `listAnchorIds` to termination on an empty page, never on a zero-prune page — a `retained_conversational` anchor at the head of the cursor advances past on the batch's highest id like any other skip, so the loop cannot wedge on a person whose remaining anchors are entirely conversational.
+- [Phase 11]: `SYNTHETIC_MARKERS` entries drive `SYNTHETIC_RULES.test` bodies via a `markerFor` lookup rather than living beside a separately re-typed string literal, so the probe's classification source and the product's rule table cannot diverge (T-11-60).
+- [Phase 11]: The recall probe reconstructs `selected[]` strictly BEFORE calling `prepareInjection` for each query, since `prepareInjection` performs writes (`saveInjection`, summary access bookkeeping, deferred-revival promotion) that would change rankings if reconstruction ran after — proven faithful by an equality assertion against the real packet's `selectedMemory` that throws (naming the query id) on mismatch rather than reporting an unattributable number.
+- [Phase 11]: GAP-11-E's four-survivor ("all summary-derived") inference is recorded as unproven, not wrong — `packet.sourceSummaryIds` is a packet-wide union over every selected item, not a property of whichever one carries the tool-call text; Plan 11-22 must establish or refute it with per-item attribution.
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 18 of 18 (Phase 11 plan numbering; 15/18 plans executed per ROADMAP.md — 11-13 partial, 11-14 pending)
-Status: Executing — GAP-11-D CLOSED (anchor path fixed, measured 10/12 -> 4/12). SC7 NOT met: GAP-11-E (summary-sourced tool-call text) is the blocker. Next: plan GAP-11-E, or Plan 11-14 wave 16 owner SC7 sign-off
+Plan: 19 of 26 (Phase 11 plan numbering, GAP-11-E full close: 11-19..11-26 planned 2026-07-27)
+Status: Executing — Plan 11-19 complete (recall probe measurement corrected: shipped-rule classification, per-item attribution, fidelity guard). SC7 still NOT met — GAP-11-E remains open pending Plan 11-22's per-item re-analysis. Next: Plan 11-20 (`<task-notification>` rule)
 Last activity: 2026-07-27

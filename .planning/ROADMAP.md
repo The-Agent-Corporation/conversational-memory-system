@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 18/26 plans executed (11-13 partial; 11-19..11-26 planned 2026-07-27 for the GAP-11-E full close)
+**Plans:** 19/26 plans executed (11-13 partial; 11-20..11-26 remaining for the GAP-11-E full close)
 
 Plans:
 **Wave 1**
@@ -394,7 +394,7 @@ Plans:
 
 **Wave 17** *(GAP-11-E full close, blocked on Wave 15 — owner chose a full close of Phase 11 on 2026-07-27)*
 
-- [ ] 11-19-PLAN.md — Correct the recall probe: shipped-rule classification, per-item attribution with a reconstruction-fidelity guard, `11-MEASUREMENT-CORRECTION.md`.
+- [x] 11-19-PLAN.md — Correct the recall probe: shipped-rule classification, per-item attribution with a reconstruction-fidelity guard, `11-MEASUREMENT-CORRECTION.md`.
 
 **Wave 18** *(blocked on Wave 17)*
 
