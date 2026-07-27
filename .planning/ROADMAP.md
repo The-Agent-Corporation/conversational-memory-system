@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 18/26 plans executed
+**Plans:** 21/26 plans executed
 
 Plans:
 **Wave 1**
@@ -406,7 +406,7 @@ Plans:
 
 **Wave 20** *(blocked on Wave 19)*
 
-- [ ] 11-22-PLAN.md — GAP-11-E root-cause investigation: offender inventory + re-derivation discriminator, `11-GAP-11-E-FINDING.md`. No fix proposed.
+- [x] 11-22-PLAN.md — GAP-11-E root-cause investigation: offender inventory + re-derivation discriminator, `11-GAP-11-E-FINDING.md`. No fix proposed.
 
 **Wave 21** *(blocked on Wave 20)*
 

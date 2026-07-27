@@ -5,14 +5,14 @@ milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 21
 status: executing
-stopped_at: "Plan 11-21 complete — corrected re-baseline done. Three arms on the v2 harness: before-v2 (36 items, 19 tool-call, 9/12 Q), after-filter-v2 (34 items, 22 tool-call, 10/12 Q), current-v2 (33 items, 6 tool-call, 4/12 Q). Confirmed the v1 harness under-counted harness text 4x (1/12 -> 4/12 on the same corpus); whole-packet scanning changed little because packets hold only ~3 items. All six contaminated items in current-v2 are kind=summary with historical_summary_ ids, classifying conversational while carrying tool-call text; one reports markersFound=['task-notification'] yet still classifies conversational because every SYNTHETIC_RULE is an anchored startsWith and the marker is mid-body. Next: Plan 11-22 (GAP-11-E root cause) must determine whether this is a collapse-rule leak, an unfiltered summarizer input path, or summaries the rebuild never regenerated — before any remediation is chosen."
-last_updated: "2026-07-27T22:01:30.113Z"
+stopped_at: "Plan 11-22 complete -- GAP-11-E root cause: three distinct causes (H-0 by-design, H-i rule-matching defect, H-iii stale derivation). rebuild-derivations fixes H-iii only. No product code changed, no database written. Next: Plan 11-23 (owner decision)."
+last_updated: "2026-07-27T23:53:32.754Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 90
-  completed_plans: 83
+  completed_plans: 85
   percent: 53
 ---
 
@@ -55,8 +55,8 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T21:59:02.608Z
-**Stopped at:** Plan 11-20 complete — censused the live 292,407-event corpus (read-only clone, mtime/size unchanged), added task-notification and local-command-caveat synthetic rules (1,182 events reclassified), bumped HYGIENE_RULE_VERSION to hygiene-rules/v2 (marks every existing contraction checkpoint stale per REQ-054), and appended the v2 addendum to ADR 0048. `[phase:X]` orchestration prompts (~1,676 events) deferred to Plan 11-23 as needs-owner. No live database rebuild run — owner-gated to Plans 11-23/11-25. Next: Plan 11-21 (live re-baseline).
+**Last session:** 2026-07-27T23:53:32.732Z
+**Stopped at:** Plan 11-22 complete -- GAP-11-E root cause: three distinct causes (H-0 by-design, H-i rule-matching defect, H-iii stale derivation). rebuild-derivations fixes H-iii only. No product code changed, no database written. Next: Plan 11-23 (owner decision).
 **Resume file:** None
 
 ## Performance Metrics
@@ -81,6 +81,7 @@ progress:
 | Phase 11 P17 | 20min | 2 tasks | 3 files |
 | Phase 11 P19 | 35min | 3 tasks | 6 files |
 | Phase 11 P20 | ~40min | 2 tasks | 5 files |
+| Phase 11 P22 | 35min | 3 tasks | 5 files |
 
 ## Decisions
 
@@ -130,10 +131,12 @@ progress:
 - [Phase 11]: The recall probe reconstructs `selected[]` strictly BEFORE calling `prepareInjection` for each query, since `prepareInjection` performs writes (`saveInjection`, summary access bookkeeping, deferred-revival promotion) that would change rankings if reconstruction ran after — proven faithful by an equality assertion against the real packet's `selectedMemory` that throws (naming the query id) on mismatch rather than reporting an unattributable number.
 - [Phase 11]: GAP-11-E's four-survivor ("all summary-derived") inference is recorded as unproven, not wrong — `packet.sourceSummaryIds` is a packet-wide union over every selected item, not a property of whichever one carries the tool-call text; Plan 11-22 must establish or refute it with per-item attribution.
 - [Phase 11]: Census-first, rule-second: added task-notification and local-command-caveat rules (1,182 events reclassified), backed by a counted census of the live 292,407-event corpus; [phase:X] orchestration prompts (~1,676 events) deferred to Plan 11-23 as needs-owner
+- [Phase 11]: GAP-11-E has three distinct root causes, not one -- H-0 (5 offenders, by-design isolated tool call, ROADMAP SC1-compliant, not a defect), H-i (2 offenders, anchored SYNTHETIC_RULES cannot see scaffolding embedded mid-event, a rebuild reproduces this), H-iii (4 offenders, computed under hygiene-rules/v1, never reprocessed since Plan 11-20 shipped v2's task-notification/local-command-caveat rules, a rebuild fixes this). rebuild-derivations is necessary but not sufficient.
+- [Phase 11]: origin/createdAt on Summary are not usable staleness discriminators -- ContractionRunner.summaryForSpan hardcodes origin: historical_bootstrap on every summary regardless of seam, and createdAt is the underlying conversation's timestamp (span.completedAt), not a write timestamp. Only the shared daemon_contraction_checkpoint's processorVersion reliably distinguishes pre- from post-hygiene-v2 summaries.
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 20 of 26 complete (Phase 11 plan numbering, GAP-11-E full close: 11-19..11-26 planned 2026-07-27)
-Status: Ready to execute — next Plan 11-21 (live re-baseline)
+Plan: 22 of 26 complete (Phase 11 plan numbering, GAP-11-E full close: 11-19..11-26 planned 2026-07-27)
+Status: Ready to execute
 Last activity: 2026-07-27
