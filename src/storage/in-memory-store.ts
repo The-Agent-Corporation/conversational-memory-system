@@ -81,17 +81,23 @@ import {
   CommitSourceDeletionInputSchema,
   CommitSourceRevocationInputSchema,
   CommitSupersededSummaryPruneInputSchema,
+  CommitUnhygienicAnchorPruneInputSchema,
   SupersededSummaryPruneReceiptSchema,
+  UnhygienicAnchorPruneReceiptSchema,
   proposalDecisionStateMatches,
   type CommitHistoryImportInput,
   type CommitProposalDecisionInput,
   type CommitSourceDeletionInput,
   type CommitSourceRevocationInput,
   type CommitSupersededSummaryPruneInput,
+  type CommitUnhygienicAnchorPruneInput,
   type MutationCommitReceipt,
   type SupersededSummaryPruneReceipt,
-  type SupersededSummaryPruneSkipReason
+  type SupersededSummaryPruneSkipReason,
+  type UnhygienicAnchorPruneReceipt,
+  type UnhygienicAnchorPruneSkipReason
 } from "./mcp-mutation-contracts.js";
+import { classifyEvent, HYGIENE_RULE_VERSION } from "../topic/derivation-hygiene.js";
 import {
   AcceptedSyncOperationSchema,
   CommitLocalSyncOperationInputSchema,
@@ -958,6 +964,141 @@ export class InMemoryStore implements MemoryStore {
 
   async deleteAnchors(ids: string[]): Promise<void> {
     this.removeByIds(this.anchors, ids);
+  }
+
+  /**
+   * The only sanctioned removal path for anchors the shipped hygiene classifier would never have
+   * created (Plan 11-16, GAP-11-D closure; REQ-052/053/054). Mirrors
+   * `SqliteStore.commitUnhygienicAnchorPrune` exactly: same skip-reason precedence (not_found,
+   * person_unattributed, person_mismatch, retained_conversational), same role/eventKind
+   * enrichment via the anchor's resolved canonical event, same receipt shape. `this.anchors` is
+   * mutated only after every eligibility decision is made, so a fault-injected throw partway
+   * through leaves the store byte-for-byte unchanged -- the InMemoryStore analogue of SqliteStore's
+   * transaction rollback.
+   */
+  async commitUnhygienicAnchorPrune(input: CommitUnhygienicAnchorPruneInput): Promise<UnhygienicAnchorPruneReceipt> {
+    const parsed = CommitUnhygienicAnchorPruneInputSchema.parse(input);
+    const skipped: Array<{ anchorId: string; reason: UnhygienicAnchorPruneSkipReason }> = [];
+    const uniqueIds = [...new Set(parsed.anchorIds)];
+
+    interface EligibleAnchor {
+      id: string;
+      payloadBytes: number;
+      derivationClass: "tool_activity" | "synthetic_injected";
+    }
+    const eligible: EligibleAnchor[] = [];
+
+    for (const id of uniqueIds) {
+      const anchor = this.anchors.find((candidate) => candidate.id === id);
+      if (!anchor) {
+        skipped.push({ anchorId: id, reason: "not_found" });
+        continue;
+      }
+      if (!anchor.personId) {
+        skipped.push({ anchorId: id, reason: "person_unattributed" });
+        continue;
+      }
+      if (anchor.personId !== parsed.personId) {
+        skipped.push({ anchorId: id, reason: "person_mismatch" });
+        continue;
+      }
+
+      const canonicalEvent = anchor.canonicalEventId
+        ? this.canonicalEvents.find((event) => event.id === anchor.canonicalEventId) ?? null
+        : null;
+      const { derivationClass } = classifyEvent({
+        content: anchor.content,
+        role: canonicalEvent?.role ?? null,
+        eventKind: canonicalEvent?.eventKind ?? null
+      });
+
+      if (derivationClass === "conversational") {
+        skipped.push({ anchorId: id, reason: "retained_conversational" });
+        continue;
+      }
+
+      eligible.push({ id, payloadBytes: JSON.stringify(anchor).length, derivationClass });
+    }
+
+    let freedPayloadBytes = 0;
+    const prunedAnchorIds: string[] = [];
+    const prunedByClass = { tool_activity: 0, synthetic_injected: 0 };
+
+    if (eligible.length > 0) {
+      const eligibleSet = new Set(eligible.map((anchor) => anchor.id));
+
+      this.faultInjector?.reach("anchor_hygiene_prune_before_write");
+      const remainingAnchors = this.anchors.filter((anchor) => !eligibleSet.has(anchor.id));
+      for (const anchor of eligible) {
+        prunedAnchorIds.push(anchor.id);
+        prunedByClass[anchor.derivationClass] += 1;
+        freedPayloadBytes += anchor.payloadBytes;
+      }
+      this.faultInjector?.reach("anchor_hygiene_prune_after_delete");
+
+      this.replace(this.anchors, remainingAnchors);
+    }
+
+    return structuredClone(UnhygienicAnchorPruneReceiptSchema.parse({
+      operation: "unhygienic_anchor_prune",
+      personId: parsed.personId,
+      prunedAnchorIds,
+      prunedByClass,
+      freedPayloadBytes,
+      skipped,
+      ruleVersion: HYGIENE_RULE_VERSION,
+      committedAt: this.clock.now()
+    }));
+  }
+
+  /** Ascending-id cursor over one person's anchor ids; the same body as `listSupersededSummaryIds` minus the state predicate. */
+  async listAnchorIds(personId: string, options: { limit: number; afterId?: string }): Promise<string[]> {
+    const ids = this.anchors
+      .filter((anchor) => anchor.personId === personId)
+      .map((anchor) => anchor.id)
+      .sort();
+    const startIndex = options.afterId ? ids.findIndex((id) => id > options.afterId!) : 0;
+    const from = startIndex === -1 ? ids.length : startIndex;
+    return ids.slice(from, from + options.limit);
+  }
+
+  /**
+   * Cheap aggregate count/class-breakdown/byte footprint of one person's anchors by derivation
+   * class -- for dry-run reporting only, never an eligibility source. Anchors persist no
+   * role/eventKind, so this classifies content-only; the in-transaction prune enriches from the
+   * resolved canonical event and may find more eligible rows than this reports.
+   */
+  async summarizeAnchorDerivationClasses(personId: string): Promise<{
+    totalCount: number;
+    countsByClass: { conversational: number; tool_activity: number; synthetic_injected: number };
+    unhygienicCount: number;
+    unhygienicPayloadBytes: number;
+    unattributedCount: number;
+  }> {
+    const countsByClass = { conversational: 0, tool_activity: 0, synthetic_injected: 0 };
+    let totalCount = 0;
+    let unhygienicPayloadBytes = 0;
+    let unattributedCount = 0;
+
+    for (const anchor of this.anchors) {
+      if (!anchor.personId) {
+        unattributedCount += 1;
+        continue;
+      }
+      if (anchor.personId !== personId) continue;
+      totalCount += 1;
+      const { derivationClass } = classifyEvent({ content: anchor.content, role: null, eventKind: null });
+      countsByClass[derivationClass] += 1;
+      if (derivationClass !== "conversational") unhygienicPayloadBytes += JSON.stringify(anchor).length;
+    }
+
+    return {
+      totalCount,
+      countsByClass,
+      unhygienicCount: countsByClass.tool_activity + countsByClass.synthetic_injected,
+      unhygienicPayloadBytes,
+      unattributedCount
+    };
   }
 
   async saveInjection(packet: InjectionPacket): Promise<void> {

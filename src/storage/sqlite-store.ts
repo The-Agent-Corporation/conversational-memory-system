@@ -88,17 +88,23 @@ import {
   CommitSourceDeletionInputSchema,
   CommitSourceRevocationInputSchema,
   CommitSupersededSummaryPruneInputSchema,
+  CommitUnhygienicAnchorPruneInputSchema,
   SupersededSummaryPruneReceiptSchema,
+  UnhygienicAnchorPruneReceiptSchema,
   proposalDecisionStateMatches,
   type CommitHistoryImportInput,
   type CommitProposalDecisionInput,
   type CommitSourceDeletionInput,
   type CommitSourceRevocationInput,
   type CommitSupersededSummaryPruneInput,
+  type CommitUnhygienicAnchorPruneInput,
   type MutationCommitReceipt,
   type SupersededSummaryPruneReceipt,
-  type SupersededSummaryPruneSkipReason
+  type SupersededSummaryPruneSkipReason,
+  type UnhygienicAnchorPruneReceipt,
+  type UnhygienicAnchorPruneSkipReason
 } from "./mcp-mutation-contracts.js";
+import { classifyEvent, HYGIENE_RULE_VERSION } from "../topic/derivation-hygiene.js";
 import {
   AcceptedSyncOperationSchema,
   CommitLocalSyncOperationInputSchema,
@@ -1322,6 +1328,166 @@ export class SqliteStore implements MemoryStore {
 
   async deleteAnchors(ids: string[]): Promise<void> {
     this.deleteIds("anchors", ids);
+  }
+
+  /**
+   * The only sanctioned removal path for anchors the shipped hygiene classifier would never have
+   * created (Plan 11-16, GAP-11-D closure; REQ-052/053/054). Eligibility is recomputed
+   * authoritatively inside this transaction -- `parsed.anchorIds` is a request, never an
+   * authorization. Precedence: not_found, person_unattributed, person_mismatch,
+   * retained_conversational. Classification input is `{ content, role, eventKind }` where
+   * role/eventKind come from the anchor's resolved canonical event (falling back to content-only
+   * when `canonicalEventId` is absent or does not resolve) -- a strict superset of the forward
+   * gate's inputs (`AnchorDetector.detectForTurn` passes content + role only), so this can never
+   * retain an anchor the gate would have refused. Deletes through an inline
+   * `delete from anchors where id = ?` in the same `begin immediate` transaction -- never calls
+   * `deleteAnchors`, which opens its own transaction and would nest. Never touches
+   * canonical_events, turns, summaries, boxes, traces, proposals, or injections.
+   */
+  async commitUnhygienicAnchorPrune(input: CommitUnhygienicAnchorPruneInput): Promise<UnhygienicAnchorPruneReceipt> {
+    const parsed = CommitUnhygienicAnchorPruneInputSchema.parse(input);
+    this.database.exec("begin immediate");
+    try {
+      const skipped: Array<{ anchorId: string; reason: UnhygienicAnchorPruneSkipReason }> = [];
+      const uniqueIds = [...new Set(parsed.anchorIds)];
+
+      interface EligibleAnchor {
+        id: string;
+        payloadBytes: number;
+        derivationClass: "tool_activity" | "synthetic_injected";
+      }
+      const eligible: EligibleAnchor[] = [];
+
+      for (const id of uniqueIds) {
+        const row = this.database.prepare("select payload from anchors where id = ?").get(id) as PayloadRow | undefined;
+        if (!row) {
+          skipped.push({ anchorId: id, reason: "not_found" });
+          continue;
+        }
+        const anchor = AnchorSchema.parse(JSON.parse(row.payload));
+        if (!anchor.personId) {
+          skipped.push({ anchorId: id, reason: "person_unattributed" });
+          continue;
+        }
+        if (anchor.personId !== parsed.personId) {
+          skipped.push({ anchorId: id, reason: "person_mismatch" });
+          continue;
+        }
+
+        // Resolve role/eventKind from the canonical event; fall back to content-only when the id
+        // is absent or does not resolve. This is a superset of the forward gate's inputs, so the
+        // live prune may exceed the content-only census -- the census is a floor, not a target.
+        const canonicalEvent = anchor.canonicalEventId ? await this.getCanonicalEvent(anchor.canonicalEventId) : null;
+        const { derivationClass } = classifyEvent({
+          content: anchor.content,
+          role: canonicalEvent?.role ?? null,
+          eventKind: canonicalEvent?.eventKind ?? null
+        });
+
+        if (derivationClass === "conversational") {
+          skipped.push({ anchorId: id, reason: "retained_conversational" });
+          continue;
+        }
+
+        eligible.push({ id, payloadBytes: JSON.stringify(anchor).length, derivationClass });
+      }
+
+      let freedPayloadBytes = 0;
+      const prunedAnchorIds: string[] = [];
+      const prunedByClass = { tool_activity: 0, synthetic_injected: 0 };
+
+      if (eligible.length > 0) {
+        this.faultInjector?.reach("anchor_hygiene_prune_before_write");
+        const deleteAnchorStatement = this.database.prepare("delete from anchors where id = ?");
+        for (const anchor of eligible) {
+          deleteAnchorStatement.run(anchor.id);
+          prunedAnchorIds.push(anchor.id);
+          prunedByClass[anchor.derivationClass] += 1;
+          freedPayloadBytes += anchor.payloadBytes;
+        }
+        this.faultInjector?.reach("anchor_hygiene_prune_after_delete");
+      }
+
+      const receipt = UnhygienicAnchorPruneReceiptSchema.parse({
+        operation: "unhygienic_anchor_prune",
+        personId: parsed.personId,
+        prunedAnchorIds,
+        prunedByClass,
+        freedPayloadBytes,
+        skipped,
+        ruleVersion: HYGIENE_RULE_VERSION,
+        committedAt: this.clock.now()
+      });
+      this.database.exec("commit");
+      return receipt;
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
+  /**
+   * Cheap, ascending-id cursor over one person's anchor ids (Plan 11-16 dry-run/resume support).
+   * Mirrors `listSupersededSummaryIds` exactly: `json_extract(payload,'$.personId') = ?` plus an
+   * `id > ?` clause when `afterId` is present, `order by id asc limit ?`. No column, no index, and
+   * no schema migration is involved -- `anchors` has the same `(id, payload)` shape as
+   * `summaries`. Because there is no person index on `anchors` this cursor is a table scan per
+   * page; that is acceptable for a one-time cleanup over the live corpus's tens of thousands of
+   * rows and is the honest tradeoff, not a reason to claim a migration would be required.
+   */
+  async listAnchorIds(personId: string, options: { limit: number; afterId?: string }): Promise<string[]> {
+    const clauses = ["json_extract(payload,'$.personId') = ?"];
+    const values: Array<string | number> = [personId];
+    if (options.afterId) {
+      clauses.push("id > ?");
+      values.push(options.afterId);
+    }
+    values.push(options.limit);
+    const rows = this.database
+      .prepare(`select id from anchors where ${clauses.join(" and ")} order by id asc limit ?`)
+      .all(...values) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  /**
+   * Cheap aggregate count/class-breakdown/byte footprint of one person's anchors by derivation
+   * class (Plan 11-16) -- for dry-run reporting only, never an eligibility source. Anchors persist
+   * no role/eventKind, so this classifies content-only; the in-transaction prune enriches from the
+   * resolved canonical event and may find more eligible rows than this reports.
+   */
+  async summarizeAnchorDerivationClasses(personId: string): Promise<{
+    totalCount: number;
+    countsByClass: { conversational: number; tool_activity: number; synthetic_injected: number };
+    unhygienicCount: number;
+    unhygienicPayloadBytes: number;
+    unattributedCount: number;
+  }> {
+    const rows = this.database.prepare("select payload from anchors").all() as PayloadRow[];
+    const countsByClass = { conversational: 0, tool_activity: 0, synthetic_injected: 0 };
+    let totalCount = 0;
+    let unhygienicPayloadBytes = 0;
+    let unattributedCount = 0;
+
+    for (const row of rows) {
+      const anchor = AnchorSchema.parse(JSON.parse(row.payload));
+      if (!anchor.personId) {
+        unattributedCount += 1;
+        continue;
+      }
+      if (anchor.personId !== personId) continue;
+      totalCount += 1;
+      const { derivationClass } = classifyEvent({ content: anchor.content, role: null, eventKind: null });
+      countsByClass[derivationClass] += 1;
+      if (derivationClass !== "conversational") unhygienicPayloadBytes += row.payload.length;
+    }
+
+    return {
+      totalCount,
+      countsByClass,
+      unhygienicCount: countsByClass.tool_activity + countsByClass.synthetic_injected,
+      unhygienicPayloadBytes,
+      unattributedCount
+    };
   }
 
   async saveInjection(packet: InjectionPacket): Promise<void> {

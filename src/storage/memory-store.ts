@@ -34,9 +34,11 @@ import type {
   CommitSourceDeletionInput,
   CommitSourceRevocationInput,
   CommitSupersededSummaryPruneInput,
+  CommitUnhygienicAnchorPruneInput,
   MutationCommitReceipt,
   SourceDeletionEffects,
-  SupersededSummaryPruneReceipt
+  SupersededSummaryPruneReceipt,
+  UnhygienicAnchorPruneReceipt
 } from "./mcp-mutation-contracts.js";
 import type {
   AcceptedSyncOperation,
@@ -188,6 +190,27 @@ export interface MemoryStore {
   saveAnchor(anchor: Anchor): Promise<void>;
   listAnchors(): Promise<Anchor[]>;
   deleteAnchors(ids: string[]): Promise<void>;
+  /**
+   * The only sanctioned removal path for anchors the shipped hygiene classifier
+   * (`classifyEvent`, `src/topic/derivation-hygiene.ts`) would never have created
+   * (Plan 11-16, GAP-11-D closure; REQ-052/053/054). Eligibility (not_found /
+   * person_unattributed / person_mismatch / retained_conversational) is recomputed
+   * authoritatively inside the implementation's own transaction from the anchor's persisted
+   * content plus its resolved canonical event's role/eventKind -- the caller's `anchorIds`
+   * list is a request, never an authorization. Deletes the anchor row only; never touches
+   * canonical events, turns, summaries, boxes, traces, proposals, or injections.
+   */
+  commitUnhygienicAnchorPrune(input: CommitUnhygienicAnchorPruneInput): Promise<UnhygienicAnchorPruneReceipt>;
+  /** Cheap, ascending-id cursor over one person's anchor ids (Plan 11-16 dry-run/resume support); mirrors `listSupersededSummaryIds` minus the state predicate. */
+  listAnchorIds(personId: string, options: { limit: number; afterId?: string }): Promise<string[]>;
+  /** Cheap aggregate count/class-breakdown/byte footprint of one person's anchors by derivation class (Plan 11-16) -- never a per-row parse loop for reporting. */
+  summarizeAnchorDerivationClasses(personId: string): Promise<{
+    totalCount: number;
+    countsByClass: { conversational: number; tool_activity: number; synthetic_injected: number };
+    unhygienicCount: number;
+    unhygienicPayloadBytes: number;
+    unattributedCount: number;
+  }>;
   saveInjection(packet: InjectionPacket): Promise<void>;
   listInjections(hostSessionId: string): Promise<InjectionPacket[]>;
   deleteInjectionsReferencingSummaryIds(summaryIds: string[]): Promise<void>;
