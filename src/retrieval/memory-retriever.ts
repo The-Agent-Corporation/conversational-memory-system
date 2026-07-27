@@ -5,7 +5,7 @@ import type { InjectionRequest } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import { RETRIEVAL_CANDIDATE_STATES, REVIVABLE_MEMORY_STATE, isRetrievableState } from "./retrievable-state.js";
 
-interface RankedMemory {
+export interface RankedMemory {
   kind: "summary" | "anchor" | "trace" | "box_context";
   id: string;
   text: string;
@@ -316,7 +316,9 @@ function addParentBoxContext(
   return selected;
 }
 
-function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
+// Exported for the GAP-11-B differential equivalence test (tests/retrieval/memory-retriever-dedupe.test.ts);
+// not a public retrieval API.
+export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
   const summaries = ranked.filter((memory) => memory.kind === "summary");
   const seenAnchorTexts = new Set<string>();
 
