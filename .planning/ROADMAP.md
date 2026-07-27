@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 13/15 plans executed
+**Plans:** 13/18 plans executed
 
 Plans:
 **Wave 1**
@@ -380,7 +380,19 @@ Plans:
 
 - [ ] 11-13-PLAN.md — Frozen recall query set + probe harness, before/after-filter/after-prune capture, owner-authorized live prune.
 
-**Wave 13** *(blocked on Wave 12)*
+**Wave 13** *(GAP-11-D closure, blocked on Wave 12)*
+
+- [ ] 11-16-PLAN.md — `commitUnhygienicAnchorPrune` store contract with in-transaction, classifier-authoritative eligibility in both stores; ADR 0051 (anchors gated forward, pruned backward, no lifecycle).
+
+**Wave 14** *(blocked on Wave 13)*
+
+- [ ] 11-17-PLAN.md — `memory prune-unhygienic-anchors`: dry-run default, fail-closed backup gate, resumable batches, registry entry.
+
+**Wave 15** *(blocked on Wave 14)*
+
+- [ ] 11-18-PLAN.md — Owner-authorized live anchor prune on `~/.memory/aaron.db` + frozen probe re-run (`after-anchor-prune` column), `11-ANCHOR-PRUNE.md`.
+
+**Wave 16** *(blocked on Wave 15 — re-waved from 13; SC7 judgement needs 11-18's evidence)*
 
 - [ ] 11-14-PLAN.md — Owner SC7 semantic sign-off, `11-SC7-SIGNOFF.md`, GAP-11-A closure.
 
