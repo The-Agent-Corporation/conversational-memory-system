@@ -3,24 +3,24 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 13
-status: blocked
-stopped_at: Plan 11-13 Task 1 blocked by GAP-11-B
-last_updated: "2026-07-27T02:18:41.268Z"
-last_activity: 2026-07-27 -- Phase 11 waves 6-10 complete; 11-13 blocked on GAP-11-B
+current_plan: 1
+status: executing
+stopped_at: "Completed Plan 11-15 (GAP-11-B closed); next: Plan 11-13 Task 1 (frozen recall probe, unblocked)"
+last_updated: "2026-07-27T14:43:59.402Z"
+last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
-  total_plans: 78
-  completed_plans: 76
+  total_plans: 79
+  completed_plans: 77
   percent: 53
 ---
 
 # Project State
 
 **Current phase:** 11
-**Current plan:** 13
-**Status:** Blocked on GAP-11-B
+**Current plan:** 1
+**Status:** Ready to execute
 **Last updated:** 2026-07-27
 
 ## Completed
@@ -47,8 +47,8 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T02:18:38.670Z
-**Stopped at:** Plan 11-13 Task 1 blocked by GAP-11-B
+**Last session:** 2026-07-27T14:43:59.391Z
+**Stopped at:** Completed Plan 11-15 (GAP-11-B closed); next: Plan 11-13 Task 1 (frozen recall probe, unblocked)
 **Resume file:** None
 
 ## Performance Metrics
@@ -67,6 +67,7 @@ progress:
 | Phase 11 P10 | 5min | 3 tasks | 8 files |
 | Phase 11 P11 | 25min | 3 tasks | 4 files |
 | Phase 11 P12 | 20min | 3 tasks | 4 files |
+| Phase 11 P15 | 25min | 3 tasks | 3 files |
 
 ## Decisions
 
@@ -101,10 +102,11 @@ progress:
 - [Phase 11]: commitSupersededSummaryPrune recomputes eligibility authoritatively inside the transaction; caller's summaryIds list is never trusted
 - [Phase 11]: freedPayloadBytes/payloadBytes uses JSON.stringify(parsedSummary).length in both stores, provably identical to SqliteStore's length(payload) column
 - [Phase ?]: Prune, not archive (ADR 0050): superseded summaries are pure derivations reproducible from canonical events via rebuild-derivations.
+- [Phase 11]: GAP-11-B closed (Plan 11-15): hoisted per-summary normalization and reordered dedupeRankedMemory's box/thread/substring conjunction cheap-first, proven behavior-preserving by a 200+-case differential oracle held unedited across the fix and the benchmark. — Measured ~1.3M pairs/sec (~30x naive), clearing Plan 11-13's 1,000,000 pairs/sec sufficiency floor on first measurement -- no escape hatch fired, no GAP-11-C raised.
 
 ## Current Position
 
-Phase: 11 (derivation-input-hygiene) — BLOCKED (GAP-11-B)
-Plan: 13 of 14
-Status: Blocked — GAP-11-B must be planned and fixed before 11-13 Task 1 can complete
+Phase: 11 (derivation-input-hygiene) — EXECUTING
+Plan: 2 of 15
+Status: Ready to execute
 Last activity: 2026-07-27
