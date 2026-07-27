@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 15/18 plans executed
+**Plans:** 18/26 plans executed (11-13 partial; 11-19..11-26 planned 2026-07-27 for the GAP-11-E full close)
 
 Plans:
 **Wave 1**
@@ -392,7 +392,39 @@ Plans:
 
 - [x] 11-18-PLAN.md — Owner-authorized live anchor prune on `~/.memory/aaron.db` + frozen probe re-run (`after-anchor-prune` column), `11-ANCHOR-PRUNE.md`.
 
-**Wave 16** *(blocked on Wave 15 — re-waved from 13; SC7 judgement needs 11-18's evidence)*
+**Wave 17** *(GAP-11-E full close, blocked on Wave 15 — owner chose a full close of Phase 11 on 2026-07-27)*
+
+- [ ] 11-19-PLAN.md — Correct the recall probe: shipped-rule classification, per-item attribution with a reconstruction-fidelity guard, `11-MEASUREMENT-CORRECTION.md`.
+
+**Wave 18** *(blocked on Wave 17)*
+
+- [ ] 11-20-PLAN.md — Rule coverage: live-corpus scaffolding census, `<task-notification>` + audit-confirmed rules, bump to `hygiene-rules/v2`, ADR 0048 addendum.
+
+**Wave 19** *(blocked on Wave 18)*
+
+- [ ] 11-21-PLAN.md — Corrected re-baseline of the frozen 12-query probe over every re-measurable column, `11-RECALL-PROBE-V2.md`.
+
+**Wave 20** *(blocked on Wave 19)*
+
+- [ ] 11-22-PLAN.md — GAP-11-E root-cause investigation: offender inventory + re-derivation discriminator, `11-GAP-11-E-FINDING.md`. No fix proposed.
+
+**Wave 21** *(blocked on Wave 20)*
+
+- [ ] 11-23-PLAN.md — Owner decision on remediation class and governing acceptance target, `11-REMEDIATION-DECISION.md`.
+
+**Wave 22** *(blocked on Wave 21)*
+
+- [ ] 11-24-PLAN.md — Code fix scoped by the finding: regression test from the real offender span, then the minimal change. No-op if the finding shows no code defect.
+
+**Wave 23** *(blocked on Wave 22)*
+
+- [ ] 11-25-PLAN.md — Live-corpus remediation: clone rehearsal, fresh backup, owner authorization, receipt (`11-REBUILD.md`).
+
+**Wave 24** *(blocked on Wave 23)*
+
+- [ ] 11-26-PLAN.md — Final frozen-probe run against the remediated corpus, real tally recorded, GAP-11-E disposition.
+
+**Wave 25** *(blocked on Wave 24 — re-waved from 13, then 16; SC7 judgement needs 11-26's corrected evidence)*
 
 - [ ] 11-14-PLAN.md — Owner SC7 semantic sign-off, `11-SC7-SIGNOFF.md`, GAP-11-A closure.
 
