@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 19/26 plans executed (11-13 partial; 11-20..11-26 remaining for the GAP-11-E full close)
+**Plans:** 19/26 plans executed
 
 Plans:
 **Wave 1**
@@ -378,7 +378,7 @@ Plans:
 
 **Wave 12** *(blocked on Wave 11)*
 
-- [ ] 11-13-PLAN.md — Frozen recall query set + probe harness, before/after-filter/after-prune capture, owner-authorized live prune.
+- [x] 11-13-PLAN.md — Frozen recall query set + probe harness, before/after-filter/after-prune capture, owner-authorized live prune.
 
 **Wave 13** *(GAP-11-D closure, blocked on Wave 12)*
 
@@ -398,7 +398,7 @@ Plans:
 
 **Wave 18** *(blocked on Wave 17)*
 
-- [ ] 11-20-PLAN.md — Rule coverage: live-corpus scaffolding census, `<task-notification>` + audit-confirmed rules, bump to `hygiene-rules/v2`, ADR 0048 addendum.
+- [x] 11-20-PLAN.md — Rule coverage: live-corpus scaffolding census, `<task-notification>` + audit-confirmed rules, bump to `hygiene-rules/v2`, ADR 0048 addendum.
 
 **Wave 19** *(blocked on Wave 18)*
 
