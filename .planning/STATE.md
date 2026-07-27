@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 9
+current_plan: 1
 status: executing
 stopped_at: Completed 11-09-PLAN.md
-last_updated: "2026-07-27T01:47:17.023Z"
+last_updated: "2026-07-27T02:00:27.364Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 78
-  completed_plans: 73
+  completed_plans: 74
   percent: 53
 ---
 
@@ -46,7 +46,7 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T01:47:12.675Z
+**Last session:** 2026-07-27T01:56:41.319Z
 **Stopped at:** Completed 11-09-PLAN.md
 **Resume file:** None
 
@@ -63,6 +63,7 @@ progress:
 | Phase 11 P06 | 55min | 3 tasks | 4 files |
 | Phase 11 P08 | 5min | 3 tasks | 6 files |
 | Phase 11 P09 | 25min | 3 tasks | 8 files |
+| Phase 11 P10 | 5min | 3 tasks | 8 files |
 
 ## Decisions
 
@@ -92,10 +93,12 @@ progress:
 - [Phase 11]: Reused the single isRetrievableState predicate everywhere in the GAP-11-A sweep (MCP read/search, subject expansion, both stores' findNearestSummaries); no duplicate predicate introduced
 - [Phase 11]: findNearestSummaries loads the retrievable summary-id set once per call, not per candidate row, to avoid reintroducing an O(n) hotspot; no summary_vectors schema change, tombstoning at supersession remains primary
 - [Phase 11]: conversation-resumer.ts left unchanged (expands to raw Turn[] with no MemoryState field, already reachable via direct canonical-event queries per D-4); its separate lack of person/scope authorization flagged as residual risk, out of this plan's scope
+- [Phase 11]: SummaryFilter mirrors ProposalFilter/TraceFilter idiom; scopeIds subset applied in JS post-fetch, personId/states pushed into an index-backed SQL WHERE clause (migration 3)
+- [Phase 11]: prepareInjection makes exactly one filtered listSummaries call per request; applyRetrievalBoundary remains the sole authority, the store filter is an optimization only (T-11-30)
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 9 of 14
+Plan: 10 of 14
 Status: Ready to execute
 Last activity: 2026-07-27

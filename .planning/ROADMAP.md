@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 9/14 plans executed
+**Plans:** 10/14 plans executed
 
 Plans:
 **Wave 1**
@@ -362,7 +362,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7)*
 
-- [ ] 11-10-PLAN.md — Push person/scope/state filtering into `listSummaries`, schema migration 3 index, row-count and wall-clock acceptance at 20k summaries.
+- [x] 11-10-PLAN.md — Push person/scope/state filtering into `listSummaries`, schema migration 3 index, row-count and wall-clock acceptance at 20k summaries.
 
 **Wave 9** *(blocked on Wave 8)*
 
