@@ -227,6 +227,56 @@ for (const backend of backends) {
       expect(matches.map((match) => match.summaryId)).not.toContain(summaryId);
     });
 
+    it("drops a vector whose summary is superseded even when it is the nearest match (GAP-11-A sweep, T-11-26)", async () => {
+      // Deterministic literal vectors, not random: query is an exact match for the superseded
+      // row and a weaker (but still authorized) match for the active row.
+      await store.saveSummary(summaryRecord({ id: "summary_active_state", state: "active" }));
+      await store.saveSummary(summaryRecord({ id: "summary_superseded_state", state: "superseded" }));
+      await store.saveSummaryVector(
+        vectorRecord({ summaryId: "summary_active_state", vector: [0.6, 0.4, 0, 0] })
+      );
+      await store.saveSummaryVector(
+        vectorRecord({ summaryId: "summary_superseded_state", vector: [1, 0, 0, 0] })
+      );
+
+      const matches = await store.findNearestSummaries({
+        vector: [1, 0, 0, 0],
+        provider: PROVIDER_A,
+        model: MODEL_A,
+        personId: "person_1",
+        allowedScopeIds: ["personal"],
+        topK: 10
+      });
+      const matchedIds = matches.map((match) => match.summaryId);
+
+      expect(matchedIds).toContain("summary_active_state");
+      expect(matchedIds).not.toContain("summary_superseded_state");
+    });
+
+    it("drops a vector whose summary row does not exist at all, an orphan (GAP-11-A sweep, T-11-26)", async () => {
+      await store.saveSummary(summaryRecord({ id: "summary_present", state: "active" }));
+      await store.saveSummaryVector(
+        vectorRecord({ summaryId: "summary_present", vector: [0.6, 0.4, 0, 0] })
+      );
+      // "summary_orphan" is never saved via saveSummary -- only its vector row exists.
+      await store.saveSummaryVector(
+        vectorRecord({ summaryId: "summary_orphan", vector: [1, 0, 0, 0] })
+      );
+
+      const matches = await store.findNearestSummaries({
+        vector: [1, 0, 0, 0],
+        provider: PROVIDER_A,
+        model: MODEL_A,
+        personId: "person_1",
+        allowedScopeIds: ["personal"],
+        topK: 10
+      });
+      const matchedIds = matches.map((match) => match.summaryId);
+
+      expect(matchedIds).toContain("summary_present");
+      expect(matchedIds).not.toContain("summary_orphan");
+    });
+
     it("rejects saveSummaryVector when dimensions !== vector.length (CR-01)", async () => {
       const record = vectorRecord({ dimensions: 8, vector: [1, 0, 0, 0] });
       await expect(store.saveSummaryVector(record)).rejects.toThrow(/dimensions/);
