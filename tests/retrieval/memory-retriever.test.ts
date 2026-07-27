@@ -441,15 +441,71 @@ describe("MemoryRetriever", () => {
     ]);
   });
 
-  it("revives stale summaries when retrieval selects them", async () => {
+  // Phase 11 Plan 08 (GAP-11-A) contract change: stale summaries are no longer retrievable
+  // directly (D-GAP-1). A stale summary that would have ranked into the packet is instead
+  // promoted to "revived" without its text entering THAT packet — revival is deferred, not
+  // immediate — so a follow-up retrieval on the same topic returns it.
+  it("promotes an out-ranking stale summary to revived without injecting it this call, then returns it on the next retrieval", async () => {
     const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_active",
+      state: "active",
+      summaryText: "Smith PIP demand strategy baseline note.",
+      strength: 0.5
+    }));
     await store.saveSummary(makeSummary({
       id: "summary_stale",
       state: "stale",
+      summaryText: "Smith PIP demand strategy and coverage timing.",
       strength: 0.2,
       retrievalCount: 4,
       lastAccessedAt: "2026-05-01T10:00:00.000Z",
       retrievedAt: "2026-05-01T10:00:00.000Z"
+    }));
+
+    const retriever = legacyRetriever(store);
+    const firstPacket = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    expect(firstPacket?.sourceSummaryIds).not.toContain("summary_stale");
+    expect(firstPacket?.selectedMemory).not.toContain("coverage timing");
+
+    const afterFirst = await store.listSummaries();
+    expect(afterFirst.find((summary) => summary.id === "summary_stale")).toMatchObject({
+      state: "revived",
+      strength: 0.25,
+      retrievalCount: 5,
+      lastAccessedAt: "2026-05-04T10:10:00.000Z",
+      retrievedAt: "2026-05-04T10:10:00.000Z"
+    });
+
+    const secondPacket = await retriever.prepareInjection({
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:20:00.000Z"
+    });
+
+    expect(secondPacket?.sourceSummaryIds).toContain("summary_stale");
+  });
+
+  it("leaves a stale summary stale when it scores below the selected floor", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_active",
+      state: "active",
+      summaryText: "Smith PIP demand strategy baseline note."
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_stale_unrelated",
+      state: "stale",
+      summaryText: "Jones BI coverage limits and an entirely unrelated topic."
     }));
 
     const retriever = legacyRetriever(store);
@@ -461,17 +517,9 @@ describe("MemoryRetriever", () => {
       requestedAt: "2026-05-04T10:10:00.000Z"
     });
 
-    expect(packet?.sourceSummaryIds).toEqual(["summary_stale"]);
-    await expect(store.listSummaries()).resolves.toEqual([
-      expect.objectContaining({
-        id: "summary_stale",
-        state: "revived",
-        strength: 0.25,
-        retrievalCount: 5,
-        lastAccessedAt: "2026-05-04T10:10:00.000Z",
-        retrievedAt: "2026-05-04T10:10:00.000Z"
-      })
-    ]);
+    expect(packet?.sourceSummaryIds).toEqual(["summary_active"]);
+    const summaries = await store.listSummaries();
+    expect(summaries.find((summary) => summary.id === "summary_stale_unrelated")?.state).toBe("stale");
   });
 
   it("uses vector similarity for embedded summaries when an embedder is configured", async () => {
@@ -792,6 +840,170 @@ describe("MemoryRetriever", () => {
     // Hygiene keeps both sessions' vocabulary in the one merged summary; no pre-hygiene fragment
     // ever holds both halves, so this is a genuine (not merely tied) improvement.
     expect(hygieneScore).toBeGreaterThan(preHygieneScore);
+  });
+});
+
+// Phase 11 Plan 08 — GAP-11-A regression describe block. Mirrors the isolation reproduction in
+// 11-MEASUREMENT-VERIFIED.md: one active + one superseded summary on the same topic, asserting
+// the superseded summary is never returned and its text never enters selectedMemory.
+describe("GAP-11-A: retrievable-state boundary", () => {
+  const GAP_PERSON_ID = "person_gap11a";
+  const GAP_SCOPE_ID = "scope_gap11a";
+  const GAP_TOPIC = "Smith PIP demand strategy coverage timing";
+
+  const scopedRetrieval = (
+    store: InMemoryStore,
+    overrides: { hostSessionId?: string; currentTopicSummary?: string; requestedAt?: string } = {}
+  ) =>
+    new MemoryRetriever(store).prepareInjection({
+      host: "codex",
+      profileId: "default",
+      hostSessionId: overrides.hostSessionId ?? "session_gap11a",
+      currentTopicSummary: overrides.currentTopicSummary ?? GAP_TOPIC,
+      personId: GAP_PERSON_ID,
+      allowedScopeIds: [GAP_SCOPE_ID],
+      requestedAt: overrides.requestedAt ?? "2026-05-04T10:10:00.000Z",
+      maxMemoryTokens: 200
+    });
+
+  it("(a)+(b) a superseded summary is never retrieved and its text never reaches selectedMemory", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_active_gap",
+      personId: GAP_PERSON_ID,
+      scopeIds: [GAP_SCOPE_ID],
+      state: "active",
+      summaryText: "Smith PIP demand strategy and coverage timing."
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_superseded_gap",
+      personId: GAP_PERSON_ID,
+      scopeIds: [GAP_SCOPE_ID],
+      state: "superseded",
+      summaryText: 'Smith PIP demand strategy and coverage timing. [Tool call: Bash] {"cmd":"make"}'
+    }));
+
+    const packet = await scopedRetrieval(store);
+
+    expect(packet).not.toBeNull();
+    expect(packet?.sourceSummaryIds).not.toContain("summary_superseded_gap");
+    expect(packet?.sourceSummaryIds).toContain("summary_active_gap");
+    expect(packet?.selectedMemory).not.toContain("[Tool call:");
+  });
+
+  it.each(["proposed", "approved", "rejected", "disputed"] as const)(
+    "(c) a %s summary never ranks into the packet",
+    async (state) => {
+      const store = new InMemoryStore();
+      await store.saveSummary(makeSummary({
+        id: "summary_active_gap",
+        personId: GAP_PERSON_ID,
+        scopeIds: [GAP_SCOPE_ID],
+        state: "active",
+        summaryText: "Smith PIP demand strategy and coverage timing."
+      }));
+      await store.saveSummary(makeSummary({
+        id: `summary_${state}_gap`,
+        personId: GAP_PERSON_ID,
+        scopeIds: [GAP_SCOPE_ID],
+        state,
+        summaryText: "Smith PIP demand strategy and coverage timing."
+      }));
+
+      const packet = await scopedRetrieval(store);
+
+      expect(packet?.sourceSummaryIds).not.toContain(`summary_${state}_gap`);
+    }
+  );
+
+  it("(d) a trace whose linked summaries are all superseded is excluded and its title never reaches selectedMemory", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_active_gap",
+      personId: GAP_PERSON_ID,
+      scopeIds: [GAP_SCOPE_ID],
+      state: "active",
+      summaryText: "Smith PIP demand strategy and coverage timing."
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_superseded_a",
+      personId: GAP_PERSON_ID,
+      scopeIds: [GAP_SCOPE_ID],
+      state: "superseded",
+      summaryText: "Smith PIP provider bill review needs the ledger."
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_superseded_b",
+      personId: GAP_PERSON_ID,
+      scopeIds: [GAP_SCOPE_ID],
+      state: "superseded",
+      summaryText: "Smith PIP provider bill review records the deadline."
+    }));
+    await store.saveTrace(makeTrace({
+      id: "trace_all_superseded",
+      personId: GAP_PERSON_ID,
+      summaryIds: ["summary_superseded_a", "summary_superseded_b"],
+      title: "Smith PIP Provider Bill Trace (all-superseded)",
+      description: "Recurring Smith PIP provider bill dispute and no-fault payment timing."
+    }));
+
+    const packet = await scopedRetrieval(store);
+
+    expect(packet?.sourceTraceIds).not.toContain("trace_all_superseded");
+    expect(packet?.selectedMemory).not.toContain("Smith PIP Provider Bill Trace (all-superseded)");
+  });
+
+  it("(e) a box whose only linked summary is superseded is excluded from parent-box context", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_superseded_box_child",
+      personId: GAP_PERSON_ID,
+      scopeIds: [GAP_SCOPE_ID],
+      state: "superseded",
+      summaryText: "Smith PIP provider bill review needs the ledger."
+    }));
+    await store.saveBox(makeBox({
+      id: "box_parent_all_superseded",
+      personId: GAP_PERSON_ID,
+      title: "Smith Case (all-superseded)",
+      parentBoxId: null,
+      childBoxIds: ["box_child_gap"],
+      summaryIds: ["summary_superseded_box_child"],
+      summary: "Smith case parent whose only linked summary is superseded."
+    }));
+    await store.saveBox(makeBox({
+      id: "box_child_gap",
+      personId: GAP_PERSON_ID,
+      parentBoxId: "box_parent_all_superseded",
+      summaryIds: ["summary_active_child_gap"]
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_active_child_gap",
+      personId: GAP_PERSON_ID,
+      scopeIds: [GAP_SCOPE_ID],
+      state: "active",
+      boxIds: ["box_child_gap"],
+      summaryText: "Smith PIP demand strategy and coverage timing."
+    }));
+
+    const packet = await scopedRetrieval(store);
+
+    expect(packet?.boxIds).not.toContain("box_parent_all_superseded");
+    expect(packet?.selectedMemory).not.toContain("[Parent Box: Smith Case (all-superseded)]");
+  });
+
+  it("(f) anchors are unaffected — Anchor carries no state field, so there is nothing to exclude", async () => {
+    const store = new InMemoryStore();
+    await store.saveAnchor(makeAnchor({
+      id: "anchor_gap11a",
+      personId: GAP_PERSON_ID,
+      scopeId: GAP_SCOPE_ID,
+      content: "Smith PIP demand strategy coverage timing filing deadline."
+    }));
+
+    const packet = await scopedRetrieval(store);
+
+    expect(packet?.selectedMemory).toContain("Smith PIP demand strategy coverage timing filing deadline.");
   });
 });
 
