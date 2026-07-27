@@ -87,12 +87,17 @@ import {
   CommitProposalDecisionInputSchema,
   CommitSourceDeletionInputSchema,
   CommitSourceRevocationInputSchema,
+  CommitSupersededSummaryPruneInputSchema,
+  SupersededSummaryPruneReceiptSchema,
   proposalDecisionStateMatches,
   type CommitHistoryImportInput,
   type CommitProposalDecisionInput,
   type CommitSourceDeletionInput,
   type CommitSourceRevocationInput,
-  type MutationCommitReceipt
+  type CommitSupersededSummaryPruneInput,
+  type MutationCommitReceipt,
+  type SupersededSummaryPruneReceipt,
+  type SupersededSummaryPruneSkipReason
 } from "./mcp-mutation-contracts.js";
 import {
   AcceptedSyncOperationSchema,
@@ -1162,6 +1167,137 @@ export class SqliteStore implements MemoryStore {
     }
     const allowed = new Set(filter.scopeIds);
     return parsed.filter((summary) => (summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId)));
+  }
+
+  /**
+   * The only sanctioned removal path for pure derivations (Plan 11-11, GAP-11-A closure;
+   * REQ-053/REQ-054). Eligibility is recomputed authoritatively inside this transaction --
+   * `parsed.summaryIds` is a request, never an authorization. Precedence: not_found,
+   * not_superseded, person_mismatch, then the four reference kinds (box, trace, proposal,
+   * another summary's sourceSummaryIds). Deletes summary_vectors rows and referencing injections
+   * inline in the same `begin immediate` transaction as the summary row itself -- never calls
+   * `deleteSummaryVectors` / `deleteInjectionsReferencingSummaryIds`, which open their own
+   * transactions and would nest. Never deletes from canonical_events, turns, anchors, boxes,
+   * traces, or proposals.
+   */
+  async commitSupersededSummaryPrune(input: CommitSupersededSummaryPruneInput): Promise<SupersededSummaryPruneReceipt> {
+    const parsed = CommitSupersededSummaryPruneInputSchema.parse(input);
+    this.database.exec("begin immediate");
+    try {
+      const skipped: Array<{ summaryId: string; reason: SupersededSummaryPruneSkipReason }> = [];
+      const allSummaries = this.listPayloads("summaries", SummarySchema);
+      const boxReferenced = new Set(this.listPayloads("boxes", BoxSchema).flatMap((box) => box.summaryIds));
+      const traces = (this.database.prepare("select payload from traces").all() as PayloadRow[])
+        .map((row) => MemoryTraceSchema.parse(JSON.parse(row.payload)));
+      const traceReferenced = new Set(traces.flatMap((trace) => trace.summaryIds));
+      const proposals = (this.database.prepare("select payload from proposals").all() as PayloadRow[])
+        .map((row) => MemoryProposalSchema.parse(JSON.parse(row.payload)));
+      const proposalReferenced = new Set(proposals.flatMap((proposal) => proposal.sourceSummaryIds));
+      const summaryReferenced = new Set(allSummaries.flatMap((summary) => summary.sourceSummaryIds));
+
+      const eligible: Summary[] = [];
+      const uniqueIds = [...new Set(parsed.summaryIds)];
+      for (const id of uniqueIds) {
+        const summary = allSummaries.find((candidate) => candidate.id === id);
+        if (!summary) {
+          skipped.push({ summaryId: id, reason: "not_found" });
+        } else if (summary.state !== "superseded") {
+          skipped.push({ summaryId: id, reason: "not_superseded" });
+        } else if (summary.personId !== parsed.personId) {
+          skipped.push({ summaryId: id, reason: "person_mismatch" });
+        } else if (boxReferenced.has(id)) {
+          skipped.push({ summaryId: id, reason: "referenced_by_box" });
+        } else if (traceReferenced.has(id)) {
+          skipped.push({ summaryId: id, reason: "referenced_by_trace" });
+        } else if (proposalReferenced.has(id)) {
+          skipped.push({ summaryId: id, reason: "referenced_by_proposal" });
+        } else if (summaryReferenced.has(id)) {
+          skipped.push({ summaryId: id, reason: "referenced_by_summary" });
+        } else {
+          eligible.push(summary);
+        }
+      }
+
+      let deletedVectorRows = 0;
+      let freedPayloadBytes = 0;
+      const deletedInjectionIds: string[] = [];
+      const prunedSummaryIds: string[] = [];
+
+      if (eligible.length > 0) {
+        const eligibleIds = eligible.map((summary) => summary.id);
+        freedPayloadBytes = eligible.reduce((sum, summary) => sum + JSON.stringify(summary).length, 0);
+        const placeholders = eligibleIds.map(() => "?").join(", ");
+
+        this.faultInjector?.reach("superseded_prune_before_write");
+        const vectorCountRow = this.database
+          .prepare(`select count(*) as c from summary_vectors where summary_id in (${placeholders})`)
+          .get(...eligibleIds) as { c: number };
+        deletedVectorRows = vectorCountRow.c;
+        this.database
+          .prepare(`delete from summary_vectors where summary_id in (${placeholders})`)
+          .run(...eligibleIds);
+        this.faultInjector?.reach("superseded_prune_after_vectors");
+
+        const eligibleSet = new Set(eligibleIds);
+        const injectionRows = this.database.prepare("select payload from injections").all() as PayloadRow[];
+        const injectionsToDelete = injectionRows
+          .map((row) => InjectionPacketSchema.parse(JSON.parse(row.payload)))
+          .filter((packet) => packet.sourceSummaryIds.some((id) => eligibleSet.has(id)));
+        const deleteInjectionStatement = this.database.prepare("delete from injections where id = ?");
+        for (const packet of injectionsToDelete) {
+          deleteInjectionStatement.run(packet.id);
+          deletedInjectionIds.push(packet.id);
+        }
+        this.faultInjector?.reach("superseded_prune_after_injections");
+
+        const deleteSummaryStatement = this.database.prepare("delete from summaries where id = ?");
+        for (const id of eligibleIds) {
+          deleteSummaryStatement.run(id);
+          prunedSummaryIds.push(id);
+        }
+      }
+
+      const receipt = SupersededSummaryPruneReceiptSchema.parse({
+        operation: "superseded_summary_prune",
+        personId: parsed.personId,
+        prunedSummaryIds,
+        deletedVectorRows,
+        deletedInjectionIds,
+        freedPayloadBytes,
+        skipped,
+        committedAt: this.clock.now()
+      });
+      this.database.exec("commit");
+      return receipt;
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
+  async listSupersededSummaryIds(personId: string, options: { limit: number; afterId?: string }): Promise<string[]> {
+    const clauses = ["json_extract(payload,'$.personId') = ?", "json_extract(payload,'$.state') = 'superseded'"];
+    const values: Array<string | number> = [personId];
+    if (options.afterId) {
+      clauses.push("id > ?");
+      values.push(options.afterId);
+    }
+    values.push(options.limit);
+    const rows = this.database
+      .prepare(`select id from summaries where ${clauses.join(" and ")} order by id asc limit ?`)
+      .all(...values) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  async summarizeSupersededSummaries(personId: string): Promise<{ count: number; payloadBytes: number }> {
+    const row = this.database
+      .prepare(
+        `select count(*) as count, coalesce(sum(length(payload)), 0) as bytes
+         from summaries
+         where json_extract(payload,'$.personId') = ? and json_extract(payload,'$.state') = 'superseded'`
+      )
+      .get(personId) as { count: number; bytes: number };
+    return { count: row.count, payloadBytes: row.bytes };
   }
 
   async saveBox(box: Box): Promise<void> {

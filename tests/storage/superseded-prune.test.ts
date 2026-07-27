@@ -323,7 +323,22 @@ for (const backend of backends) {
 
     it("(b) refuses a summary referenced by a proposal, still exists afterward", async () => {
       await store.saveSummary(makeSummary({ id: "summary_1", state: "superseded" }));
-      await store.saveProposal(makeProposal({ id: "proposal_1", sourceSummaryIds: ["summary_1"] }));
+      await store.saveProposal(makeProposal({
+        id: "proposal_1",
+        sourceSummaryIds: ["summary_1"],
+        payload: {
+          boxId: "box_from_proposal",
+          title: "Fixture proposal box",
+          description: "",
+          summary: "Fixture proposal box summary",
+          boxType: "general",
+          candidateParentBoxId: null,
+          keywords: [],
+          evidence: [],
+          sourceSummaryIds: ["summary_1"],
+          sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }]
+        }
+      }));
 
       const receipt = await store.commitSupersededSummaryPrune(pruneInput());
 

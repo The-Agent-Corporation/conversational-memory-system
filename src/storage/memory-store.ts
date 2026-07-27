@@ -33,8 +33,10 @@ import type {
   CommitProposalDecisionInput,
   CommitSourceDeletionInput,
   CommitSourceRevocationInput,
+  CommitSupersededSummaryPruneInput,
   MutationCommitReceipt,
-  SourceDeletionEffects
+  SourceDeletionEffects,
+  SupersededSummaryPruneReceipt
 } from "./mcp-mutation-contracts.js";
 import type {
   AcceptedSyncOperation,
@@ -166,6 +168,20 @@ export interface MemoryStore {
   deleteTurns(ids: string[]): Promise<void>;
   saveSummary(summary: Summary): Promise<void>;
   listSummaries(filter?: SummaryFilter): Promise<Summary[]>;
+  /**
+   * The only sanctioned removal path for pure derivations (Plan 11-11, GAP-11-A closure;
+   * REQ-053/REQ-054). Eligibility (not_found / not_superseded / person_mismatch / referenced by a
+   * box, trace, proposal, or another summary's `sourceSummaryIds`) is recomputed authoritatively
+   * inside the implementation's own transaction — the caller's `summaryIds` list is a request,
+   * never an authorization. Deletes the summary row, every `summary_vectors` row keyed to it, and
+   * any injection packet that referenced it, all atomically; never touches canonical events,
+   * turns, anchors, boxes, traces, or proposals.
+   */
+  commitSupersededSummaryPrune(input: CommitSupersededSummaryPruneInput): Promise<SupersededSummaryPruneReceipt>;
+  /** Cheap, index-backed, ascending-id cursor over one person's `superseded` summary ids (Plan 11-11 dry-run/resume support). */
+  listSupersededSummaryIds(personId: string, options: { limit: number; afterId?: string }): Promise<string[]>;
+  /** Cheap aggregate count/byte footprint of one person's `superseded` summaries — never a per-row parse loop (Plan 11-11). */
+  summarizeSupersededSummaries(personId: string): Promise<{ count: number; payloadBytes: number }>;
   saveBox(box: Box): Promise<void>;
   getBox(id: string): Promise<Box | null>;
   listBoxes(): Promise<Box[]>;
