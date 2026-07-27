@@ -319,7 +319,16 @@ function addParentBoxContext(
 // Exported for the GAP-11-B differential equivalence test (tests/retrieval/memory-retriever-dedupe.test.ts);
 // not a public retrieval API.
 export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
-  const summaries = ranked.filter((memory) => memory.kind === "summary");
+  // GAP-11-B: summary texts reach ~800 KB and this loop is O(anchors x summaries), so per-summary
+  // work (normalization, box ids, thread ids) must be computed once here rather than living inside
+  // the anchor loop below.
+  const preparedSummaries: PreparedSummary[] = ranked
+    .filter((memory) => memory.kind === "summary")
+    .map((summary) => ({
+      normalizedText: normalizedMemoryText(summary.text),
+      boxIds: summary.boxIds,
+      threadIds: new Set(summary.sourceTurnRanges.map((range) => range.threadId))
+    }));
   const seenAnchorTexts = new Set<string>();
 
   return ranked.filter((memory) => {
@@ -328,7 +337,7 @@ export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
     }
 
     const textKey = normalizedMemoryText(memory.text);
-    if (seenAnchorTexts.has(textKey) || isAnchorCoveredBySummary(memory, summaries)) {
+    if (seenAnchorTexts.has(textKey) || isAnchorCoveredBySummary(memory, textKey, preparedSummaries)) {
       return false;
     }
 
@@ -337,34 +346,44 @@ export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
   });
 }
 
-function isAnchorCoveredBySummary(anchor: RankedMemory, summaries: RankedMemory[]): boolean {
-  const anchorText = normalizedMemoryText(anchor.text);
+interface PreparedSummary {
+  normalizedText: string;
+  boxIds: string[];
+  threadIds: Set<string>;
+}
 
-  return summaries.some((summary) => {
-    const summaryText = normalizedMemoryText(summary.text);
+function isAnchorCoveredBySummary(
+  anchor: RankedMemory,
+  anchorText: string,
+  preparedSummaries: PreparedSummary[]
+): boolean {
+  const anchorThreadIds = new Set(anchor.sourceTurnRanges.map((range) => range.threadId));
+
+  return preparedSummaries.some((summary) => {
+    // Cheap guards first: box and thread membership are Set/array lookups over already-computed
+    // values, the substring search over (potentially ~800 KB) summary text runs last.
     return (
-      summaryText.includes(anchorText) &&
-      sharesBox(anchor, summary) &&
-      sharesThread(anchor, summary)
+      sharesBox(anchor.boxIds, summary.boxIds) &&
+      sharesThread(anchorThreadIds, summary.threadIds) &&
+      summary.normalizedText.includes(anchorText)
     );
   });
 }
 
-function sharesBox(left: RankedMemory, right: RankedMemory): boolean {
-  if (left.boxIds.length === 0 || right.boxIds.length === 0) {
+function sharesBox(left: string[], right: string[]): boolean {
+  if (left.length === 0 || right.length === 0) {
     return true;
   }
 
-  return left.boxIds.some((boxId) => right.boxIds.includes(boxId));
+  return left.some((boxId) => right.includes(boxId));
 }
 
-function sharesThread(left: RankedMemory, right: RankedMemory): boolean {
-  const leftThreads = new Set(left.sourceTurnRanges.map((range) => range.threadId));
-  if (leftThreads.size === 0) {
-    return right.sourceTurnRanges.length > 0;
+function sharesThread(left: Set<string>, right: Set<string>): boolean {
+  if (left.size === 0) {
+    return right.size > 0;
   }
 
-  return right.sourceTurnRanges.some((range) => leftThreads.has(range.threadId));
+  return [...right].some((threadId) => left.has(threadId));
 }
 
 function buildMemoryStub(memory: RankedMemory, maxTokens: number): RankedMemory | null {
