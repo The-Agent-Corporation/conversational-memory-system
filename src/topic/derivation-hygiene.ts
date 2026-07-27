@@ -15,9 +15,15 @@
  * 11-CONTEXT.md (`silent-sentinel`, `structured-json-emission`) — these two were NOT
  * part of the 2026-07-26 measured run; the manual sim re-run (Plan 06) reports the
  * shifted numbers.
+ *
+ * Plan 11-20 (rule version bumped to v2): added `task-notification` and `local-command-caveat`,
+ * both counted `add-rule` verdicts from a full census of the live 292,407-event corpus —
+ * see `.planning/phases/11-derivation-input-hygiene/11-SCAFFOLD-AUDIT.md` and ADR 0048's
+ * addendum. The version bump marks every existing contraction checkpoint stale via
+ * `PROCESSOR_VERSION` (src/daemon/contraction-runner.ts), per REQ-054.
  */
 
-export const HYGIENE_RULE_VERSION = "hygiene-rules/v1";
+export const HYGIENE_RULE_VERSION = "hygiene-rules/v2";
 
 export type DerivationClass = "conversational" | "tool_activity" | "synthetic_injected";
 
@@ -70,7 +76,11 @@ export const SYNTHETIC_MARKERS: readonly { ruleId: string; marker: string }[] = 
   { ruleId: "session-continuation", marker: "This session is being continued from a previous conversation" },
   { ruleId: "local-command-stdout", marker: "<local-command-stdout>" },
   { ruleId: "system-reminder-only", marker: "<system-reminder>" },
-  { ruleId: "silent-sentinel", marker: "[SILENT]" }
+  { ruleId: "silent-sentinel", marker: "[SILENT]" },
+  // Plan 11-20 (11-SCAFFOLD-AUDIT.md): counted census of the live corpus against 292,407
+  // events. Both are anchored literal prefixes with an `add-rule` verdict.
+  { ruleId: "task-notification", marker: "<task-notification>" },
+  { ruleId: "local-command-caveat", marker: "<local-command-caveat>" }
 ];
 
 /** Looks up a registered marker by rule id, so rule.test bodies never re-type the literal. */
@@ -101,7 +111,11 @@ export const SYNTHETIC_RULES: readonly SyntheticRule[] = [
   // Confirmed 2026-07-26 (11-CONTEXT.md), NOT part of the measured 55,930/77.6MB run —
   // the Plan 06 sim re-run reports the shifted numbers with these included.
   { id: "silent-sentinel", test: (c) => c.startsWith(markerFor("silent-sentinel")), roles: ["assistant"] },
-  { id: "structured-json-emission", test: (c) => isBareJsonObject(c), roles: ["assistant"] }
+  { id: "structured-json-emission", test: (c) => isBareJsonObject(c), roles: ["assistant"] },
+  // Plan 11-20: counted census additions, both anchored literal prefixes, no role gate
+  // (mirrors local-command-stdout / system-reminder-only). See 11-SCAFFOLD-AUDIT.md.
+  { id: "task-notification", test: (c) => c.startsWith(markerFor("task-notification")) },
+  { id: "local-command-caveat", test: (c) => c.startsWith(markerFor("local-command-caveat")) }
 ];
 
 export const TOOL_CALL_PREFIX = "[Tool call: ";
