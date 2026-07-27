@@ -3,7 +3,7 @@ import type { Anchor, Box, InjectionPacket, MemoryTrace, Summary, TurnRange } fr
 import { cosineSimilarity, type Embedder } from "../embeddings/embedder.js";
 import type { InjectionRequest } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
-import { REVIVABLE_MEMORY_STATE, isRetrievableState } from "./retrievable-state.js";
+import { RETRIEVAL_CANDIDATE_STATES, REVIVABLE_MEMORY_STATE, isRetrievableState } from "./retrievable-state.js";
 
 interface RankedMemory {
   kind: "summary" | "anchor" | "trace" | "box_context";
@@ -27,8 +27,16 @@ export class MemoryRetriever {
   ) {}
 
   async prepareInjection(request: InjectionRequest): Promise<InjectionPacket | null> {
+    // Store-level filter is an optimization for query shape only, never the authority boundary:
+    // applyRetrievalBoundary below re-applies the person, scope, and state predicates over
+    // whatever this call returns. RETRIEVAL_CANDIDATE_STATES covers both the retrievable and
+    // revivable partitions, so one call here is enough — no second query for stale summaries.
+    const summaryFilter =
+      request.personId !== undefined
+        ? { personId: request.personId, scopeIds: request.allowedScopeIds, states: RETRIEVAL_CANDIDATE_STATES }
+        : { states: RETRIEVAL_CANDIDATE_STATES };
     const [allSummaries, allAnchors, allTraces, allBoxes] = await Promise.all([
-      this.store.listSummaries(),
+      this.store.listSummaries(summaryFilter),
       this.store.listAnchors(),
       this.store.listTraces({ state: "approved" }),
       this.store.listBoxes()
