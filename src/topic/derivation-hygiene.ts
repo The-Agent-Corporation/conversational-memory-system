@@ -104,7 +104,7 @@ export const SYNTHETIC_RULES: readonly SyntheticRule[] = [
   { id: "structured-json-emission", test: (c) => isBareJsonObject(c), roles: ["assistant"] }
 ];
 
-const TOOL_CALL_PREFIX = "[Tool call: ";
+export const TOOL_CALL_PREFIX = "[Tool call: ";
 const TOOL_NAME = /^\[Tool call:\s*([^\]]+)\]/;
 
 /** Extracts the bracketed tool name from `[Tool call: NAME] {args}` content. */
