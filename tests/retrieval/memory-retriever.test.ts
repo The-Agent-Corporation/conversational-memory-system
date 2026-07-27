@@ -3,7 +3,14 @@ import { ContractionRunner } from "../../src/daemon/contraction-runner.js";
 import type { CanonicalEvent } from "../../src/domain/canonical.js";
 import type { Anchor, Box, MemoryTrace, Summary } from "../../src/domain/types.js";
 import type { Embedder } from "../../src/embeddings/embedder.js";
-import { MemoryRetriever } from "../../src/retrieval/memory-retriever.js";
+import {
+  MemoryRetriever,
+  addParentBoxContext,
+  applyRetrievalBoundary,
+  rankMemories,
+  selectMemories
+} from "../../src/retrieval/memory-retriever.js";
+import { RETRIEVAL_CANDIDATE_STATES } from "../../src/retrieval/retrievable-state.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 
 const makeSummary = (overrides: Partial<Summary> = {}): Summary => ({
@@ -214,6 +221,47 @@ describe("MemoryRetriever", () => {
     expect(packet?.selectedMemory).toContain("PIP demand deadline");
     expect(packet?.confidence).toBeGreaterThan(0.5);
     await expect(store.listInjections("session_1")).resolves.toEqual([packet]);
+  });
+
+  it("composing the exported internals in prepareInjection's order reproduces its selectedMemory (Plan 11-19 probe precondition)", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary());
+    await store.saveAnchor(makeAnchor());
+
+    const request = {
+      host: "roscoe-hermes",
+      profileId: "default",
+      hostSessionId: "session_1",
+      currentTopicSummary: "Smith PIP demand",
+      requestedAt: "2026-05-04T10:10:00.000Z"
+    };
+
+    const retriever = legacyRetriever(store);
+    const packet = await retriever.prepareInjection(request);
+    expect(packet).not.toBeNull();
+
+    // Reconstructed against a FRESH fetch, mirroring prepareInjection's own composition order —
+    // this must run before any store-mutating call, which the probe honors by reconstructing
+    // before calling prepareInjection at all (T-11-59).
+    const [allSummaries, allAnchors, allTraces, allBoxes] = await Promise.all([
+      store.listSummaries({ states: RETRIEVAL_CANDIDATE_STATES }),
+      store.listAnchors(),
+      store.listTraces({ state: "approved" }),
+      store.listBoxes()
+    ]);
+    const { summaries, anchors, traces, boxes } = applyRetrievalBoundary(
+      request,
+      allSummaries,
+      allAnchors,
+      allTraces,
+      allBoxes,
+      true
+    );
+    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, { topicEmbedding: null });
+    const primarySelected = selectMemories(ranked, undefined);
+    const reconstructed = addParentBoxContext(primarySelected, boxes, undefined);
+
+    expect(reconstructed.map((memory) => memory.text).join("\n\n")).toBe(packet!.selectedMemory);
   });
 
   it("returns null when no memory matches the current topic", async () => {

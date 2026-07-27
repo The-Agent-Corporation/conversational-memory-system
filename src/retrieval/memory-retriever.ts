@@ -158,7 +158,7 @@ export class MemoryRetriever {
   }
 }
 
-function applyRetrievalBoundary(
+export function applyRetrievalBoundary(
   request: InjectionRequest,
   summaries: Summary[],
   anchors: Anchor[],
@@ -231,7 +231,7 @@ function applyRetrievalBoundary(
   };
 }
 
-function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): RankedMemory[] {
+export function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): RankedMemory[] {
   const deduped = dedupeRankedMemory(ranked);
 
   if (maxMemoryTokens === undefined) {
@@ -270,7 +270,7 @@ function selectMemories(ranked: RankedMemory[], maxMemoryTokens?: number): Ranke
   return selected;
 }
 
-function addParentBoxContext(
+export function addParentBoxContext(
   selected: RankedMemory[],
   boxes: Box[],
   maxMemoryTokens?: number
@@ -408,7 +408,7 @@ function strengthen(strength: number): number {
   return Math.min(1, Number((strength + 0.05).toFixed(2)));
 }
 
-function rankMemories(
+export function rankMemories(
   topicSummary: string,
   summaries: Summary[],
   anchors: Anchor[],

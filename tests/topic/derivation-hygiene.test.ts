@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   HYGIENE_RULE_VERSION,
+  SYNTHETIC_MARKERS,
+  SYNTHETIC_RULES,
   classifyEvent,
   collapseText,
   derivationContents,
@@ -8,6 +10,10 @@ import {
   toolNameOf,
   type ClassifiableEvent
 } from "../../src/topic/derivation-hygiene.js";
+
+// Rules with no literal `startsWith` prefix: city-harness-preamble is a regex, structured-json-emission
+// parses JSON. Neither can become a SYNTHETIC_MARKERS entry (T-11-60).
+const NON_LITERAL_RULE_IDS = ["city-harness-preamble", "structured-json-emission"];
 
 const conv = (content: string, overrides: Partial<ClassifiableEvent> = {}): ClassifiableEvent => ({
   content,
@@ -122,6 +128,30 @@ describe("classifyEvent", () => {
       const result = classifyEvent({ content: "raw tool row content", role: "tool" });
       expect(result.derivationClass).toBe("tool_activity");
     });
+  });
+});
+
+describe("SYNTHETIC_MARKERS — probe/product drift guard (T-11-60)", () => {
+  it("every marker's own rule matches content beginning with that marker", () => {
+    for (const { ruleId, marker } of SYNTHETIC_MARKERS) {
+      const rule = SYNTHETIC_RULES.find((r) => r.id === ruleId);
+      expect(rule, `no SYNTHETIC_RULES entry for marker ruleId "${ruleId}"`).toBeDefined();
+      expect(rule!.test(`${marker}x`), `rule "${ruleId}" did not match its own marker`).toBe(true);
+    }
+  });
+
+  it("SYNTHETIC_MARKERS ids plus the two non-literal rule ids equal the full SYNTHETIC_RULES id set", () => {
+    const markerIds = SYNTHETIC_MARKERS.map((m) => m.ruleId).sort();
+    const combined = [...markerIds, ...NON_LITERAL_RULE_IDS].sort();
+    const allRuleIds = SYNTHETIC_RULES.map((r) => r.id).sort();
+    expect(combined).toEqual(allRuleIds);
+  });
+
+  it("named non-literal rules are absent from SYNTHETIC_MARKERS", () => {
+    const markerIds = new Set(SYNTHETIC_MARKERS.map((m) => m.ruleId));
+    for (const ruleId of NON_LITERAL_RULE_IDS) {
+      expect(markerIds.has(ruleId)).toBe(false);
+    }
   });
 });
 

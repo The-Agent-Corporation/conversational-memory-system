@@ -52,22 +52,55 @@ const isBareJsonObject = (content: string): boolean => {
   }
 };
 
+/**
+ * Literal `startsWith` prefixes of the literal-prefix rules below, exported so a consumer (the
+ * Plan 11-19 recall probe) can classify against the SAME markers the rules use instead of
+ * hand-rolling a second, driftable pattern list (T-11-60). `city-harness-preamble` (regex) and
+ * `structured-json-emission` (JSON.parse) have no literal prefix and are deliberately absent —
+ * see the exhaustiveness test in derivation-hygiene.test.ts.
+ */
+export const SYNTHETIC_MARKERS: readonly { ruleId: string; marker: string }[] = [
+  { ruleId: "skill-invocation", marker: "[IMPORTANT: The user has invoked" },
+  { ruleId: "harness-system", marker: "[SYSTEM:" },
+  { ruleId: "cron-session-tag", marker: "[cron:" },
+  { ruleId: "automated-followup", marker: "### Task: follow-up questions" },
+  { ruleId: "automated-task-block", marker: "### Task:" },
+  { ruleId: "skill-body-injection", marker: "Base directory for this skill:" },
+  { ruleId: "context-compaction", marker: "[CONTEXT COMPACTION" },
+  { ruleId: "session-continuation", marker: "This session is being continued from a previous conversation" },
+  { ruleId: "local-command-stdout", marker: "<local-command-stdout>" },
+  { ruleId: "system-reminder-only", marker: "<system-reminder>" },
+  { ruleId: "silent-sentinel", marker: "[SILENT]" }
+];
+
+/** Looks up a registered marker by rule id, so rule.test bodies never re-type the literal. */
+const markerFor = (ruleId: string): string => {
+  const entry = SYNTHETIC_MARKERS.find((m) => m.ruleId === ruleId);
+  if (!entry) {
+    throw new Error(`No SYNTHETIC_MARKERS entry registered for rule "${ruleId}"`);
+  }
+  return entry.marker;
+};
+
 /** Deterministic, anchored rules. Conservative: unmatched stays conversational. */
 export const SYNTHETIC_RULES: readonly SyntheticRule[] = [
-  { id: "skill-invocation", test: (c) => c.startsWith("[IMPORTANT: The user has invoked") },
-  { id: "harness-system", test: (c) => c.startsWith("[SYSTEM:") },
-  { id: "cron-session-tag", test: (c) => c.startsWith("[cron:") },
-  { id: "automated-followup", test: (c) => c.startsWith("### Task:") && c.includes("follow-up questions") },
-  { id: "automated-task-block", test: (c) => c.startsWith("### Task:") },
-  { id: "skill-body-injection", test: (c) => c.startsWith("Base directory for this skill:") },
-  { id: "context-compaction", test: (c) => c.startsWith("[CONTEXT COMPACTION") },
-  { id: "session-continuation", test: (c) => c.startsWith("This session is being continued from a previous conversation") },
-  { id: "local-command-stdout", test: (c) => c.startsWith("<local-command-stdout>") },
-  { id: "system-reminder-only", test: (c) => c.startsWith("<system-reminder>") },
+  { id: "skill-invocation", test: (c) => c.startsWith(markerFor("skill-invocation")) },
+  { id: "harness-system", test: (c) => c.startsWith(markerFor("harness-system")) },
+  { id: "cron-session-tag", test: (c) => c.startsWith(markerFor("cron-session-tag")) },
+  {
+    id: "automated-followup",
+    test: (c) => c.startsWith(markerFor("automated-task-block")) && c.includes("follow-up questions")
+  },
+  { id: "automated-task-block", test: (c) => c.startsWith(markerFor("automated-task-block")) },
+  { id: "skill-body-injection", test: (c) => c.startsWith(markerFor("skill-body-injection")) },
+  { id: "context-compaction", test: (c) => c.startsWith(markerFor("context-compaction")) },
+  { id: "session-continuation", test: (c) => c.startsWith(markerFor("session-continuation")) },
+  { id: "local-command-stdout", test: (c) => c.startsWith(markerFor("local-command-stdout")) },
+  { id: "system-reminder-only", test: (c) => c.startsWith(markerFor("system-reminder-only")) },
   { id: "city-harness-preamble", test: (c) => /^\[[a-z0-9-]+-city\]\s+\S+\s+•\s+20\d\d-/.test(c) },
   // Confirmed 2026-07-26 (11-CONTEXT.md), NOT part of the measured 55,930/77.6MB run —
   // the Plan 06 sim re-run reports the shifted numbers with these included.
-  { id: "silent-sentinel", test: (c) => c.startsWith("[SILENT]"), roles: ["assistant"] },
+  { id: "silent-sentinel", test: (c) => c.startsWith(markerFor("silent-sentinel")), roles: ["assistant"] },
   { id: "structured-json-emission", test: (c) => isBareJsonObject(c), roles: ["assistant"] }
 ];
 
