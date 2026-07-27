@@ -31,6 +31,7 @@ import type {
   TraceFilter
 } from "./memory-store.js";
 import { cosineSimilarity } from "../embeddings/embedder.js";
+import { isRetrievableState } from "../retrieval/retrievable-state.js";
 import { ImportCheckpointSchema, type ImportCheckpoint } from "../imports/types.js";
 import {
   HistoricalBootstrapCheckpointSchema,
@@ -941,6 +942,15 @@ export class InMemoryStore implements MemoryStore {
   }
 
   async findNearestSummaries(query: FindNearestSummariesQuery): Promise<SummaryVectorMatch[]> {
+    // GAP-11-A sweep (T-11-26, T-11-27): identical semantics to SqliteStore.findNearestSummaries
+    // -- a vector row whose summary is absent or non-retrievable is dropped, computed once per
+    // call from `this.summaries`, never once per candidate row.
+    const retrievableSummaryIds = new Set(
+      this.summaries
+        .filter((summary) => summary.personId === query.personId && isRetrievableState(summary.state))
+        .map((summary) => summary.id)
+    );
+
     const allowedSet = new Set(query.allowedScopeIds);
     const candidates = this.summaryVectors.filter(
       (record) =>
@@ -948,6 +958,7 @@ export class InMemoryStore implements MemoryStore {
         record.model === query.model &&
         record.personId === query.personId &&
         record.dimensions === query.vector.length &&
+        retrievableSummaryIds.has(record.summaryId) &&
         (record.scopeIds.length ? record.scopeIds : ["personal"]).every((scopeId) => allowedSet.has(scopeId))
     );
     const scored: SummaryVectorMatch[] = candidates.map((record) => ({

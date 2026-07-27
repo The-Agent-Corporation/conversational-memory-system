@@ -21,6 +21,7 @@ import {
   type Box,
   type InjectionPacket,
   type MemoryProposal,
+  type MemoryState,
   type MemoryTrace,
   type Summary,
   type Turn
@@ -34,6 +35,7 @@ import type {
   TraceFilter
 } from "./memory-store.js";
 import { cosineSimilarity } from "../embeddings/embedder.js";
+import { isRetrievableState } from "../retrieval/retrievable-state.js";
 import { packFloat32Vector, unpackFloat32Vector } from "../embeddings/vector-codec.js";
 import { ImportCheckpointSchema, type ImportCheckpoint } from "../imports/types.js";
 import {
@@ -1366,9 +1368,24 @@ export class SqliteStore implements MemoryStore {
       )
       .all(query.provider, query.model, query.personId) as SummaryVectorTableRow[];
 
+    // GAP-11-A sweep (T-11-26, T-11-27): a vector row whose summary is absent or non-retrievable
+    // must be dropped as a fail-closed second line behind tombstoning at supersession time
+    // (deleteSummaryVectors). Loaded once per call -- not once per candidate row -- to avoid
+    // reintroducing an O(n) per-row lookup.
+    const summaryStateRows = this.database
+      .prepare(`select payload from summaries where json_extract(payload, '$.personId') = ?`)
+      .all(query.personId) as PayloadRow[];
+    const retrievableSummaryIds = new Set(
+      summaryStateRows
+        .map((row) => JSON.parse(row.payload) as { id: string; state: string })
+        .filter((summary) => isRetrievableState(summary.state as MemoryState))
+        .map((summary) => summary.id)
+    );
+
     const allowedScopeIds = new Set(query.allowedScopeIds);
     const matches: SummaryVectorMatch[] = [];
     for (const row of candidateRows) {
+      if (!retrievableSummaryIds.has(row.summary_id)) continue;
       const scopeIds = JSON.parse(row.scope_ids_json) as string[];
       const effectiveScopeIds = scopeIds.length ? scopeIds : ["personal"];
       if (!effectiveScopeIds.every((scopeId) => allowedScopeIds.has(scopeId))) continue;

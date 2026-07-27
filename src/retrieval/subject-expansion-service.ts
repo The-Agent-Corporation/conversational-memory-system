@@ -8,6 +8,7 @@ import {
   type ContinuationCursorCodec
 } from "../mcp/continuation-cursor.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { isRetrievableState } from "./retrievable-state.js";
 
 export interface SubjectExpansionRequest {
   subject: string;
@@ -150,6 +151,7 @@ export class SubjectExpansionService {
       if (
         !summary ||
         summary.personId !== this.authority.personId ||
+        !isRetrievableState(summary.state) ||
         !(summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId))
       ) {
         memo.set(id, null);

@@ -157,6 +157,14 @@ for (const backend of backends) {
       // deliberately weaker, so a boundary bug (score-before-filter) would surface it first.
       const queryVector = [1, 0, 0, 0];
 
+      // GAP-11-A sweep: findNearestSummaries now also drops a vector whose summary row is
+      // absent or non-retrievable, so every summaryId used below needs a matching retrievable
+      // summary row for this SC4/D-06 boundary assertion to still exercise person/scope, not
+      // orphan-dropping.
+      await store.saveSummary(summaryRecord({ id: "summary_other_person", state: "active", personId: "person_2" }));
+      await store.saveSummary(summaryRecord({ id: "summary_out_of_scope", state: "active", personId: "person_1" }));
+      await store.saveSummary(summaryRecord({ id: "summary_authorized", state: "active", personId: "person_1" }));
+
       await store.saveSummaryVector(
         vectorRecord({
           summaryId: "summary_other_person",
@@ -230,8 +238,8 @@ for (const backend of backends) {
     it("drops a vector whose summary is superseded even when it is the nearest match (GAP-11-A sweep, T-11-26)", async () => {
       // Deterministic literal vectors, not random: query is an exact match for the superseded
       // row and a weaker (but still authorized) match for the active row.
-      await store.saveSummary(summaryRecord({ id: "summary_active_state", state: "active" }));
-      await store.saveSummary(summaryRecord({ id: "summary_superseded_state", state: "superseded" }));
+      await store.saveSummary(summaryRecord({ id: "summary_active_state", state: "active", personId: "person_1" }));
+      await store.saveSummary(summaryRecord({ id: "summary_superseded_state", state: "superseded", personId: "person_1" }));
       await store.saveSummaryVector(
         vectorRecord({ summaryId: "summary_active_state", vector: [0.6, 0.4, 0, 0] })
       );
@@ -254,7 +262,7 @@ for (const backend of backends) {
     });
 
     it("drops a vector whose summary row does not exist at all, an orphan (GAP-11-A sweep, T-11-26)", async () => {
-      await store.saveSummary(summaryRecord({ id: "summary_present", state: "active" }));
+      await store.saveSummary(summaryRecord({ id: "summary_present", state: "active", personId: "person_1" }));
       await store.saveSummaryVector(
         vectorRecord({ summaryId: "summary_present", vector: [0.6, 0.4, 0, 0] })
       );
@@ -423,7 +431,10 @@ describe("cross-store exact parity (SC3, D-07)", () => {
   };
 
   async function seed(store: MemoryStore): Promise<void> {
+    // GAP-11-A sweep: findNearestSummaries now drops a vector whose summary row is absent or
+    // non-retrievable, so every corpus entry needs a matching active summary row in both stores.
     for (const record of corpus) {
+      await store.saveSummary(summaryRecord({ id: record.summaryId, state: "active", personId: record.personId }));
       await store.saveSummaryVector(record);
     }
   }
@@ -513,6 +524,10 @@ describe("cross-store exact parity (SC3, D-07)", () => {
         vector: [0.5, 0.5]
       });
 
+      for (const store of [inMemory.store, sqlite.store]) {
+        await store.saveSummary(summaryRecord({ id: "summary_wellformed", state: "active", personId: "person_1" }));
+        await store.saveSummary(summaryRecord({ id: "summary_drifted", state: "active", personId: "person_1" }));
+      }
       await inMemory.store.saveSummaryVector(wellFormed);
       await inMemory.store.saveSummaryVector(drifted);
       await sqlite.store.saveSummaryVector(wellFormed);

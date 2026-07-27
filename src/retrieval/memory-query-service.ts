@@ -4,6 +4,7 @@ import { DisclosureLabeler } from "../mcp/disclosure-labels.js";
 import { readDaemonStatusSnapshot } from "../bootstrap/status-command.js";
 import type { Anchor, Box, MemoryTrace, Summary, TurnRange } from "../domain/types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { isRetrievableState } from "./retrievable-state.js";
 
 export type MemoryReviewKind = "summary" | "anchor" | "box" | "trace";
 
@@ -191,6 +192,7 @@ export class MemoryQueryService {
     const allowed = new Set(this.authority.allowedScopeIds);
     const ownedSummaries = allSummaries.filter((summary) => summary.personId === this.authority.personId);
     const summaries = ownedSummaries.filter((summary) =>
+      isRetrievableState(summary.state) &&
       (summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId))
     );
     const summaryIds = new Set(summaries.map((summary) => summary.id));
