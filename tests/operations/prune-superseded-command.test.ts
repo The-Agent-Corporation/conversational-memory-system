@@ -2,7 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Anchor, Box, CanonicalEvent, InjectionPacket, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
+import type { CanonicalEvent } from "../../src/domain/canonical.js";
+import type { Anchor, Box, InjectionPacket, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import {
   runPruneSupersededCommand,
