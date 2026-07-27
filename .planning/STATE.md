@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 8
+current_plan: 1
 status: executing
-stopped_at: Completed 11-08-PLAN.md
-last_updated: "2026-07-27T01:35:50.554Z"
+stopped_at: Completed 11-09-PLAN.md
+last_updated: "2026-07-27T01:47:17.023Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 78
-  completed_plans: 72
+  completed_plans: 73
   percent: 53
 ---
 
@@ -46,8 +46,8 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T01:35:07.638Z
-**Stopped at:** Completed 11-08-PLAN.md
+**Last session:** 2026-07-27T01:47:12.675Z
+**Stopped at:** Completed 11-09-PLAN.md
 **Resume file:** None
 
 ## Performance Metrics
@@ -62,6 +62,7 @@ progress:
 | Phase 11 P01 | 3min | 3 tasks | 3 files |
 | Phase 11 P06 | 55min | 3 tasks | 4 files |
 | Phase 11 P08 | 5min | 3 tasks | 6 files |
+| Phase 11 P09 | 25min | 3 tasks | 8 files |
 
 ## Decisions
 
@@ -88,10 +89,13 @@ progress:
 - [Phase 11]: Slice-straddling tool runs handled via literal ContractionCheckpoint.pendingToolRun (owner decision 2026-07-26), documented in ADR 0048 — Upsert-and-correct is eventually-correct but durably persists a still-growing tool count that a crash, incremental embedding, or memory explain could consume as final
 - [Phase 11]: Retrievable memory states are active/compacted/revived; excluded are superseded/stale/proposed/approved/rejected/disputed — GAP-11-A: applyRetrievalBoundary never filtered on state, so the derivation-hygiene rebuild's 87,727 superseded summaries were still retrieved and injected; enforced centrally so traces/boxes inherit exclusion
 - [Phase 11]: Stale summaries use deferred revival: promoted to revived on scoring above the selected floor but excluded from the packet that triggered the promotion — Excluding stale from retrievable states removes the only trigger for revived, which refreshBoxState depends on for box revival; dropping revival entirely was rejected as it makes revived permanently unreachable
+- [Phase 11]: Reused the single isRetrievableState predicate everywhere in the GAP-11-A sweep (MCP read/search, subject expansion, both stores' findNearestSummaries); no duplicate predicate introduced
+- [Phase 11]: findNearestSummaries loads the retrievable summary-id set once per call, not per candidate row, to avoid reintroducing an O(n) hotspot; no summary_vectors schema change, tombstoning at supersession remains primary
+- [Phase 11]: conversation-resumer.ts left unchanged (expands to raw Turn[] with no MemoryState field, already reachable via direct canonical-event queries per D-4); its separate lack of person/scope authorization flagged as residual risk, out of this plan's scope
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 8 of 14
+Plan: 9 of 14
 Status: Ready to execute
 Last activity: 2026-07-27

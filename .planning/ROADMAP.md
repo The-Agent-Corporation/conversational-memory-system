@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 8/14 plans executed
+**Plans:** 9/14 plans executed
 
 Plans:
 **Wave 1**
@@ -358,7 +358,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6)*
 
-- [ ] 11-09-PLAN.md — Sweep sibling candidate-selection paths (MCP read/search, subject expansion, vector search in both stores) + `11-RETRIEVAL-SWEEP.md`.
+- [x] 11-09-PLAN.md — Sweep sibling candidate-selection paths (MCP read/search, subject expansion, vector search in both stores) + `11-RETRIEVAL-SWEEP.md`.
 
 **Wave 8** *(blocked on Wave 7)*
 
