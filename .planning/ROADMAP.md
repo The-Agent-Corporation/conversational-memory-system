@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 10/14 plans executed
+**Plans:** 11/14 plans executed
 
 Plans:
 **Wave 1**
@@ -366,7 +366,7 @@ Plans:
 
 **Wave 9** *(blocked on Wave 8)*
 
-- [ ] 11-11-PLAN.md — `commitSupersededSummaryPrune` store contract with in-transaction eligibility and orphan prevention, in both store implementations.
+- [x] 11-11-PLAN.md — `commitSupersededSummaryPrune` store contract with in-transaction eligibility and orphan prevention, in both store implementations.
 
 **Wave 10** *(blocked on Wave 9)*
 

@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 10
+current_plan: 1
 status: executing
 stopped_at: Completed 11-09-PLAN.md
-last_updated: "2026-07-27T02:00:27.364Z"
+last_updated: "2026-07-27T02:10:13.225Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 78
-  completed_plans: 74
+  completed_plans: 75
   percent: 53
 ---
 
@@ -46,7 +46,7 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T01:56:41.319Z
+**Last session:** 2026-07-27T02:10:08.605Z
 **Stopped at:** Completed 11-09-PLAN.md
 **Resume file:** None
 
@@ -64,6 +64,7 @@ progress:
 | Phase 11 P08 | 5min | 3 tasks | 6 files |
 | Phase 11 P09 | 25min | 3 tasks | 8 files |
 | Phase 11 P10 | 5min | 3 tasks | 8 files |
+| Phase 11 P11 | 25min | 3 tasks | 4 files |
 
 ## Decisions
 
@@ -95,10 +96,12 @@ progress:
 - [Phase 11]: conversation-resumer.ts left unchanged (expands to raw Turn[] with no MemoryState field, already reachable via direct canonical-event queries per D-4); its separate lack of person/scope authorization flagged as residual risk, out of this plan's scope
 - [Phase 11]: SummaryFilter mirrors ProposalFilter/TraceFilter idiom; scopeIds subset applied in JS post-fetch, personId/states pushed into an index-backed SQL WHERE clause (migration 3)
 - [Phase 11]: prepareInjection makes exactly one filtered listSummaries call per request; applyRetrievalBoundary remains the sole authority, the store filter is an optimization only (T-11-30)
+- [Phase 11]: commitSupersededSummaryPrune recomputes eligibility authoritatively inside the transaction; caller's summaryIds list is never trusted
+- [Phase 11]: freedPayloadBytes/payloadBytes uses JSON.stringify(parsedSummary).length in both stores, provably identical to SqliteStore's length(payload) column
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 10 of 14
-Status: Ready to execute
+Plan: 11 of 14
+Status: Plan 11-11 complete (superseded-summary prune machinery); ready to execute Plan 11-12
 Last activity: 2026-07-27
