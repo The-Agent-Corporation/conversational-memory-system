@@ -1,0 +1,173 @@
+{
+  "probeVersion": 2,
+  "hygieneRuleVersion": "hygiene-rules/v2",
+  "label": "doc-cited-toolcall-6",
+  "databasePath": "/Users/aaronwhaley/.memory/aaron.db",
+  "personId": "aaron",
+  "results": [
+    {
+      "id": "Q1",
+      "currentTopicSummary": "zero-knowledge sync relay design decision",
+      "items": [
+        {
+          "rank": 1,
+          "kind": "summary",
+          "id": "historical_summary_015a8c0126ac90404eb9fb32c7211761fb2959708e8d4150b33067789321c730",
+          "summaryIds": [
+            "historical_summary_015a8c0126ac90404eb9fb32c7211761fb2959708e8d4150b33067789321c730"
+          ],
+          "traceId": null,
+          "boxIds": [],
+          "tokenCount": 13,
+          "score": 0.5833333333333334,
+          "preview": "Both Blockers Confirmed Direct Code Tracing (1 turn, seq 287705-287705): Both blockers are confirmed by direct code tracing. CR-01 is the serious one — it breaks the exact property you were asked to c",
+          "containsToolCallText": true,
+          "classification": {
+            "derivationClass": "conversational",
+            "ruleId": null
+          },
+          "markersFound": []
+        }
+      ],
+      "unhygienicItemCount": 0,
+      "unhygienicRanks": []
+    },
+    {
+      "id": "Q1",
+      "currentTopicSummary": "zero-knowledge sync relay design decision",
+      "items": [
+        {
+          "rank": 2,
+          "kind": "summary",
+          "id": "historical_summary_069babea134604e241f1ad4b879ed9e2fd66832703449ee54b8a83e3965a57ea",
+          "summaryIds": [
+            "historical_summary_069babea134604e241f1ad4b879ed9e2fd66832703449ee54b8a83e3965a57ea"
+          ],
+          "traceId": null,
+          "boxIds": [],
+          "tokenCount": 13,
+          "score": 0.5833333333333334,
+          "preview": "Thats Completely Fair Question Answer Requirement (1 turn, seq 286116-286116): That's a completely fair question — and the answer is that this requirement isn't imposed by anyone external. It's a gate",
+          "containsToolCallText": true,
+          "classification": {
+            "derivationClass": "conversational",
+            "ruleId": null
+          },
+          "markersFound": []
+        }
+      ],
+      "unhygienicItemCount": 0,
+      "unhygienicRanks": []
+    },
+    {
+      "id": "Q3",
+      "currentTopicSummary": "macOS Keychain storage for sync device secrets",
+      "items": [
+        {
+          "rank": 0,
+          "kind": "summary",
+          "id": "historical_summary_0719251073aa374a981e09990edd76c62e0066eb47d138bd3548b8c6f8b7d3c3",
+          "summaryIds": [
+            "historical_summary_0719251073aa374a981e09990edd76c62e0066eb47d138bd3548b8c6f8b7d3c3"
+          ],
+          "traceId": null,
+          "boxIds": [],
+          "tokenCount": 13,
+          "score": 0.7,
+          "preview": "Rsc W0z Vivo Run Live Producing (1 turn, seq 287528-287528): The rsc-w0z in-vivo run is live and producing exactly the evidence the bead needed. Status so far:\n\n**Setup (done):**\n- Committed the maski",
+          "containsToolCallText": true,
+          "classification": {
+            "derivationClass": "conversational",
+            "ruleId": null
+          },
+          "markersFound": []
+        }
+      ],
+      "unhygienicItemCount": 0,
+      "unhygienicRanks": []
+    },
+    {
+      "id": "Q3",
+      "currentTopicSummary": "macOS Keychain storage for sync device secrets",
+      "items": [
+        {
+          "rank": 2,
+          "kind": "summary",
+          "id": "historical_summary_e189f4cde7f7ba30fcfee772d1fbe4935b26c41ed2f23def7ca65441568c3fdc",
+          "summaryIds": [
+            "historical_summary_e189f4cde7f7ba30fcfee772d1fbe4935b26c41ed2f23def7ca65441568c3fdc"
+          ],
+          "traceId": null,
+          "boxIds": [],
+          "tokenCount": 19,
+          "score": 0.7,
+          "preview": "It, So The Same Task-id May Notify More Than Once (1 turn, seq 290200-290200): <task-notification>\n<task-id>a53fd07244f459d36</task-id>\n<tool-use-id>toolu_01Wqk7FGvPD3PT3b1tDPJ6AP</tool-use-id>\n<outpu",
+          "containsToolCallText": true,
+          "classification": {
+            "derivationClass": "conversational",
+            "ruleId": null
+          },
+          "markersFound": [
+            "task-notification"
+          ]
+        }
+      ],
+      "unhygienicItemCount": 0,
+      "unhygienicRanks": []
+    },
+    {
+      "id": "Q4",
+      "currentTopicSummary": "daemon lease acquisition and single-writer design",
+      "items": [
+        {
+          "rank": 0,
+          "kind": "summary",
+          "id": "historical_summary_67d56fcbf796b6df1b9d0fbfd3c24a867c19f9d8c8c0b163141f9315f3b5b142",
+          "summaryIds": [
+            "historical_summary_67d56fcbf796b6df1b9d0fbfd3c24a867c19f9d8c8c0b163141f9315f3b5b142"
+          ],
+          "traceId": null,
+          "boxIds": [],
+          "tokenCount": 13,
+          "score": 0.5833333333333334,
+          "preview": "Good Confirms Store Postgres Persistence Layer (2 turns, seq 280217-280219): Good, that confirms `store.ts` (the postgres persistence layer) never touches `instance_id` at all — it's entirely out-of-b",
+          "containsToolCallText": true,
+          "classification": {
+            "derivationClass": "conversational",
+            "ruleId": null
+          },
+          "markersFound": []
+        }
+      ],
+      "unhygienicItemCount": 0,
+      "unhygienicRanks": []
+    },
+    {
+      "id": "Q10",
+      "currentTopicSummary": "person and scope isolation boundary for memory retrieval",
+      "items": [
+        {
+          "rank": 1,
+          "kind": "summary",
+          "id": "historical_summary_a42dfe862bbe5a5479ddf63defc682ed8d92f3df97f81ff3146221154f2eb41e",
+          "summaryIds": [
+            "historical_summary_a42dfe862bbe5a5479ddf63defc682ed8d92f3df97f81ff3146221154f2eb41e"
+          ],
+          "traceId": null,
+          "boxIds": [],
+          "tokenCount": 13,
+          "score": 0.7,
+          "preview": "Rsc 3cm Claimed Integration Groundwork Mapped (1 turn, seq 290576-290576): rsc-3cm is claimed and the integration groundwork is mapped. The build now waits only on the DAG inventory (the agent is stil",
+          "containsToolCallText": true,
+          "classification": {
+            "derivationClass": "conversational",
+            "ruleId": null
+          },
+          "markersFound": []
+        }
+      ],
+      "unhygienicItemCount": 0,
+      "unhygienicRanks": []
+    }
+  ]
+}
