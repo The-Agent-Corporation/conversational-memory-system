@@ -126,6 +126,10 @@ None — no external service configuration required. Note for the user: migratio
 - `npx vitest run` (104 files, 901 tests, 4 skipped) and `npm run typecheck` are both green.
 - No blockers for Plans 11-14.
 
+## Self-Check: PASSED
+
+All 9 claimed files found on disk; all 4 claimed commit hashes (`37c0cce`, `55dea43`, `48aac3f`, `ce77cf5`) found in git log.
+
 ---
 *Phase: 11-derivation-input-hygiene*
 *Completed: 2026-07-26*
