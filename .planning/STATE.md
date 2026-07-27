@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 1
-status: executing
+status: gaps_found
 stopped_at: Completed 11-06-PLAN.md
 last_updated: "2026-07-26T23:19:06.615Z"
 last_activity: 2026-07-26
@@ -36,6 +36,8 @@ progress:
 - **Phase 11 — Derivation Input Hygiene inserted 2026-07-26.** Corpus audit found 64% of canonical events are tool calls, 38% of summaries contain verbatim `[Tool call:` argument text, and ~49% of "user" turns are harness-injected scaffolding — roughly 7% of the corpus is human-authored. Former Phases 11-14 renumbered to 12-15; REQ-052/053/054 added. See `.planning/phases/11-derivation-input-hygiene/11-SCOPE-INSERT.md`.
 - **Phase 11 planned 2026-07-26**: 7 plans / 5 waves, plan-checker PASSED (1 warning, see below). Simulation against the live corpus projects 135,366 -> 55,930 summaries (-59%) and 228.9 MB -> 77.6 MB (-66%). Next: `/gsd:execute-phase 11`.
 - **Phase 11 warning RESOLVED 2026-07-26 (owner decision).** The plan-checker warning on 11-02 — that it satisfied CONTEXT decision 6 implicitly via stable-id upsert rather than by extending `ContractionCheckpoint` — was resolved in favor of the **literal checkpoint extension**. The implicit form is eventually-correct but persists an observable intermediate summary carrying a still-growing tool count. 11-02 was replanned: `ContractionCheckpoint` gains `pendingToolRun` (JSON payload field, no DDL, no schema-version bump), a non-complete slice withholds a trailing open run from derivation text, a drift guard fails closed to the rewind path on late inserts, and corpus-end always flushes. 11-01 gained an `openToolRunStart` export; 11-02 is now 4 tasks and also touches `src/daemon/types.ts` + `src/storage/sqlite-store.ts`. Recorded as an addendum in `11-CONTEXT.md`; `11-VALIDATION.md` gained 5 rows. **Phase 11 has no open warnings — ready to execute.**
+- **GAP-11-A (blocking, found 2026-07-26):** the live rebuild left 87,727 superseded summaries holding pre-hygiene tool-call text, and retrieval never filters on `state` — `applyRetrievalBoundary` (`src/retrieval/memory-retriever.ts:142`) filters `personId`/`scopeIds` only, `rankMemories` filters `score > 0` only. Superseded summaries are therefore still retrieved and injected, breaking REQ-053's injection clause. Reproduced in isolation. Pre-existing bug, made active by the rebuild. Next: `/gsd:plan-phase 11 --gaps`.
+- **Live corpus rebuilt 2026-07-26**: 292,407 events -> 50,551 active summaries / 74.1 MB, exactly matching the simulation. Canonical events unchanged. Backup at `~/.memory/aaron.db.pre-phase11` — keep until GAP-11-A is closed. DB migrated to `user_version: 2`.
 - Live corpus is also 6 days stale (last import 2026-07-20) and Codex was never imported at all (4,738 session files, no grant).
 
 ## Known Constraint
@@ -86,7 +88,7 @@ progress:
 
 ## Current Position
 
-Phase: 11 (derivation-input-hygiene) — EXECUTING
+Phase: 11 (derivation-input-hygiene) — GAPS FOUND
 Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-07-26

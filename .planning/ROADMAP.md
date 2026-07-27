@@ -18,7 +18,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 8: Vector Storage Foundation** — Add a scope-safe, tombstone-ready `summary_vectors` store with exact-match parity between SqliteStore and InMemoryStore. (completed 2026-07-21)
 - [x] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default. (completed 2026-07-21)
 - [x] **Phase 10: Embedding Backfill** — Resumable, idempotent, checkpointed backfill of vectors for all 135,366 existing summaries. (completed 2026-07-21)
-- [ ] **Phase 11: Derivation Input Hygiene** — Collapse tool-call runs into activity descriptions and exclude harness-injected scaffolding from derivations, keeping the canonical timeline intact.
+- [x] **Phase 11: Derivation Input Hygiene** — Collapse tool-call runs into activity descriptions and exclude harness-injected scaffolding from derivations, keeping the canonical timeline intact. (completed 2026-07-27)
 - [ ] **Phase 12: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
 - [ ] **Phase 13: Forward-Only Vector Trace Discovery** — Replace shared-term all-pairs trace discovery with forward-only nearest-neighbor discovery, preserving the review flow.
 - [ ] **Phase 14: Semantic Recall** — Swap MemoryRetriever candidate selection to a vector top-K pre-filter ahead of unchanged boundary filtering.
@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 6/7 plans executed
+**Plans:** 7/7 plans complete
 
 Plans:
 **Wave 1**
@@ -350,7 +350,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4)*
 
-- [ ] 11-07-PLAN.md — Live-corpus measurement re-run + human rebuild/recall sign-off (SC5/SC6/SC7).
+- [x] 11-07-PLAN.md — Live-corpus measurement re-run + human rebuild/recall sign-off (SC5/SC6/SC7).
 
 ### Phase 12: Daemon Incremental Embedding
 
