@@ -18,7 +18,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 8: Vector Storage Foundation** — Add a scope-safe, tombstone-ready `summary_vectors` store with exact-match parity between SqliteStore and InMemoryStore. (completed 2026-07-21)
 - [x] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default. (completed 2026-07-21)
 - [x] **Phase 10: Embedding Backfill** — Resumable, idempotent, checkpointed backfill of vectors for all 135,366 existing summaries. (completed 2026-07-21)
-- [ ] **Phase 11: Derivation Input Hygiene** — Collapse tool-call runs into activity descriptions and exclude harness-injected scaffolding from derivations, keeping the canonical timeline intact. (implementation complete 2026-07-27; GAP-11-A gap closure in progress, plans 11-08..11-14)
+- [ ] **Phase 11: Derivation Input Hygiene** — Collapse tool-call runs into activity descriptions and exclude harness-injected scaffolding from derivations, keeping the canonical timeline intact. (implementation complete 2026-07-27; GAP-11-A gap closure in progress, plans 11-08..11-14; GAP-11-B closure plan 11-15)
 - [ ] **Phase 12: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
 - [ ] **Phase 13: Forward-Only Vector Trace Discovery** — Replace shared-term all-pairs trace discovery with forward-only nearest-neighbor discovery, preserving the review flow.
 - [ ] **Phase 14: Semantic Recall** — Swap MemoryRetriever candidate selection to a vector top-K pre-filter ahead of unchanged boundary filtering.
@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 12/14 plans executed
+**Plans:** 12/15 plans executed
 
 Plans:
 **Wave 1**
@@ -372,11 +372,15 @@ Plans:
 
 - [x] 11-12-PLAN.md — `memory prune-superseded`: dry-run default, fail-closed backup gate, resumable batches, ADR 0050.
 
-**Wave 11** *(blocked on Wave 10)*
+**Wave 11** *(GAP-11-B closure, blocked on Wave 10)*
+
+- [ ] 11-15-PLAN.md — Fix the O(anchors x summaries) dedup hotspot: hoist per-summary normalization, cheap box/thread guards first, differential equivalence oracle + deterministic throughput benchmark.
+
+**Wave 12** *(blocked on Wave 11)*
 
 - [ ] 11-13-PLAN.md — Frozen recall query set + probe harness, before/after-filter/after-prune capture, owner-authorized live prune.
 
-**Wave 12** *(blocked on Wave 11)*
+**Wave 13** *(blocked on Wave 12)*
 
 - [ ] 11-14-PLAN.md — Owner SC7 semantic sign-off, `11-SC7-SIGNOFF.md`, GAP-11-A closure.
 
