@@ -111,6 +111,24 @@ across two states, so it is a sound comparison.
 harness ranking every query twice (once to reconstruct for attribution, once through the real
 `prepareInjection`, with an equality assertion between them).
 
+## Correction (2026-07-27, after Plan 11-22): the two predicates name DIFFERENT queries
+
+The totals table above reports `Q w/ tool-call` and `Q w/ unhygienic` as 4/12 each for `current-v2`.
+Those are two different predicates over two different item sets, and they coincidentally share a
+total. They do not name the same queries:
+
+| predicate | queries |
+|---|---|
+| `toolCallItemCount > 0` | Q1, Q3, Q4, Q10 |
+| `unhygienicItemCount > 0` | Q2, Q3, Q4, Q12 |
+| overlap | Q3, Q4 only |
+| **union — queries carrying ANY unhygienic content** | **Q1, Q2, Q3, Q4, Q10, Q12 = 6/12** |
+
+**The honest headline for `current-v2` is 6/12, not 4/12.** Reporting the two columns separately
+without their union understates the contamination rate. SC7 sign-off must state which predicate it is
+judged against, or judge against the union; Plan 11-22's finding recommends reconciling this and that
+recommendation is adopted here.
+
 ## Attribution of the residue in `current-v2` (evidence for Plan 11-22)
 
 Recorded as observation, not diagnosis. Plan 11-22 owns the root cause.

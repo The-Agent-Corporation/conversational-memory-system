@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 21
+current_plan: 22
 status: executing
 stopped_at: "Plan 11-22 complete -- GAP-11-E root cause: three distinct causes (H-0 by-design, H-i rule-matching defect, H-iii stale derivation). rebuild-derivations fixes H-iii only. No product code changed, no database written. Next: Plan 11-23 (owner decision)."
 last_updated: "2026-07-27T23:53:32.754Z"
@@ -19,7 +19,7 @@ progress:
 # Project State
 
 **Current phase:** 11
-**Current plan:** 21
+**Current plan:** 22
 **Status:** Ready to execute
 **Last updated:** 2026-07-27
 
