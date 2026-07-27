@@ -410,7 +410,7 @@ Plans:
 
 **Wave 21** *(blocked on Wave 20)*
 
-- [ ] 11-23-PLAN.md — Owner decision on remediation class and governing acceptance target, `11-REMEDIATION-DECISION.md`.
+- [x] 11-23-PLAN.md — Owner decision on remediation class and governing acceptance target, `11-REMEDIATION-DECISION.md`.
 
 **Wave 22** *(blocked on Wave 21)*
 
