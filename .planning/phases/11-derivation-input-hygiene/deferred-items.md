@@ -1,6 +1,23 @@
 # Deferred Items — Phase 11
 
-_No open deferred items. The one entry raised during execution is resolved below._
+## OPEN — `tests/mcp/mutation-tools.test.ts` "05-04 Task 2 rolls back every durable effect at
+each injected transaction boundary" times out under full-suite load
+
+- **Raised during:** Plan 11-17 execution, full `npx vitest run` gate after Task 2.
+- **Symptom:** `Test timed out in 5000ms` in the full run (995 passed / 1 failed / 4 skipped),
+  reproduced on two consecutive full-suite runs.
+- **Isolated run is green:** `npx vitest run tests/mcp/mutation-tools.test.ts -t "05-04 Task 2 ..."`
+  passes in 347ms on its own.
+- **Out of scope for this plan:** `tests/mcp/mutation-tools.test.ts` was last touched by Plan 05-04
+  (commit `e969499`, long before Phase 11); Plan 11-17 touches only
+  `src/operations/prune-unhygienic-anchors-command.ts`, its test file, and
+  `src/cli/command-registry.ts` — none of which the failing test exercises. This is a timing flake
+  under full-parallel-suite CPU contention (111 files), not a regression introduced here (Rule 1
+  scope boundary: fix only issues directly caused by the current task's changes).
+- **Action required:** none from this plan. Worth a targeted look in a future plan if it recurs
+  consistently outside full-suite contention.
+
+_The other entry raised during execution is resolved below._
 
 ---
 
