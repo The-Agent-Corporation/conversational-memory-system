@@ -5,8 +5,8 @@ milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 1
 status: executing
-stopped_at: "Completed Plan 11-15 (GAP-11-B closed); next: Plan 11-13 Task 1 (frozen recall probe, unblocked)"
-last_updated: "2026-07-27T14:43:59.402Z"
+stopped_at: "Plan 11-13 Task 1 complete (recall probe run); result is negative and GAP-11-D raised; Task 2/3 (owner authorization + live prune) NOT run - halted at the gate"
+last_updated: "2026-07-27T15:35:00.000Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
@@ -37,7 +37,8 @@ progress:
 - **Phase 11 planned 2026-07-26**: 7 plans / 5 waves, plan-checker PASSED (1 warning, see below). Simulation against the live corpus projects 135,366 -> 55,930 summaries (-59%) and 228.9 MB -> 77.6 MB (-66%). Next: `/gsd:execute-phase 11`.
 - **Phase 11 warning RESOLVED 2026-07-26 (owner decision).** The plan-checker warning on 11-02 — that it satisfied CONTEXT decision 6 implicitly via stable-id upsert rather than by extending `ContractionCheckpoint` — was resolved in favor of the **literal checkpoint extension**. The implicit form is eventually-correct but persists an observable intermediate summary carrying a still-growing tool count. 11-02 was replanned: `ContractionCheckpoint` gains `pendingToolRun` (JSON payload field, no DDL, no schema-version bump), a non-complete slice withholds a trailing open run from derivation text, a drift guard fails closed to the rewind path on late inserts, and corpus-end always flushes. 11-01 gained an `openToolRunStart` export; 11-02 is now 4 tasks and also touches `src/daemon/types.ts` + `src/storage/sqlite-store.ts`. Recorded as an addendum in `11-CONTEXT.md`; `11-VALIDATION.md` gained 5 rows. **Phase 11 has no open warnings — ready to execute.**
 - **GAP-11-A CLOSED 2026-07-27** by plans 11-08 through 11-12. `src/retrieval/retrievable-state.ts` is the single source of truth for retrievable `MemoryState` values; the predicate is enforced in `applyRetrievalBoundary`, `MemoryQueryService.loadAuthorizedMemory`, `SubjectExpansionService.resolveSummary`, and both stores' `findNearestSummaries`. Filtered `listSummaries` + migration 3 (`idx_summaries_person_state`) removed the per-query full scan. `commitSupersededSummaryPrune` and `memory prune-superseded` (dry-run default, fail-closed backup gate) are built and green. ADRs 0049 and 0050. The live prune has NOT been run — it is gated on Plan 11-13 Task 2.
-- **GAP-11-B (blocking Plan 11-13, found 2026-07-27):** `dedupeRankedMemory` → `isAnchorCoveredBySummary` (`src/retrieval/memory-retriever.ts:319-348`) is O(anchors × summaries) with expensive per-pair work — `normalizedMemoryText(summary.text)` is recomputed per anchor over ~800 KB strings, and the `.includes()` substring search runs *before* the cheap `sharesBox`/`sharesThread` guards that could reject the pair. Measured ~48,900 pairs/sec against the real corpus; the frozen 12-query recall probe extrapolates to hours-to-days per run, and Task 1 needs two runs. Separate from GAP-11-A and not fixed by 11-10 (which only bounded the initial fetch; this is downstream in ranking and also depends on anchors, which have no state filter). Reproduces on the current live corpus — an active defect on every host injection request today. Fix direction: hoist the normalization and reorder the `&&` chain — both behavior-preserving, since all three predicates are pure. Owner chose "fix the hotspot first" 2026-07-27. See `.planning/phases/11-derivation-input-hygiene/11-GAP-11-B.md`. Next: `/gsd:plan-phase 11 --gaps`.
+- **GAP-11-B (blocking Plan 11-13, found 2026-07-27, CLOSED 2026-07-27):** `dedupeRankedMemory` → `isAnchorCoveredBySummary` (`src/retrieval/memory-retriever.ts:319-348`) is O(anchors × summaries) with expensive per-pair work — `normalizedMemoryText(summary.text)` is recomputed per anchor over ~800 KB strings, and the `.includes()` substring search runs *before* the cheap `sharesBox`/`sharesThread` guards that could reject the pair. Measured ~48,900 pairs/sec against the real corpus; the frozen 12-query recall probe extrapolates to hours-to-days per run, and Task 1 needs two runs. Separate from GAP-11-A and not fixed by 11-10 (which only bounded the initial fetch; this is downstream in ranking and also depends on anchors, which have no state filter). Reproduces on the current live corpus — an active defect on every host injection request today. Fix direction: hoist the normalization and reorder the `&&` chain — both behavior-preserving, since all three predicates are pure. Owner chose "fix the hotspot first" 2026-07-27. Closed by Plan 11-15: ~1.3M pairs/sec measured (~30x naive), sufficiency floor cleared. See `.planning/phases/11-derivation-input-hygiene/11-GAP-11-B.md`.
+- **Plan 11-13 Task 1 run 2026-07-27 — RESULT NEGATIVE, GAP-11-D RAISED.** The frozen 12-query recall probe ran against a scratch copy of `~/.memory/aaron.db.pre-phase11` (`before`) and the live corpus (`after-filter`). `containsToolCallText` went from 9/12 (before) to **10/12** (after-filter) — Phase 11's summary-hygiene rebuild and the GAP-11-A state filter did NOT reduce tool-call text reaching injection packets; Q1's selected memory is byte-identical between the two runs. Root cause confirmed by reading code: `AnchorDetector.detectForTurn` (`src/anchors/anchor-detector.ts`) is called unconditionally on every ingested turn in `src/integrations/hermes/adapter.ts:89`, with no hygiene gate (unlike topic labeling, which checks `drivesTopicLabel` three lines above it). Anchors carry raw `turn.content` verbatim, including `[Tool call: ...]` text, and those anchors outrank hygienic summary text in `rankMemories`. This refutes the `conversation-resumer.ts` hypothesis noted below — that code is a separate resume flow never called by `prepareInjection`. **The live prune (Task 3) cannot close this gap**: it deletes superseded summary rows only; anchors are a separate, unfiltered store entity. See `.planning/phases/11-derivation-input-hygiene/11-GAP-11-D.md` and `11-RECALL-PROBE.md`. Plan 11-13 is **PARTIALLY COMPLETE** — Task 1 done, Task 2 (owner authorization) and Task 3 (execute prune) NOT run; do not mark 11-13 complete in ROADMAP.
 - **Live corpus rebuilt 2026-07-26**: 292,407 events -> 50,551 active summaries / 74.1 MB, exactly matching the simulation. Canonical events unchanged. Backup at `~/.memory/aaron.db.pre-phase11` — keep until GAP-11-A is closed. DB migrated to `user_version: 2`.
 - Live corpus is also 6 days stale (last import 2026-07-20) and Codex was never imported at all (4,738 session files, no grant).
 
@@ -47,9 +48,9 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T14:43:59.391Z
-**Stopped at:** Completed Plan 11-15 (GAP-11-B closed); next: Plan 11-13 Task 1 (frozen recall probe, unblocked)
-**Resume file:** None
+**Last session:** 2026-07-27T15:35:00.000Z
+**Stopped at:** Plan 11-13 Task 1 complete (recall probe run, before/after-filter captured); result is negative — GAP-11-D raised (anchor detection bypasses derivation-input hygiene). Task 2 (owner authorization) and Task 3 (execute live prune) NOT run — halted at the gate, both because this execution was not authorized for the destructive step and because the evidence shows the prune would not close the gap. Next: owner reviews `11-GAP-11-D.md` and `11-RECALL-PROBE.md`, scopes a follow-up plan for anchor hygiene, and decides whether to proceed with 11-13 Task 2/3 regardless.
+**Resume file:** .planning/phases/11-derivation-input-hygiene/11-13-PLAN.md (Task 2)
 
 ## Performance Metrics
 
@@ -68,6 +69,7 @@ progress:
 | Phase 11 P11 | 25min | 3 tasks | 4 files |
 | Phase 11 P12 | 20min | 3 tasks | 4 files |
 | Phase 11 P15 | 25min | 3 tasks | 3 files |
+| Phase 11 P13 (partial) | 45min | 1/3 tasks | 2 files |
 
 ## Decisions
 
@@ -103,6 +105,7 @@ progress:
 - [Phase 11]: freedPayloadBytes/payloadBytes uses JSON.stringify(parsedSummary).length in both stores, provably identical to SqliteStore's length(payload) column
 - [Phase ?]: Prune, not archive (ADR 0050): superseded summaries are pure derivations reproducible from canonical events via rebuild-derivations.
 - [Phase 11]: GAP-11-B closed (Plan 11-15): hoisted per-summary normalization and reordered dedupeRankedMemory's box/thread/substring conjunction cheap-first, proven behavior-preserving by a 200+-case differential oracle held unedited across the fix and the benchmark. — Measured ~1.3M pairs/sec (~30x naive), clearing Plan 11-13's 1,000,000 pairs/sec sufficiency floor on first measurement -- no escape hatch fired, no GAP-11-C raised.
+- [Phase 11]: Plan 11-13's Task 2/3 (owner authorization + live prune) withheld rather than presented/run, given Task 1's evidence that the prune cannot satisfy the plan's must_have. — Anchors, not superseded summaries, are the confirmed source of tool-call text in injection packets (GAP-11-D); presenting the authorization checkpoint as originally scoped would misrepresent what the destructive step accomplishes.
 
 ## Current Position
 
