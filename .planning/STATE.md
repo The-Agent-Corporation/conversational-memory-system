@@ -5,14 +5,14 @@ milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 1
 status: executing
-stopped_at: Completed 11-06-PLAN.md
-last_updated: "2026-07-27T01:07:46.424Z"
-last_activity: 2026-07-27 -- Phase 11 planning complete
+stopped_at: Completed 11-08-PLAN.md
+last_updated: "2026-07-27T01:35:11.456Z"
+last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 78
-  completed_plans: 71
+  completed_plans: 72
   percent: 53
 ---
 
@@ -46,8 +46,8 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-26T23:19:06.603Z
-**Stopped at:** Completed 11-06-PLAN.md
+**Last session:** 2026-07-27T01:35:07.638Z
+**Stopped at:** Completed 11-08-PLAN.md
 **Resume file:** None
 
 ## Performance Metrics
@@ -61,6 +61,7 @@ progress:
 | Phase 05 P09 | 15min | 2 tasks | 6 files |
 | Phase 11 P01 | 3min | 3 tasks | 3 files |
 | Phase 11 P06 | 55min | 3 tasks | 4 files |
+| Phase 11 P08 | 5min | 3 tasks | 6 files |
 
 ## Decisions
 
@@ -85,10 +86,12 @@ progress:
 - [Phase 11]: Promoted the rule table, toolNameOf, and collapseText from 11-hygiene-sim.ts verbatim so implementation output stays comparable to the measured 55,930-summary / 77.6 MB targets
 - [Phase 11]: derivationContents and openToolRunStart share one internal computeSegments walk so they can never disagree about where a tool run begins
 - [Phase 11]: Slice-straddling tool runs handled via literal ContractionCheckpoint.pendingToolRun (owner decision 2026-07-26), documented in ADR 0048 — Upsert-and-correct is eventually-correct but durably persists a still-growing tool count that a crash, incremental embedding, or memory explain could consume as final
+- [Phase 11]: Retrievable memory states are active/compacted/revived; excluded are superseded/stale/proposed/approved/rejected/disputed — GAP-11-A: applyRetrievalBoundary never filtered on state, so the derivation-hygiene rebuild's 87,727 superseded summaries were still retrieved and injected; enforced centrally so traces/boxes inherit exclusion
+- [Phase 11]: Stale summaries use deferred revival: promoted to revived on scoring above the selected floor but excluded from the packet that triggered the promotion — Excluding stale from retrievable states removes the only trigger for revived, which refreshBoxState depends on for box revival; dropping revival entirely was rejected as it makes revived permanently unreachable
 
 ## Current Position
 
-Phase: 11 (derivation-input-hygiene) — GAPS FOUND
-Plan: 3 of 7
+Phase: 11 (derivation-input-hygiene) — EXECUTING
+Plan: 2 of 14
 Status: Ready to execute
-Last activity: 2026-07-27 -- Phase 11 planning complete
+Last activity: 2026-07-27
