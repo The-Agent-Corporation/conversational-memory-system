@@ -42,5 +42,6 @@ export const REGISTRY: Record<string, () => Promise<{ main(argv: string[]): Prom
   embeddings: () => import("../operations/embeddings-command.js"),
   "backfill-embeddings": () => import("../operations/backfill-embeddings-command.js"),
   "rebuild-derivations": () => import("../operations/rebuild-derivations-command.js"),
-  "prune-superseded": () => import("../operations/prune-superseded-command.js")
+  "prune-superseded": () => import("../operations/prune-superseded-command.js"),
+  "prune-unhygienic-anchors": () => import("../operations/prune-unhygienic-anchors-command.js")
 };
