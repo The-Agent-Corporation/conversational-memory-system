@@ -130,3 +130,95 @@ verbatim.**
 - **SC7 (recall quality) — NOT closed by this document.** It requires the human query spot-check in
   Task 2, which has not been performed.
 - **No live data was mutated.** The rebuild has not been run.
+
+---
+
+# Part 2 — Live Rebuild Executed (2026-07-26)
+
+Owner authorized the destructive step in-session. Backup taken first:
+`~/.memory/aaron.db.pre-phase11` (4.6 GB, `pragma quick_check: ok`, 292,407 events / 135,366 summaries).
+
+Schema migrated on first open: `user_version` 1 -> 2, `summary_vectors` created.
+
+**Command:** `npx tsx src/operations/rebuild-derivations-command.ts --db ~/.memory/aaron.db --person aaron`
+**Runtime:** 4m13s, 1,170 slices, exit 0.
+
+```json
+{ "ok": true, "rebuilt": true, "hygieneRuleVersion": "hygiene-rules/v1",
+  "processorVersion": "continuous-contraction/v1+hygiene-rules/v1",
+  "slices": 1170, "processedEvents": 292407,
+  "summariesWritten": 51720, "supersededSummaries": 135250 }
+```
+
+## Implementation vs. simulation — exact agreement
+
+| Metric | Simulated | **Live actual** | Match |
+|---|---:|---:|---|
+| Active summaries | 50,551 | **50,551** | exact |
+| Volume | 74.0 MB | **74.1 MB** | exact (rounding) |
+| Residual `[Tool call:` | 10,860 | **10,860** | exact |
+| Canonical events | 292,407 | **292,407** | unchanged (D-1 held) |
+
+`[Activity]` lines present in 19,216 active summaries. The real pipeline landing exactly on the
+simulation — which now runs the production classifier — closes 11-CONTEXT's "silent divergence" risk.
+
+`summariesWritten` (51,720) exceeds the 50,551 final count by 1,169: those are active-span provisional
+summaries re-emitted under the same deterministic id as their span extended across a slice boundary
+(upserts, not duplicates). Reconciliation: 138,278 total rows = 50,551 active + 87,727 superseded;
+of the original 135,366, 47,639 ids were reused and 2,912 are new.
+
+## Criteria status
+
+| SC | Result |
+|---|---|
+| SC6 material reduction | **PASS** — -62.7% count / -67.7% volume, exceeding -59% / -66% |
+| SC5 idempotency (live) | **PASS** — second run `rebuilt: false, processed: 0` in 13s |
+| SC4 explain rationale | **PASS** — reports `synthetic_injected` / `harness-system` / `hygiene-rules/v1` |
+| No duplicates/orphans | **PASS** — 0 duplicate active ids, 0 orphaned vectors |
+| **SC7 recall quality** | **FAIL — see gap below** |
+
+---
+
+## GAP-11-A (blocking): superseded summaries remain retrievable and injectable
+
+**REQ-053 requires excluded content be kept out of "summarization, embedding, trace discovery, and
+injection." The injection path does not hold after rebuild.**
+
+Supersession flips `state`; it does not remove rows. The rebuild produced **87,727 superseded summaries
+still carrying the pre-hygiene fragmented, tool-call-laden text**. Retrieval does not filter them:
+
+- `applyRetrievalBoundary` (`src/retrieval/memory-retriever.ts:142`) filters candidates on `personId` and
+  `scopeIds` **only** — `state` is never consulted.
+- `rankMemories` passes every supplied summary through `rankSummary` and filters only on `score > 0`.
+
+Reproduced in isolation (one active + one superseded summary on the same topic):
+
+```json
+{ "returnedSummaryIds": ["s_new", "s_old"],
+  "supersededWasRetrieved": true,
+  "injectedTextContainsToolCall": true }
+```
+
+The injected packet contained the superseded summary's `[Tool call: Bash] {"cmd":"make"}` text.
+
+**Severity.** The defect predates Phase 11 — superseded summaries were always retrievable — but it was
+latent because the live corpus had ~0 superseded rows. The rebuild creates 87,727 of them holding exactly
+the content this phase exists to remove, converting a dormant bug into an active one. Every headline
+metric above is real, yet the user-visible recall benefit is blunted until this is fixed.
+
+**Not fixed here** — out of scope for Plan 07, which is a measurement and sign-off plan. Routed to gap
+closure.
+
+**Suggested fix direction (for the gap plan, not a decision):** filter non-retrievable states in
+`applyRetrievalBoundary` rather than at each call site, so anchors/traces/boxes inherit the same rule;
+confirm which states are legitimately retrievable (`compacted`, `active`, `revived`) versus excluded
+(`superseded`, and possibly `stale` pre-revival); and add a regression test asserting a superseded summary
+is never returned. Consider whether 87,727 superseded rows should also be pruned or archived, since they
+are ~155 MB of the database.
+
+## Not verified
+
+- **Human recall sign-off on known queries** was NOT performed. The orchestrator ran mechanical probes,
+  not semantic judgement — it cannot assess whether returned memories are *correct* for this corpus.
+  Full-corpus probes via `prepareInjection` were also impractical: it calls `listSummaries()` per query,
+  loading all rows each time (>10 min for 8 queries pre-rebuild). That cost is itself worth a look.
