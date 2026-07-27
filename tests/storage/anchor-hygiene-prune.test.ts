@@ -417,6 +417,44 @@ for (const backend of backends) {
       expect(receipt.prunedByClass.synthetic_injected).toBe(1);
     });
 
+    // The dry-run preview is the artifact an operator authorizes a destructive prune against, so it
+    // must classify with the SAME inputs the apply path uses. Measured against the live corpus while
+    // this was content-only, the preview reported 25,792 unhygienic anchors where apply would have
+    // deleted 26,643 -- 851 role-gated synthetic_injected rows invisible to content-only rules.
+    it("summarize agrees with commit: preview counts equal what apply actually prunes, including role-gated rules", async () => {
+      await seedControls(store);
+      await store.saveCanonicalEvent(makeCanonicalEvent({ id: "event_assistant", role: "assistant" }));
+      await store.saveCanonicalEvent(makeCanonicalEvent({ id: "event_user", role: "user" }));
+      // Only reachable via the role-gated rule — content-only classification cannot see it.
+      await store.saveAnchor(makeAnchor({
+        id: "anchor_role_gated",
+        canonicalEventId: "event_assistant",
+        content: "[SILENT] internal bookkeeping note"
+      }));
+      // Same content, non-assistant role: must survive in BOTH the preview and the apply.
+      await store.saveAnchor(makeAnchor({
+        id: "anchor_role_safe",
+        canonicalEventId: "event_user",
+        content: "[SILENT] internal bookkeeping note"
+      }));
+      await store.saveAnchor(makeAnchor({
+        id: "anchor_conversational",
+        canonicalEventId: "event_user",
+        content: "A genuinely conversational fact worth keeping."
+      }));
+
+      const preview = await store.summarizeAnchorDerivationClasses("person_1");
+      const receipt = await store.commitUnhygienicAnchorPrune(
+        pruneInput({ anchorIds: ["anchor_role_gated", "anchor_role_safe", "anchor_conversational"] })
+      );
+
+      expect(preview.unhygienicCount).toBe(1);
+      expect(preview.countsByClass.synthetic_injected).toBe(1);
+      expect(receipt.prunedAnchorIds).toEqual(["anchor_role_gated"]);
+      // The invariant: the preview's unhygienic count is exactly what apply deletes, never a floor.
+      expect(preview.unhygienicCount).toBe(receipt.prunedAnchorIds.length);
+    });
+
     it("does not prune a [SILENT] anchor whose canonical event role is not assistant (content-only cannot fire it)", async () => {
       await seedControls(store);
       await store.saveCanonicalEvent(makeCanonicalEvent({ id: "event_user_silent", role: "user" }));

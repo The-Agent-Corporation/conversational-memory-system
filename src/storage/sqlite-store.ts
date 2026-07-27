@@ -1476,7 +1476,15 @@ export class SqliteStore implements MemoryStore {
       }
       if (anchor.personId !== personId) continue;
       totalCount += 1;
-      const { derivationClass } = classifyEvent({ content: anchor.content, role: null, eventKind: null });
+      // Classify with the SAME inputs commitUnhygienicAnchorPrune uses (role/eventKind resolved from
+      // the canonical event), not content-only. A preview that under-reports what apply will delete is
+      // worse than no preview: dry-run is the artifact an operator authorizes a deletion against.
+      const canonicalEvent = anchor.canonicalEventId ? await this.getCanonicalEvent(anchor.canonicalEventId) : null;
+      const { derivationClass } = classifyEvent({
+        content: anchor.content,
+        role: canonicalEvent?.role ?? null,
+        eventKind: canonicalEvent?.eventKind ?? null
+      });
       countsByClass[derivationClass] += 1;
       if (derivationClass !== "conversational") unhygienicPayloadBytes += row.payload.length;
     }
