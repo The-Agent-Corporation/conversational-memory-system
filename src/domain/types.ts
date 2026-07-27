@@ -274,6 +274,7 @@ export const MemoryTraceSchema = z.object({
   rationale: z.string().min(1)
 });
 
+export type MemoryState = z.infer<typeof MemoryStateSchema>;
 export type Turn = z.infer<typeof TurnSchema>;
 export type Summary = z.infer<typeof SummarySchema>;
 export type Box = z.infer<typeof BoxSchema>;

@@ -3,6 +3,7 @@ import type { Anchor, Box, InjectionPacket, MemoryTrace, Summary, TurnRange } fr
 import { cosineSimilarity, type Embedder } from "../embeddings/embedder.js";
 import type { InjectionRequest } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { REVIVABLE_MEMORY_STATE, isRetrievableState } from "./retrievable-state.js";
 
 interface RankedMemory {
   kind: "summary" | "anchor" | "trace" | "box_context";
@@ -32,7 +33,7 @@ export class MemoryRetriever {
       this.store.listTraces({ state: "approved" }),
       this.store.listBoxes()
     ]);
-    const { summaries, anchors, traces, boxes, allowedScopeIds } = applyRetrievalBoundary(
+    const { summaries, anchors, traces, boxes, allowedScopeIds, revivableSummaries } = applyRetrievalBoundary(
       request,
       allSummaries,
       allAnchors,
@@ -43,10 +44,8 @@ export class MemoryRetriever {
     const topicEmbedding = this.options.embedder
       ? await this.options.embedder.embed(request.currentTopicSummary)
       : null;
-    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, {
-      embedder: this.options.embedder,
-      topicEmbedding
-    });
+    const rankingOptions = { embedder: this.options.embedder, topicEmbedding };
+    const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, rankingOptions);
 
     if (ranked.length === 0) {
       return null;
@@ -81,6 +80,7 @@ export class MemoryRetriever {
 
     await this.store.saveInjection(packet);
     await this.recordSelectedSummaryAccess(summaries, selected, createdAt);
+    await this.promoteRevivableSummaries(revivableSummaries, request.currentTopicSummary, selected, rankingOptions, createdAt);
     return packet;
   }
 
@@ -104,7 +104,47 @@ export class MemoryRetriever {
         retrievedAt: accessedAt,
         retrievalCount: summary.retrievalCount + 1,
         strength: strengthen(summary.strength),
-        state: summary.state === "stale" ? "revived" : summary.state
+        // A selected summary is retrievable by construction (isRetrievableState gates it before
+        // ranking), so no state promotion can occur here. Deferred revival of REVIVABLE_MEMORY_STATE
+        // ("stale") summaries is handled separately by promoteRevivableSummaries.
+        state: summary.state
+      });
+    }
+  }
+
+  /**
+   * Deferred revival (GAP-11-A / ADR 0049): a "stale" summary is never itself retrievable, but
+   * one that would have ranked into THIS packet is promoted to "revived" so it becomes
+   * retrievable on the NEXT query. It never enters `ranked`, `selected`, `packet.selectedMemory`,
+   * or `packet.sourceSummaryIds` for the packet that triggered its promotion.
+   */
+  private async promoteRevivableSummaries(
+    revivableSummaries: Summary[],
+    currentTopicSummary: string,
+    selected: RankedMemory[],
+    rankingOptions: { embedder?: Embedder; topicEmbedding: Summary["embedding"] },
+    accessedAt: string
+  ): Promise<void> {
+    if (revivableSummaries.length === 0 || selected.length === 0) {
+      return;
+    }
+
+    const topicWords = significantWords(currentTopicSummary);
+    const selectedFloor = Math.min(...selected.map((memory) => memory.score));
+
+    for (const summary of revivableSummaries) {
+      const score = rankSummary(topicWords, summary, rankingOptions).score;
+      if (score <= 0 || score < selectedFloor) {
+        continue;
+      }
+
+      await this.store.saveSummary({
+        ...summary,
+        state: "revived",
+        lastAccessedAt: accessedAt,
+        retrievedAt: accessedAt,
+        retrievalCount: summary.retrievalCount + 1,
+        strength: strengthen(summary.strength)
       });
     }
   }
@@ -123,6 +163,7 @@ function applyRetrievalBoundary(
   traces: MemoryTrace[];
   boxes: Box[];
   allowedScopeIds: string[] | null;
+  revivableSummaries: Summary[];
 } {
   const hasPerson = request.personId !== undefined;
   const hasScopes = request.allowedScopeIds !== undefined;
@@ -133,15 +174,30 @@ function applyRetrievalBoundary(
     if (!allowLegacyUnscoped) {
       throw new Error("Unscoped retrieval is disabled; provide personId and allowedScopeIds");
     }
-    return { summaries, anchors, traces, boxes, allowedScopeIds: null };
+    // Legacy unscoped retrieval must not become a bypass for the state boundary (T-11-21):
+    // apply the same isRetrievableState / REVIVABLE_MEMORY_STATE partition here as the scoped path.
+    return {
+      summaries: summaries.filter((summary) => isRetrievableState(summary.state)),
+      anchors,
+      traces,
+      boxes,
+      allowedScopeIds: null,
+      revivableSummaries: summaries.filter((summary) => summary.state === REVIVABLE_MEMORY_STATE)
+    };
   }
 
   const personId = request.personId!;
   const allowedScopeIds = [...new Set(request.allowedScopeIds!)].sort();
   const allowed = new Set(allowedScopeIds);
-  const scopedSummaries = summaries.filter((summary) =>
+  const inScope = (summary: Summary): boolean =>
     summary.personId === personId &&
-    (summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId))
+    (summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId));
+  // isRetrievableState is applied INSIDE this function (D-GAP-2) so anchors/traces/boxes inherit
+  // it through the summaryIds.every(...) membership tests below, rather than being filtered at
+  // each call site (T-11-20).
+  const scopedSummaries = summaries.filter((summary) => inScope(summary) && isRetrievableState(summary.state));
+  const revivableSummaries = summaries.filter(
+    (summary) => inScope(summary) && summary.state === REVIVABLE_MEMORY_STATE
   );
   const summaryIds = new Set(scopedSummaries.map((summary) => summary.id));
   const scopedAnchors = anchors.filter((anchor) =>
@@ -162,7 +218,8 @@ function applyRetrievalBoundary(
     anchors: scopedAnchors,
     traces: scopedTraces,
     boxes: scopedBoxes,
-    allowedScopeIds
+    allowedScopeIds,
+    revivableSummaries
   };
 }
 
