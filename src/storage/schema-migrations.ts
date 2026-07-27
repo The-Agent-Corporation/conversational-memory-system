@@ -49,6 +49,16 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
           on summary_vectors (provider, model, person_id, summary_id);
       `);
     }
+  },
+  {
+    version: 3,
+    description: "GAP-11-A: index summaries by person and state for filtered retrieval",
+    apply: (database) => {
+      database.exec(`
+        create index if not exists idx_summaries_person_state
+          on summaries (json_extract(payload,'$.personId'), json_extract(payload,'$.state'), id);
+      `);
+    }
   }
 ];
 

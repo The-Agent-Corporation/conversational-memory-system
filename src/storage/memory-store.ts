@@ -3,6 +3,7 @@ import type {
   Box,
   InjectionPacket,
   MemoryProposal,
+  MemoryState,
   MemoryTrace,
   ProposalState,
   ProposalType,
@@ -48,6 +49,21 @@ import type {
 export interface ProposalFilter {
   state?: ProposalState;
   proposalType?: ProposalType;
+}
+
+/**
+ * Optional store-level filter for `listSummaries`. Omitting it keeps the existing full-table
+ * contract the twenty derivation-internal callers depend on. When provided, `scopeIds` uses
+ * SUBSET semantics identical to `applyRetrievalBoundary`: a summary is included only when every
+ * entry of `summary.scopeIds ?? ["personal"]` is in the allowed list. This is a query-shape
+ * optimization for candidate selection (Plan 11-10, GAP-11-A) — it is never the sole place
+ * authority is enforced; `applyRetrievalBoundary` re-applies the same predicates over whatever it
+ * is handed.
+ */
+export interface SummaryFilter {
+  personId?: string;
+  scopeIds?: readonly string[];
+  states?: readonly MemoryState[];
 }
 
 export interface TraceFilter {
@@ -149,7 +165,7 @@ export interface MemoryStore {
   listTurns(threadId: string): Promise<Turn[]>;
   deleteTurns(ids: string[]): Promise<void>;
   saveSummary(summary: Summary): Promise<void>;
-  listSummaries(): Promise<Summary[]>;
+  listSummaries(filter?: SummaryFilter): Promise<Summary[]>;
   saveBox(box: Box): Promise<void>;
   getBox(id: string): Promise<Box | null>;
   listBoxes(): Promise<Box[]>;

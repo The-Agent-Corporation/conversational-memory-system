@@ -30,6 +30,7 @@ import type {
   FindNearestSummariesQuery,
   MemoryStore,
   ProposalFilter,
+  SummaryFilter,
   SummaryVectorMatch,
   SummaryVectorRecord,
   TraceFilter
@@ -1130,8 +1131,37 @@ export class SqliteStore implements MemoryStore {
     this.upsertPayload("summaries", SummarySchema.parse(summary));
   }
 
-  async listSummaries(): Promise<Summary[]> {
-    return this.listPayloads("summaries", SummarySchema);
+  async listSummaries(filter?: SummaryFilter): Promise<Summary[]> {
+    if (!filter) {
+      return this.listPayloads("summaries", SummarySchema);
+    }
+
+    const clauses: string[] = [];
+    const values: string[] = [];
+    if (filter.personId) {
+      clauses.push("json_extract(payload,'$.personId') = ?");
+      values.push(filter.personId);
+    }
+    if (filter.states && filter.states.length > 0) {
+      const placeholders = filter.states.map(() => "?").join(", ");
+      clauses.push(`json_extract(payload,'$.state') in (${placeholders})`);
+      values.push(...filter.states);
+    }
+    const where = clauses.length > 0 ? ` where ${clauses.join(" and ")}` : "";
+    const rows = this.database
+      .prepare(`select payload from summaries${where} order by id asc`)
+      .all(...values) as PayloadRow[];
+    const parsed = rows.map((row) => SummarySchema.parse(JSON.parse(row.payload)));
+
+    // scopeIds subset semantics (every entry of summary.scopeIds must be in the allowed list) is
+    // applied here in JS, not in SQL: SQLite cannot cheaply express an "every element of this JSON
+    // array is a member of that list" predicate over json_each without a correlated subquery per
+    // row, which would defeat the point of the index-backed personId/state filter above.
+    if (!filter.scopeIds) {
+      return parsed;
+    }
+    const allowed = new Set(filter.scopeIds);
+    return parsed.filter((summary) => (summary.scopeIds ?? ["personal"]).every((scopeId) => allowed.has(scopeId)));
   }
 
   async saveBox(box: Box): Promise<void> {

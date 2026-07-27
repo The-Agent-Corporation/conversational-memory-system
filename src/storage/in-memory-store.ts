@@ -26,6 +26,7 @@ import type {
   FindNearestSummariesQuery,
   MemoryStore,
   ProposalFilter,
+  SummaryFilter,
   SummaryVectorMatch,
   SummaryVectorRecord,
   TraceFilter
@@ -811,8 +812,23 @@ export class InMemoryStore implements MemoryStore {
     this.upsertById(this.summaries, structuredClone(SummarySchema.parse(summary)));
   }
 
-  async listSummaries(): Promise<Summary[]> {
-    return structuredClone(this.summaries);
+  async listSummaries(filter?: SummaryFilter): Promise<Summary[]> {
+    if (!filter) {
+      return structuredClone(this.summaries);
+    }
+
+    const allowedScopeIds = filter.scopeIds ? new Set(filter.scopeIds) : null;
+    const states = filter.states ? new Set(filter.states) : null;
+    const filtered = this.summaries.filter((summary) => {
+      if (filter.personId !== undefined && summary.personId !== filter.personId) return false;
+      if (states && !states.has(summary.state)) return false;
+      if (allowedScopeIds) {
+        const inSubset = (summary.scopeIds ?? ["personal"]).every((scopeId) => allowedScopeIds.has(scopeId));
+        if (!inSubset) return false;
+      }
+      return true;
+    });
+    return structuredClone(filtered);
   }
 
   async saveBox(box: Box): Promise<void> {

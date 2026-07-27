@@ -130,7 +130,38 @@ describe("schema-migrations", () => {
     raw.close();
   });
 
+  it("applies version 3 (idx_summaries_person_state) when upgrading from version 2", () => {
+    const store = new SqliteStore(databasePath);
+    store.close();
+
+    // Simulate a database that stopped at version 2, before migration 3 existed.
+    const raw = new DatabaseSync(databasePath);
+    raw.exec("drop index if exists idx_summaries_person_state");
+    raw.exec("delete from schema_migrations where version = 3");
+    raw.exec("pragma user_version = 2");
+
+    const result = runSchemaMigrations(raw);
+    expect(result.from).toBe(2);
+    expect(result.to).toBe(latestVersion);
+
+    const userVersionRow = raw.prepare("pragma user_version").get() as { user_version: number };
+    expect(userVersionRow.user_version).toBe(latestVersion);
+
+    const indexRow = raw
+      .prepare("select name from sqlite_master where type = 'index' and name = 'idx_summaries_person_state'")
+      .get();
+    expect(indexRow).toBeDefined();
+
+    raw.close();
+  });
+
   it("is idempotent when run again against an already-migrated database", () => {
+    // Base tables (including `summaries`, which migration 3's index targets) are created by
+    // SqliteStore.migrate()'s base DDL block before runSchemaMigrations ever runs in production;
+    // open through SqliteStore once to establish that precondition, matching real usage.
+    const store = new SqliteStore(databasePath);
+    store.close();
+
     const raw = new DatabaseSync(databasePath);
     const result = runSchemaMigrations(raw);
     expect(result.to).toBe(latestVersion);
