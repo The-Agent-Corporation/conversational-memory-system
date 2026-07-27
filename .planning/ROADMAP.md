@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 13/18 plans executed
+**Plans:** 14/18 plans executed
 
 Plans:
 **Wave 1**
@@ -382,7 +382,7 @@ Plans:
 
 **Wave 13** *(GAP-11-D closure, blocked on Wave 12)*
 
-- [ ] 11-16-PLAN.md — `commitUnhygienicAnchorPrune` store contract with in-transaction, classifier-authoritative eligibility in both stores; ADR 0051 (anchors gated forward, pruned backward, no lifecycle).
+- [x] 11-16-PLAN.md — `commitUnhygienicAnchorPrune` store contract with in-transaction, classifier-authoritative eligibility in both stores; ADR 0051 (anchors gated forward, pruned backward, no lifecycle).
 
 **Wave 14** *(blocked on Wave 13)*
 

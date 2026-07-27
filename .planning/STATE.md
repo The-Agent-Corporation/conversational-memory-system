@@ -3,24 +3,24 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 13
+current_plan: 16
 status: executing
-stopped_at: "Plan 11-13 Task 1 complete (recall probe run); result is negative and GAP-11-D raised; Task 2/3 (owner authorization + live prune) NOT run - halted at the gate"
-last_updated: "2026-07-27T15:35:00.000Z"
+stopped_at: "Plan 11-16 complete (GAP-11-D store-layer closure): commitUnhygienicAnchorPrune/listAnchorIds/summarizeAnchorDerivationClasses built identically in both stores, 28-case parity suite green, ADR 0051 written. Plan 11-13 Task 2/3 (owner authorization + live summary prune) and Plan 11-17/11-18 (memory prune-unhygienic-anchors command + owner-authorized live anchor prune) remain NOT run — this plan is store-layer machinery only, no live database touched. Next: 11-17 (the CLI command wrapping this plan's store methods, mirroring memory prune-superseded)."
+last_updated: "2026-07-27T18:20:18.598Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
-  total_plans: 79
-  completed_plans: 77
+  total_plans: 82
+  completed_plans: 78
   percent: 53
 ---
 
 # Project State
 
 **Current phase:** 11
-**Current plan:** 1
-**Status:** Ready to execute
+**Current plan:** 16
+**Status:** Executing
 **Last updated:** 2026-07-27
 
 ## Completed
@@ -39,6 +39,8 @@ progress:
 - **GAP-11-A CLOSED 2026-07-27** by plans 11-08 through 11-12. `src/retrieval/retrievable-state.ts` is the single source of truth for retrievable `MemoryState` values; the predicate is enforced in `applyRetrievalBoundary`, `MemoryQueryService.loadAuthorizedMemory`, `SubjectExpansionService.resolveSummary`, and both stores' `findNearestSummaries`. Filtered `listSummaries` + migration 3 (`idx_summaries_person_state`) removed the per-query full scan. `commitSupersededSummaryPrune` and `memory prune-superseded` (dry-run default, fail-closed backup gate) are built and green. ADRs 0049 and 0050. The live prune has NOT been run — it is gated on Plan 11-13 Task 2.
 - **GAP-11-B (blocking Plan 11-13, found 2026-07-27, CLOSED 2026-07-27):** `dedupeRankedMemory` → `isAnchorCoveredBySummary` (`src/retrieval/memory-retriever.ts:319-348`) is O(anchors × summaries) with expensive per-pair work — `normalizedMemoryText(summary.text)` is recomputed per anchor over ~800 KB strings, and the `.includes()` substring search runs *before* the cheap `sharesBox`/`sharesThread` guards that could reject the pair. Measured ~48,900 pairs/sec against the real corpus; the frozen 12-query recall probe extrapolates to hours-to-days per run, and Task 1 needs two runs. Separate from GAP-11-A and not fixed by 11-10 (which only bounded the initial fetch; this is downstream in ranking and also depends on anchors, which have no state filter). Reproduces on the current live corpus — an active defect on every host injection request today. Fix direction: hoist the normalization and reorder the `&&` chain — both behavior-preserving, since all three predicates are pure. Owner chose "fix the hotspot first" 2026-07-27. Closed by Plan 11-15: ~1.3M pairs/sec measured (~30x naive), sufficiency floor cleared. See `.planning/phases/11-derivation-input-hygiene/11-GAP-11-B.md`.
 - **Plan 11-13 Task 1 run 2026-07-27 — RESULT NEGATIVE, GAP-11-D RAISED.** The frozen 12-query recall probe ran against a scratch copy of `~/.memory/aaron.db.pre-phase11` (`before`) and the live corpus (`after-filter`). `containsToolCallText` went from 9/12 (before) to **10/12** (after-filter) — Phase 11's summary-hygiene rebuild and the GAP-11-A state filter did NOT reduce tool-call text reaching injection packets; Q1's selected memory is byte-identical between the two runs. Root cause confirmed by reading code: `AnchorDetector.detectForTurn` (`src/anchors/anchor-detector.ts`) is called unconditionally on every ingested turn in `src/integrations/hermes/adapter.ts:89`, with no hygiene gate (unlike topic labeling, which checks `drivesTopicLabel` three lines above it). Anchors carry raw `turn.content` verbatim, including `[Tool call: ...]` text, and those anchors outrank hygienic summary text in `rankMemories`. This refutes the `conversation-resumer.ts` hypothesis noted below — that code is a separate resume flow never called by `prepareInjection`. **The live prune (Task 3) cannot close this gap**: it deletes superseded summary rows only; anchors are a separate, unfiltered store entity. See `.planning/phases/11-derivation-input-hygiene/11-GAP-11-D.md` and `11-RECALL-PROBE.md`. Plan 11-13 is **PARTIALLY COMPLETE** — Task 1 done, Task 2 (owner authorization) and Task 3 (execute prune) NOT run; do not mark 11-13 complete in ROADMAP.
+- **GAP-11-D forward gate landed (`4d17978`, prior to this plan):** `AnchorDetector.detectForTurn` now returns `{ anchors: [] }` for any turn where `drivesTopicLabel({ content, role })` is false — the same predicate topic labeling already uses. Stops new unhygienic anchors from being created; does not touch the 45,911 anchors already in the live corpus.
+- **Plan 11-16 complete 2026-07-27 (GAP-11-D store-layer closure).** Built `commitUnhygienicAnchorPrune` / `listAnchorIds` / `summarizeAnchorDerivationClasses` identically in `SqliteStore` and `InMemoryStore`, contracted in `mcp-mutation-contracts.ts`, mirroring `commitSupersededSummaryPrune`'s in-transaction, caller-list-is-a-request eligibility model. Classification enriches an anchor's content with its resolved canonical event's role/eventKind (a superset of the forward gate's inputs), so the 25,792-row content-only census is a floor, not a target. ADR 0051 records the no-anchor-lifecycle decision (an anchor has zero inbound references, unlike a summary, so there is no reference-protection class of skip to preserve) and the gate-forward/prune-backward split. 28/28 new tests pass against both stores; full suite 986 passed / 4 skipped; typecheck clean. This plan touches no live database — the `memory prune-unhygienic-anchors` operator command (Plan 11-17) and the owner-authorized live anchor prune against `~/.memory/aaron.db` (Plan 11-18) remain outstanding before GAP-11-D is fully closed and Plan 11-13/11-14's SC7 sign-off can proceed.
 - **Live corpus rebuilt 2026-07-26**: 292,407 events -> 50,551 active summaries / 74.1 MB, exactly matching the simulation. Canonical events unchanged. Backup at `~/.memory/aaron.db.pre-phase11` — keep until GAP-11-A is closed. DB migrated to `user_version: 2`.
 - Live corpus is also 6 days stale (last import 2026-07-20) and Codex was never imported at all (4,738 session files, no grant).
 
@@ -48,9 +50,9 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T15:35:00.000Z
-**Stopped at:** Plan 11-13 Task 1 complete (recall probe run, before/after-filter captured); result is negative — GAP-11-D raised (anchor detection bypasses derivation-input hygiene). Task 2 (owner authorization) and Task 3 (execute live prune) NOT run — halted at the gate, both because this execution was not authorized for the destructive step and because the evidence shows the prune would not close the gap. Next: owner reviews `11-GAP-11-D.md` and `11-RECALL-PROBE.md`, scopes a follow-up plan for anchor hygiene, and decides whether to proceed with 11-13 Task 2/3 regardless.
-**Resume file:** .planning/phases/11-derivation-input-hygiene/11-13-PLAN.md (Task 2)
+**Last session:** 2026-07-27T18:20:18.598Z
+**Stopped at:** Plan 11-16 complete — GAP-11-D store-layer closure (`commitUnhygienicAnchorPrune`/`listAnchorIds`/`summarizeAnchorDerivationClasses` in both stores, ADR 0051). No live database touched. Next: Plan 11-17 (`memory prune-unhygienic-anchors` operator command, mirroring `memory prune-superseded`).
+**Resume file:** .planning/phases/11-derivation-input-hygiene/11-17-PLAN.md
 
 ## Performance Metrics
 
@@ -70,6 +72,7 @@ progress:
 | Phase 11 P12 | 20min | 3 tasks | 4 files |
 | Phase 11 P15 | 25min | 3 tasks | 3 files |
 | Phase 11 P13 (partial) | 45min | 1/3 tasks | 2 files |
+| Phase 11 P16 | 25min | 3 tasks | 4 files |
 
 ## Decisions
 
@@ -106,10 +109,13 @@ progress:
 - [Phase ?]: Prune, not archive (ADR 0050): superseded summaries are pure derivations reproducible from canonical events via rebuild-derivations.
 - [Phase 11]: GAP-11-B closed (Plan 11-15): hoisted per-summary normalization and reordered dedupeRankedMemory's box/thread/substring conjunction cheap-first, proven behavior-preserving by a 200+-case differential oracle held unedited across the fix and the benchmark. — Measured ~1.3M pairs/sec (~30x naive), clearing Plan 11-13's 1,000,000 pairs/sec sufficiency floor on first measurement -- no escape hatch fired, no GAP-11-C raised.
 - [Phase 11]: Plan 11-13's Task 2/3 (owner authorization + live prune) withheld rather than presented/run, given Task 1's evidence that the prune cannot satisfy the plan's must_have. — Anchors, not superseded summaries, are the confirmed source of tool-call text in injection packets (GAP-11-D); presenting the authorization checkpoint as originally scoped would misrepresent what the destructive step accomplishes.
+- [Phase 11]: Anchors get no `MemoryState` lifecycle (ADR 0051) — an anchor is a pure derivation over one turn, reproducible by re-derivation, and has zero inbound references (no `anchorIds` field anywhere in `src/domain`), unlike a summary which can be referenced by a box/trace/proposal/another summary; a lifecycle would durably retain the exact tool-call text REQ-053 excludes while adding a second entity the retrieval boundary must be proven safe against forever.
+- [Phase 11]: `commitUnhygienicAnchorPrune` recomputes eligibility authoritatively inside the transaction from the anchor's content enriched with its resolved canonical event's role/eventKind (a superset of the forward gate's inputs) — the caller's `anchorIds` list is never trusted; the 25,792-row content-only census is a floor, not a target, since role-gated rules cannot fire on content alone.
+- [Phase 11]: `listAnchorIds`'s person-scoped cursor uses the identical `json_extract(payload,'$.personId') = ?` + `id > ?` predicate as `listSupersededSummaryIds`, with no schema migration — `anchors` has the same `(id, payload)` shape as `summaries`; unindexed, so a table scan per page, accepted as a one-time-cleanup tradeoff.
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 2 of 15
-Status: Ready to execute
+Plan: 16 of 18 (Phase 11 plan numbering; 14/18 plans executed per ROADMAP.md)
+Status: Executing — GAP-11-D store-layer closure complete; Plan 11-17 (operator command) next
 Last activity: 2026-07-27
