@@ -3,16 +3,16 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 11
+current_plan: 1
 status: executing
 stopped_at: Completed 11-09-PLAN.md
-last_updated: "2026-07-27T02:10:13.225Z"
+last_updated: "2026-07-27T02:18:41.268Z"
 last_activity: 2026-07-27
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 78
-  completed_plans: 75
+  completed_plans: 76
   percent: 53
 ---
 
@@ -46,7 +46,7 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T02:10:08.605Z
+**Last session:** 2026-07-27T02:18:38.670Z
 **Stopped at:** Completed 11-09-PLAN.md
 **Resume file:** None
 
@@ -65,6 +65,7 @@ progress:
 | Phase 11 P09 | 25min | 3 tasks | 8 files |
 | Phase 11 P10 | 5min | 3 tasks | 8 files |
 | Phase 11 P11 | 25min | 3 tasks | 4 files |
+| Phase 11 P12 | 20min | 3 tasks | 4 files |
 
 ## Decisions
 
@@ -98,10 +99,11 @@ progress:
 - [Phase 11]: prepareInjection makes exactly one filtered listSummaries call per request; applyRetrievalBoundary remains the sole authority, the store filter is an optimization only (T-11-30)
 - [Phase 11]: commitSupersededSummaryPrune recomputes eligibility authoritatively inside the transaction; caller's summaryIds list is never trusted
 - [Phase 11]: freedPayloadBytes/payloadBytes uses JSON.stringify(parsedSummary).length in both stores, provably identical to SqliteStore's length(payload) column
+- [Phase ?]: Prune, not archive (ADR 0050): superseded summaries are pure derivations reproducible from canonical events via rebuild-derivations.
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 11 of 14
-Status: Plan 11-11 complete (superseded-summary prune machinery); ready to execute Plan 11-12
+Plan: 12 of 14
+Status: Ready to execute
 Last activity: 2026-07-27

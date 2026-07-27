@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 11/14 plans executed
+**Plans:** 12/14 plans executed
 
 Plans:
 **Wave 1**
@@ -370,7 +370,7 @@ Plans:
 
 **Wave 10** *(blocked on Wave 9)*
 
-- [ ] 11-12-PLAN.md — `memory prune-superseded`: dry-run default, fail-closed backup gate, resumable batches, ADR 0050.
+- [x] 11-12-PLAN.md — `memory prune-superseded`: dry-run default, fail-closed backup gate, resumable batches, ADR 0050.
 
 **Wave 11** *(blocked on Wave 10)*
 
