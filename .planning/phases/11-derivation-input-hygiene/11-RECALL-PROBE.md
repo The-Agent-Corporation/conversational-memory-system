@@ -15,16 +15,17 @@ this is a confirmed root cause (anchors), not a probe defect, and it is the subj
 |---|---|---|---|
 | `before` | scratch copy of `~/.memory/aaron.db.pre-phase11` (`cp -c`, APFS clone) | `{"compacted":135366}` | Pre-hygiene backup; original backup file verified untouched (mtime/size identical: 4,962,574,336 bytes, 2026-07-26 19:26) before and after this run |
 | `after-filter` | `~/.memory/aaron.db` (live, as of this probe) | `{"compacted":50551,"superseded":87727}` | Post-hygiene-rebuild, post-state-filter (Plan 11-10), prune NOT yet applied — the 87,727 superseded rows are present but unreachable |
-| `after-prune` | N/A | N/A | **Not run. Live prune requires owner authorization (Task 2 of this plan) and, per the diagnostic below, would not change this result anyway — see "Why the prune doesn't fix this" below.** |
+| `after-prune` (summary prune) | N/A | N/A | **Never run.** The superseded-*summary* prune (11-13 Task 2/3) remains withheld. Per the diagnostic below it would not have changed this result: superseded summaries are already excluded from retrieval, so pruning them changes what is stored, not what is selected. |
+| `after-anchor-prune` | `~/.memory/aaron.db` (live, post-prune) | `{"compacted":50551,"superseded":87727}` | Post **anchor** prune (Plan 11-18, 2026-07-27): 26,643 unhygienic anchors deleted, 19,268 conversational retained, 214,615,234 payload bytes freed, 92 batches. Summary counts unchanged — this prune touched anchors only. Backup `~/.memory/aaron.db.pre-anchor-prune` (5,031,448,576 bytes) taken immediately beforehand. |
 
 Embedder for both runs: `deterministic` / `keyword-hash-v1` (the always-on default; no embeddings sidecar
 enabled on either database).
 
 ## Elapsed time (GAP-11-B evidence)
 
-| | before (135,366 unfiltered summaries) | after-filter (50,551 active summaries) | ratio |
-|---|---|---|---|
-| Total (12 queries) | 1,509,789.1 ms (~25.2 min) | 523,680.4 ms (~8.7 min) | ~2.9x faster |
+| | before (135,366 unfiltered summaries) | after-filter (50,551 active summaries) | after-anchor-prune (same summaries, 19,268 anchors) | ratio vs before |
+|---|---|---|---|---|
+| Total (12 queries) | 1,509,789.1 ms (~25.2 min) | 523,680.4 ms (~8.7 min) | 388,816.5 ms (~6.5 min) | ~3.9x faster |
 
 Before Plan 11-15 closed GAP-11-B, this extrapolated to hours-to-days per run (measured ~48,900
 pairs/sec on the live corpus); the entire 12-query set — run against the LARGER pre-hygiene corpus —
@@ -54,7 +55,55 @@ now completes in ~25 minutes, and the smaller post-filter corpus in under 9 minu
 |---|---|---|
 | before (12 queries) | 9 / 12 | 1 / 12 |
 | after-filter (12 queries) | **10 / 12** | 0 / 12 |
-| after-prune | not run | not run |
+| after-anchor-prune (12 queries) | **4 / 12** | 1 / 12 |
+| after-prune (summary prune) | never run | never run |
+
+## after-anchor-prune per-query results (Plan 11-18, 2026-07-27)
+
+| Query | packet | conf | elapsed ms | toolCall | harness | srcIds |
+|---|---|---|---|---|---|---|
+| Q1 | packet | 0.73 | 55,404.5 | **true** | false | 2 |
+| Q2 | packet | 0.47 | 13,455.9 | false | **true** | 3 |
+| Q3 | packet | 0.70 | 6,881.5 | **true** | false | 3 |
+| Q4 | packet | 0.58 | 25,939.6 | **true** | false | 2 |
+| Q5 | packet | 0.55 | 6,588.1 | false | false | 0 |
+| Q6 | packet | 0.95 | 71,320.3 | false | false | 1 |
+| Q7 | packet | 0.63 | 71,391.6 | false | false | 2 |
+| Q8 | packet | 0.55 | 27,898.6 | false | false | 2 |
+| Q9 | packet | 0.88 | 53,918.6 | false | false | 0 |
+| Q10 | packet | 0.70 | 20,081.5 | **true** | false | 3 |
+| Q11 | packet | 0.70 | 30,002.4 | false | false | 3 |
+| Q12 | packet | 0.20 | 5,933.9 | false | false | 3 |
+
+### What the anchor prune fixed, and what it did not
+
+**Fixed — the anchor path.** Tool-call text dropped from 10/12 to 4/12, and no query's top-ranked
+memory is a raw `[Tool call: ...]` payload any more. Q1 — byte-identical between `before` and
+`after-filter` at 0.92 confidence — now returns a phase-06 verification context at 0.73. GAP-11-D is
+closed.
+
+**Not fixed — the summary path.** All four surviving queries (Q1, Q3, Q4, Q10) have **non-empty**
+`sourceSummaryIds` (2, 3, 2, 3 respectively). Per the discriminator established in the diagnostic
+below, a non-empty `sourceSummaryIds` means the winning memory IS summary-derived. So the residual
+tool-call text is coming from summaries that the derivation-hygiene rebuild reduced but did not
+eliminate — a different defect from the anchor leak, and one this plan did not scope. Raised as
+GAP-11-E.
+
+**Phase 11's SC7 is therefore NOT met.** "No injection packet for any probe query contains tool-call
+or harness-injected text" is FALSE for 4/12 (tool-call) and 1/12 (harness). Recorded as measured
+rather than rounded to a success.
+
+### Two anomalies worth investigating before trusting the harness column
+
+1. **Harness text went 1/12 → 0/12 → 1/12.** Q2 regained it after the anchor prune. The likeliest
+   explanation is that the anchor previously winning Q2 was pruned, exposing a harness-text summary
+   underneath — i.e. the 0/12 at `after-filter` was an anchor masking a summary, not a fix. Not
+   confirmed; stated as the leading hypothesis.
+2. **Q12's `after-anchor-prune` preview is literally `<task-notification> <task-id>...` — visible
+   harness scaffolding — yet `containsHarnessText` reports false.** If the probe's harness-text
+   detector does not recognise `<task-notification>`, the harness column has been under-counting in
+   **all three runs**, and the 1/12 figures above are optimistic. The detector, not the corpus, should
+   be checked first.
 
 Harness-injected text (`[SYSTEM:`, `[cron:`, `[SILENT]`) dropped from 1/12 to 0/12 — the state filter
 does help there (Q2's `after-filter` top match is no longer the harness-flagged summary it was in
@@ -65,8 +114,14 @@ filter changed what's stored (87,727 superseded summaries excluded from the retr
 change what got selected for Q1, Q3, Q9 at all.
 
 **This is a negative result against the plan's must_have**: "After the prune, no injection packet for
-any probe query contains tool-call or harness-injected text" is currently FALSE for 10/12 queries, and
-per the diagnostic below the prune itself cannot make it true.
+any probe query contains tool-call or harness-injected text" was FALSE for 10/12 queries at
+`after-filter`, and per the diagnostic below the summary prune could not have made it true.
+
+> **Superseded 2026-07-27 by the `after-anchor-prune` run above.** The diagnostic below correctly
+> identified anchors as the mechanism; Plans 11-16/11-17/11-18 closed that path and the tool-call
+> tally fell to 4/12. The paragraphs below are retained as the original evidence trail — read them as
+> the state at `after-filter`, not as the current state. The current state is the
+> `after-anchor-prune` section above: 4/12 tool-call, all summary-sourced, tracked as GAP-11-E.
 
 ## Diagnostic: where the tool-call text is coming from
 
