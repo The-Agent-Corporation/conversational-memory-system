@@ -425,17 +425,57 @@ export const CommitSourceDeletionInputSchema = z.object({
   if (input.receipt.operation !== input.operation || input.receipt.personId !== input.personId || input.receipt.targetId !== input.expectedGrant.candidateId) context.addIssue({ code: z.ZodIssueCode.custom, message: "Source deletion receipt binding mismatch", path: ["receipt"] });
 });
 
+// Superseded-summary prune (Plan 11-11, GAP-11-A closure): the only sanctioned removal path for
+// pure derivations (REQ-053/REQ-054). Unlike source_deletion, this operation carries no
+// caller-computed `effects` payload — eligibility (not_found / not_superseded / person_mismatch /
+// any of the four reference kinds) is recomputed authoritatively inside the store's transaction,
+// never trusted from the caller. See `commitSupersededSummaryPrune` in memory-store.ts.
+export const CommitSupersededSummaryPruneInputSchema = z.object({
+  operation: z.literal("superseded_summary_prune"),
+  personId: IdSchema,
+  summaryIds: IdListSchema.min(1).max(1000),
+  requestedAt: IsoDateTimeSchema
+}).strict();
+
+export const SupersededSummaryPruneSkipReasonSchema = z.enum([
+  "not_found",
+  "not_superseded",
+  "person_mismatch",
+  "referenced_by_box",
+  "referenced_by_trace",
+  "referenced_by_proposal",
+  "referenced_by_summary"
+]);
+
+export const SupersededSummaryPruneReceiptSchema = z.object({
+  operation: z.literal("superseded_summary_prune"),
+  personId: IdSchema,
+  prunedSummaryIds: IdListSchema,
+  deletedVectorRows: z.number().int().nonnegative(),
+  deletedInjectionIds: IdListSchema,
+  freedPayloadBytes: z.number().int().nonnegative(),
+  skipped: z.array(z.object({
+    summaryId: IdSchema,
+    reason: SupersededSummaryPruneSkipReasonSchema
+  })),
+  committedAt: IsoDateTimeSchema
+}).strict();
+
 export type CommitHistoryImportInput = z.infer<typeof CommitHistoryImportInputSchema>;
 export type CommitProposalDecisionInput = z.infer<typeof CommitProposalDecisionInputSchema>;
 export type CommitSourceRevocationInput = z.infer<typeof CommitSourceRevocationInputSchema>;
 export type CommitSourceDeletionInput = z.infer<typeof CommitSourceDeletionInputSchema>;
 export type SourceDeletionEffects = z.infer<typeof SourceDeletionEffectsSchema>;
+export type CommitSupersededSummaryPruneInput = z.infer<typeof CommitSupersededSummaryPruneInputSchema>;
+export type SupersededSummaryPruneSkipReason = z.infer<typeof SupersededSummaryPruneSkipReasonSchema>;
+export type SupersededSummaryPruneReceipt = z.infer<typeof SupersededSummaryPruneReceiptSchema>;
 
 export type McpMutationFaultBoundary =
   | "history_import_before_write" | "history_import_after_sources" | "history_import_after_events" | "history_import_after_checkpoint"
   | "proposal_decision_before_write" | "proposal_decision_after_boxes" | "proposal_decision_after_traces" | "proposal_decision_after_proposal"
   | "source_revocation_before_write" | "source_revocation_after_grant" | "source_revocation_after_audit"
-  | "source_deletion_before_write" | "source_deletion_after_supersessions" | "source_deletion_after_injections" | "source_deletion_after_anchors" | "source_deletion_after_turns" | "source_deletion_after_events" | "source_deletion_after_sources" | "source_deletion_after_quarantine" | "source_deletion_after_checkpoint" | "source_deletion_after_audits";
+  | "source_deletion_before_write" | "source_deletion_after_supersessions" | "source_deletion_after_injections" | "source_deletion_after_anchors" | "source_deletion_after_turns" | "source_deletion_after_events" | "source_deletion_after_sources" | "source_deletion_after_quarantine" | "source_deletion_after_checkpoint" | "source_deletion_after_audits"
+  | "superseded_prune_before_write" | "superseded_prune_after_vectors" | "superseded_prune_after_injections";
 
 export const sourceDeletionBootstrapCheckpointSchema = HistoricalBootstrapCheckpointSchema;
 export const sourceDeletionAnchorSchema = AnchorSchema;
