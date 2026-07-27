@@ -461,6 +461,44 @@ export const SupersededSummaryPruneReceiptSchema = z.object({
   committedAt: IsoDateTimeSchema
 }).strict();
 
+// Unhygienic-anchor prune (Plan 11-16, GAP-11-D closure): the only sanctioned removal path for
+// anchors the shipped hygiene classifier (`src/topic/derivation-hygiene.ts`) would never have
+// created. Unlike source_deletion, this operation carries no caller-computed `effects` payload --
+// eligibility (not_found / person_unattributed / person_mismatch / retained_conversational) is
+// recomputed authoritatively inside the store's transaction from the anchor's own content plus its
+// resolved canonical event's role/eventKind, never trusted from the caller. See
+// `commitUnhygienicAnchorPrune` in memory-store.ts.
+export const CommitUnhygienicAnchorPruneInputSchema = z.object({
+  operation: z.literal("unhygienic_anchor_prune"),
+  personId: IdSchema,
+  anchorIds: IdListSchema.min(1).max(1000),
+  requestedAt: IsoDateTimeSchema
+}).strict();
+
+export const UnhygienicAnchorPruneSkipReasonSchema = z.enum([
+  "not_found",
+  "person_mismatch",
+  "person_unattributed",
+  "retained_conversational"
+]);
+
+export const UnhygienicAnchorPruneReceiptSchema = z.object({
+  operation: z.literal("unhygienic_anchor_prune"),
+  personId: IdSchema,
+  prunedAnchorIds: IdListSchema,
+  prunedByClass: z.object({
+    tool_activity: z.number().int().nonnegative(),
+    synthetic_injected: z.number().int().nonnegative()
+  }).strict(),
+  freedPayloadBytes: z.number().int().nonnegative(),
+  skipped: z.array(z.object({
+    anchorId: IdSchema,
+    reason: UnhygienicAnchorPruneSkipReasonSchema
+  })),
+  ruleVersion: z.string().min(1),
+  committedAt: IsoDateTimeSchema
+}).strict();
+
 export type CommitHistoryImportInput = z.infer<typeof CommitHistoryImportInputSchema>;
 export type CommitProposalDecisionInput = z.infer<typeof CommitProposalDecisionInputSchema>;
 export type CommitSourceRevocationInput = z.infer<typeof CommitSourceRevocationInputSchema>;
@@ -469,13 +507,17 @@ export type SourceDeletionEffects = z.infer<typeof SourceDeletionEffectsSchema>;
 export type CommitSupersededSummaryPruneInput = z.infer<typeof CommitSupersededSummaryPruneInputSchema>;
 export type SupersededSummaryPruneSkipReason = z.infer<typeof SupersededSummaryPruneSkipReasonSchema>;
 export type SupersededSummaryPruneReceipt = z.infer<typeof SupersededSummaryPruneReceiptSchema>;
+export type CommitUnhygienicAnchorPruneInput = z.infer<typeof CommitUnhygienicAnchorPruneInputSchema>;
+export type UnhygienicAnchorPruneSkipReason = z.infer<typeof UnhygienicAnchorPruneSkipReasonSchema>;
+export type UnhygienicAnchorPruneReceipt = z.infer<typeof UnhygienicAnchorPruneReceiptSchema>;
 
 export type McpMutationFaultBoundary =
   | "history_import_before_write" | "history_import_after_sources" | "history_import_after_events" | "history_import_after_checkpoint"
   | "proposal_decision_before_write" | "proposal_decision_after_boxes" | "proposal_decision_after_traces" | "proposal_decision_after_proposal"
   | "source_revocation_before_write" | "source_revocation_after_grant" | "source_revocation_after_audit"
   | "source_deletion_before_write" | "source_deletion_after_supersessions" | "source_deletion_after_injections" | "source_deletion_after_anchors" | "source_deletion_after_turns" | "source_deletion_after_events" | "source_deletion_after_sources" | "source_deletion_after_quarantine" | "source_deletion_after_checkpoint" | "source_deletion_after_audits"
-  | "superseded_prune_before_write" | "superseded_prune_after_vectors" | "superseded_prune_after_injections";
+  | "superseded_prune_before_write" | "superseded_prune_after_vectors" | "superseded_prune_after_injections"
+  | "anchor_hygiene_prune_before_write" | "anchor_hygiene_prune_after_delete";
 
 export const sourceDeletionBootstrapCheckpointSchema = HistoricalBootstrapCheckpointSchema;
 export const sourceDeletionAnchorSchema = AnchorSchema;
