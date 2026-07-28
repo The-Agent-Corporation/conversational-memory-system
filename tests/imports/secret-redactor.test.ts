@@ -29,21 +29,21 @@ describe("secret redaction", () => {
     // with it added the value grammar captured only the backtick-quoted username, stopping
     // at the space before the password.
     it("redacts a quoted user/password pair after a credential lead-in", () => {
-      const content = "Your MC login: `synthuser` / `Synthpw42$!2026`";
+      const content = "Your MC login: `synthuser` / `Synthpw42%~7431`";
 
       const redacted = redactKnownSecrets(content);
 
-      expect(redacted).not.toContain("Synthpw42$!2026");
+      expect(redacted).not.toContain("Synthpw42%~7431");
       expect(redacted).toContain("[REDACTED]");
     });
 
     it("redacts the same pair under other lead-in words and quote styles", () => {
       for (const content of [
-        "credentials: 'synthuser' / 'Synthpw42$!2026'",
-        'creds = "synthuser" / "Synthpw42$!2026"',
-        "Login: `synth.user@example.test` / `Synthpw42$!2026`"
+        "credentials: 'synthuser' / 'Synthpw42%~7431'",
+        'creds = "synthuser" / "Synthpw42%~7431"',
+        "Login: `synth.user@example.test` / `Synthpw42%~7431`"
       ]) {
-        expect(redactKnownSecrets(content)).not.toContain("Synthpw42$!2026");
+        expect(redactKnownSecrets(content)).not.toContain("Synthpw42%~7431");
       }
     });
 
@@ -166,7 +166,7 @@ describe("secret redaction", () => {
 
     it("is idempotent — redacting twice changes nothing further", () => {
       const content = [
-        "Your MC login: `synthuser` / `Synthpw42$!2026`",
+        "Your MC login: `synthuser` / `Synthpw42%~7431`",
         '\\"password\\":\\"Synthpw42$\\"',
         "postgresql://postgres:synthpw42@localhost:5432/appdb",
         "api_key=sk-abcdefghijklmnopqrstuvwxyz"

@@ -2,9 +2,16 @@
 
 **Plan:** 11-30 (GAP-11-F, detection half) · **Date:** 2026-07-28 · **Requirement:** REQ-053
 
-**Disclosure discipline for this document.** No live credential value appears here. All census
-output was passed through a character-class masking function before being written anywhere: lowercase
-letters become `a`, uppercase `A`, digits `9`, runs collapse to `x{n}`, and punctuation is preserved.
+**Disclosure discipline for this document.** No live credential value or fragment of one appears here.
+All census output was passed through a character-class masking function before being written anywhere:
+lowercase letters become `a`, uppercase `A`, digits `9`, and runs collapse to `x{n}`.
+
+One caveat, recorded rather than glossed: that masking function preserved punctuation and short digit
+runs verbatim, which meant its raw output reproduced the trailing characters of the escaped password.
+Those fragments were removed from this document by hand and the shape in §1 is now fully classed. The
+lapse is noted because it is the same failure mode this plan exists to correct, and because the census
+scripts still in the scratchpad carry the weaker masking and must not be committed.
+
 Where a shape is quoted below it is a *shape*, not a value. All test fixtures referenced are synthetic.
 The corpus was opened `readOnly: true` throughout; `~/.memory/aaron.db` was never opened for writing and
 none of the four backups (`pre-v4`, `pre-rebuild-v3`, `pre-anchor-prune`, `pre-phase11`) were touched.
@@ -16,11 +23,12 @@ none of the four backups (`pre-v4`, `pre-rebuild-v3`, `pre-anchor-prune`, `pre-p
 The credential that escaped is a **quoted user/password pair following a prose lead-in**. Masked:
 
 ```
-… Your MC login: `<a{5}>` / `<Aa{7}9{2}>$!2026` …
+… Your MC login: `<a{5}>` / `<Aa{7}9{2}[sym]{2}9{4}>` …
 ```
 
 That is: the word `login`, a colon, a backtick-quoted username, a space-slash-space, and a
-backtick-quoted human-chosen password containing letters, digits, `$` and `!`. It has no entropy
+backtick-quoted human-chosen password of 16 characters mixing letters, digits and two ASCII symbols.
+It has no entropy
 signature, no vendor prefix, and no fixed length — as GAP-11-F predicted, this is a materially harder
 detection target than an API key.
 
@@ -83,10 +91,10 @@ lead-in is `login`, which is absent. The rule never even begins to match. This i
 **(b) The value grammar cannot express a `user / pass` pair.** Suppose (a) were fixed by adding `login`
 to the alternation. The rule would still fail to redact the password, because its value capture is
 `["']?([^"'\s,;}]+)` — a single optional quote followed by a run of non-whitespace, non-quote
-characters. Against ``login: `aaron` / `Pass99$!2026` `` the optional quote class `["']?` does not
+characters. Against ``login: `aaron` / `Pass99%~7431` `` the optional quote class `["']?` does not
 include the **backtick**, so the capture begins at the backtick and terminates at the first space —
 capturing `` `aaron` `` and nothing more. The password sits after ` / ` as a separate token and is left
-in plaintext. Verified: the unquoted variant `login: aaron / Pass99$!2026` also survives, for the same
+in plaintext. Verified: the unquoted variant `login: aaron / Pass99%~7431` also survives, for the same
 reason — the capture stops at the space after the username.
 
 **(c) The rule cannot skip a backslash between the keyword and its separator.** This one was found by
@@ -102,8 +110,8 @@ Verified empirically:
 |---|---|
 | `{"email":"a@b.com","password":"Synth99$"}` | HIT — redacted |
 | `-d \"{\"email\":\"a@b.com\",\"password\":\"Synth99$\"}\"` | **MISS** |
-| `Your MC login: \`aaron\` / \`Synth99$!2026\`` | **MISS** |
-| `Your MC login: aaron / Synth99$!2026` | **MISS** |
+| `Your MC login: \`aaron\` / \`Synth99%~7431\`` | **MISS** |
+| `Your MC login: aaron / Synth99%~7431` | **MISS** |
 | `API key: abc123def456ghi789` | **MISS** (see §3, C3) |
 | `postgresql://postgres:trustno1@localhost:5432/db` | **MISS** (see §3, C4) |
 | `MC api key 0123…64 hex chars…abcd` | **MISS** (see §3, C5 — deliberately left missing) |
