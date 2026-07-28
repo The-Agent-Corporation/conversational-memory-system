@@ -1,5 +1,16 @@
 # Phase 12: Daemon Incremental Embedding — Research
 
+> **⚠ SUPERSEDED IN PART — read this before acting on anything below.**
+>
+> This research was written BEFORE the owner closed Locked decision 3 (2026-07-28). Its Summary and its
+> sequencing table recommend running `memory prune-superseded --apply` to delete the 89,059 superseded
+> rows. **The owner decided NOT to prune.** The chosen fix is a state predicate on
+> `listSummaryIdsMissingVector` so superseded rows are never backfill candidates — see `12-CONTEXT.md`'s
+> 2026-07-28 addendum and `12-GAP-12-B.md`.
+>
+> **Do not run `memory prune-superseded` in this phase.** Every other finding here stands; only the
+> prune recommendation is overridden.
+
 **Researched:** 2026-07-28
 **Domain:** Daemon derivation pipeline + local vector cache (no new external technology)
 **Confidence:** HIGH for the seam analysis and the two blocking defects (both reproduced by running code in this session); MEDIUM for backfill wall-clock projections (measured on a 300-summary random sample, not a full run).
