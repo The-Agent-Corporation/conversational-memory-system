@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { resolveEmbedder } from "../embeddings/embedder-resolver.js";
+import { RETRIEVABLE_MEMORY_STATES } from "../retrieval/retrievable-state.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
 import type { SummaryVectorRecord } from "../storage/memory-store.js";
 import type { Summary } from "../domain/types.js";
@@ -61,11 +62,21 @@ export async function runBackfillEmbeddingsCommand(
     // re-resolved mid-loop, never a hardcoded string (T-10-08).
     const embedder = await resolveEmbedder(databasePath);
 
+    // INVARIANT (GAP-12-A): the query key here and the write key below
+    // (`embedding.model`) are the same identity BY CONSTRUCTION — every embedder
+    // composes both through `composeModelIdentity` in `embedder-identity.ts`, so
+    // it is one expression rather than two strings that happen to agree. If a
+    // future edit makes these two reads diverge, the missing set stops shrinking:
+    // resume restarts from zero and a repair pass re-embeds the corpus per tick.
     const missingIds = await store.listSummaryIdsMissingVector(embedder.provider, embedder.model);
     const totalMissingAtStart = missingIds.length;
 
-    // One-time full load into an id->Summary map, per plan instruction.
-    const allSummaries = await store.listSummaries();
+    // One-time load into an id->Summary map, scoped to the retrievable states —
+    // an unfiltered load Zod-parses every summary in the store (138k rows on the
+    // live corpus, one of them 818 KB). Non-retrievable ids that the missing-set
+    // query still returns simply miss this map and hit the defensive
+    // `if (!summary) continue` below.
+    const allSummaries = await store.listSummaries({ states: [...RETRIEVABLE_MEMORY_STATES] });
     const summaryById = new Map<string, Summary>();
     for (const summary of allSummaries) {
       summaryById.set(summary.id, summary);
