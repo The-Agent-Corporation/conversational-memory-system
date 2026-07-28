@@ -21,6 +21,11 @@
  * see `.planning/phases/11-derivation-input-hygiene/11-SCAFFOLD-AUDIT.md` and ADR 0048's
  * addendum. The version bump marks every existing contraction checkpoint stale via
  * `PROCESSOR_VERSION` (src/daemon/contraction-runner.ts), per REQ-054.
+ *
+ * Plan 11-28 (rule version bumped to v4, GAP-11-H): `silent-sentinel` narrowed from
+ * `matchesEmbedded` to `isSentinelOnly` — a `[SILENT]` line trailing real reasoning no longer
+ * discards that reasoning. 123 of 292,407 live events change class; see `isSentinelOnly` below,
+ * 11-GAP-11-H.md, and ADR 0048's GAP-11-H addendum.
  */
 
 export const HYGIENE_RULE_VERSION = "hygiene-rules/v4";
