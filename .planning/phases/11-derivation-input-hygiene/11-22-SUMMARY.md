@@ -76,7 +76,7 @@ H-0/H-i**
   tally corrected from `{H-i:3, H-0:1, H-iii:2}` to `{H-i:2, H-iii:4}`, matching hand-verification
   against the raw canonical events.
 - **Files modified:** `.planning/phases/11-derivation-input-hygiene/11-leak-attribution.ts`
-- **Commit:** `e607564` (fix folded into the same commit as the script's initial build, since the
+- **Commit:** `65ba986` (fix folded into the same commit as the script's initial build, since the
   bug was caught before the script's first committed run)
 
 No other deviations. No src/ or database changes — `git diff --stat src/` is empty for this plan.
@@ -103,8 +103,8 @@ No other deviations. No src/ or database changes — `git diff --stat src/` is e
 - FOUND: `/Users/aaronwhaley/Agent-Corporation/conversational-memory-system/.planning/phases/11-derivation-input-hygiene/probe-v2/leak-attribution-current-v2.json`
 - FOUND: `/Users/aaronwhaley/Agent-Corporation/conversational-memory-system/.planning/phases/11-derivation-input-hygiene/probe-v2/leak-attribution-current-v2.md`
 - FOUND: `/Users/aaronwhaley/Agent-Corporation/conversational-memory-system/.planning/phases/11-derivation-input-hygiene/probe-v2/doc-cited-toolcall-6.json`
-- FOUND commit `e607564`: `feat(11-22): build GAP-11-E leak-attribution discriminator (read-only)`
-- FOUND commit `e2dc783`: `docs(11-22): GAP-11-E finding -- three root causes, not one`
+- FOUND commit `65ba986`: `feat(11-22): build GAP-11-E leak-attribution discriminator (read-only)`
+- FOUND commit `0335745`: `docs(11-22): GAP-11-E finding -- three root causes, not one`
 
 ## Self-Check: PASSED
 

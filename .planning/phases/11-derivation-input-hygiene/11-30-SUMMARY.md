@@ -40,7 +40,7 @@ and rejecting two more on measured precision.
 
 ## What was done
 
-**Task 1 — audit** (`bf79efd`). Explained each shipped rule's non-firing by its actual predicate,
+**Task 1 — audit** (`7e2fb97`). Explained each shipped rule's non-firing by its actual predicate,
 verified empirically by calling `redactKnownSecrets()` on synthetic reconstructions rather than by
 reading regexes. Censused the corpus read-only (`readOnly: true`; the four backups untouched) and
 measured six candidate rules for both TP and FP. Written up in `11-REDACTOR-AUDIT.md`.
@@ -50,7 +50,7 @@ A first census pass was discarded as invalid: it scanned whole payload JSON and 
 content fields only. That artifact is recorded in the audit because it is exactly the measurement error
 that would have justified a bad rule.
 
-**Task 2 — implementation** (`6c17e90`, TDD). Seven failing tests first with synthetic fixtures, then
+**Task 2 — implementation** (`8d2f8db`, TDD). Seven failing tests first with synthetic fixtures, then
 four rules:
 
 | Rule | New catches (canonical / summaries / anchors) | Measured FP |
@@ -143,7 +143,7 @@ paths, file access patterns, or schema changes.
 
 ## Self-Check: PASSED
 
-All five created/modified files present on disk; both task commits (`bf79efd`, `6c17e90`) present in
+All five created/modified files present on disk; both task commits (`7e2fb97`, `8d2f8db`) present in
 `git log`.
 
 ## Out of scope, explicitly

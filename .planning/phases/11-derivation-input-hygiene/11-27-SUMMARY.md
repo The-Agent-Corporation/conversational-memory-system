@@ -182,7 +182,7 @@ one that does not.
 
 ### Task 3 — Measured proof on a fresh clone
 
-Full `rebuild-derivations` on a fresh `cp -c` clone at commit `cafc8e7`, run in the background,
+Full `rebuild-derivations` on a fresh `cp -c` clone at commit `90e25ae`, run in the background,
 elapsed **~10 min** (`01:09:14Z` → `01:19:24Z`), 1,170 slices. Receipt, verbatim:
 
 ```json
@@ -272,17 +272,17 @@ be inspected before any prune. **Owner decision, deliberately left open.**
 - **Fix:** Promoted `anchorsForTurn` to one exported pure function in `anchor-detector.ts`; deleted
   the runner's copy; runner passes the `CanonicalEvent`'s `eventKind`.
 - **Files modified:** `src/anchors/anchor-detector.ts`, `src/daemon/contraction-runner.ts`
-- **Commit:** `cafc8e7`
+- **Commit:** `90e25ae`
 
 **2. [Rule 2] Corrected the `sqlite-store.ts` gate/prune superset comment**
 - **Found during:** Task 2. The team-lead brief flagged it; the comment asserted a one-directional
   safety property that this plan changes.
-- **Commit:** `cafc8e7`
+- **Commit:** `90e25ae`
 
 **3. Flipped two existing tests that pinned the pre-reversal SC1 rule**
 - Necessary, not optional: they encoded the behavior GAP-11-G is. Each carries an inline comment
   recording what it asserted before and why it changed.
-- **Commit:** `ecbc1e2`
+- **Commit:** `54cc66f`
 
 ### Not done, deliberately
 
@@ -315,11 +315,11 @@ reviewers checked that it matched the walk rather than asking whether it needed 
 
 | Task | Commit | Description |
 |---|---|---|
-| 1 | `ecbc1e2` | Gate the rebuild path's anchor minting (defect 1) |
-| 2 | `cafc8e7` | eventKind-aware gate + unified minter (defect 2) |
+| 1 | `54cc66f` | Gate the rebuild path's anchor minting (defect 1) |
+| 2 | `90e25ae` | eventKind-aware gate + unified minter (defect 2) |
 | 3 | (docs commit) | ADR 0051 addendum, SUMMARY, state |
 
 ## Self-Check: PASSED
 
-All modified files exist on disk; both task commits (`ecbc1e2`, `cafc8e7`) resolve in `git log`;
+All modified files exist on disk; both task commits (`54cc66f`, `90e25ae`) resolve in `git log`;
 ADR 0051 contains `GAP-11-G` and its pre-addendum 173 lines diff clean against a pre-edit copy.

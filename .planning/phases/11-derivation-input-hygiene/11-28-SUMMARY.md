@@ -117,7 +117,7 @@ Received: "hygiene-rules/v3"
 The three pure-sentinel / mid-sentence-quote / one-rule-wide guards passed in the same RED run —
 they pin behavior that must NOT change, so they were expected green from the start.
 
-Committed as RED: `21a1033`.
+Committed as RED: `15eb8e9`.
 
 ### GREEN — the predicate, and why this one
 
@@ -214,16 +214,16 @@ starts-with-line filter**
 - **Fix:** Drop lines that START with the marker. Measured against the whole corpus first: the two
   predicates disagree on 0 of 292,407 events, so the live-corpus blast radius is identical.
 - **Files modified:** `src/topic/derivation-hygiene.ts`
-- **Commit:** `9f1609f` (predicate itself landed in `675a7f1`, see below)
+- **Commit:** `184d6bc` (predicate itself landed in `30aa34e`, see below)
 
 **2. [Process] Commit attribution collision with a concurrent agent**
 
 - **Found during:** Task 1, immediately after the GREEN edits
-- **Issue:** Another agent active in this session committed `675a7f1 docs(11): plan the close-out
+- **Issue:** Another agent active in this session committed `30aa34e docs(11): plan the close-out
   chain (11-29, 11-30, 11-31)` with a broad `git add` that swept my in-flight
   `src/topic/derivation-hygiene.ts` edits into its commit. The code is correct and present in the
   tree; only the attribution is wrong. Nothing was lost or overwritten.
-- **Fix:** No code change. The follow-up commit `9f1609f` carries the correct
+- **Fix:** No code change. The follow-up commit `184d6bc` carries the correct
   `fix(11-28): …` message and records the collision in its body, so `git log` reads honestly.
 - **Note for the phase:** this is a real hazard of parallel agents on one worktree, and worth
   flagging to the orchestrator independently of this plan.
@@ -255,5 +255,5 @@ classification predicate.
 ## Self-Check: PASSED
 
 - Files verified present: `src/topic/derivation-hygiene.ts`, `tests/topic/derivation-hygiene.test.ts`, `docs/adr/0048-derivation-input-hygiene.md`, this summary
-- Commits verified in `git log`: `21a1033` (RED), `9f1609f` (GREEN + header), `5f42f78` (ADR addendum). The predicate and version bump were physically committed in `675a7f1` by a concurrent agent's broad `git add` — see Deviations #2.
-- `git diff 94dd40f -- src/topic/derivation-hygiene.ts` (pre-plan baseline → now), excluding comments, is exactly: the version constant, the new `isSentinelOnly` helper, and the one rule entry. `matchesEmbedded`'s body appears on no changed line.
+- Commits verified in `git log`: `15eb8e9` (RED), `184d6bc` (GREEN + header), `b6a6303` (ADR addendum). The predicate and version bump were physically committed in `30aa34e` by a concurrent agent's broad `git add` — see Deviations #2.
+- `git diff 9aa381b -- src/topic/derivation-hygiene.ts` (pre-plan baseline → now), excluding comments, is exactly: the version constant, the new `isSentinelOnly` helper, and the one rule entry. `matchesEmbedded`'s body appears on no changed line.

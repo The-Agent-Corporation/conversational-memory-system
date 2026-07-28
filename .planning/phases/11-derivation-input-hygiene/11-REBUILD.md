@@ -4,16 +4,16 @@
 
 This document has two halves, in the order they happened:
 
-1. **Tasks 1–2 (2026-07-28T00:28–00:56Z, commit `455ba7d`) — rehearsal, then STOP.** The first rehearsal
+1. **Tasks 1–2 (2026-07-28T00:28–00:56Z, commit `4781658`) — rehearsal, then STOP.** The first rehearsal
    tripped stop condition (a): 1,330 anchors that Plan 11-18 pruned were resurrected, every one carrying
    raw `[Tool call: …]` text. Task 3 was not run. Recorded below unchanged, as the evidence that gated
    the operation.
-2. **Task 3 (2026-07-28T01:26–01:36Z, commit `cb97c82`) — live run.** Plan 11-27 fixed the two defects
+2. **Task 3 (2026-07-28T01:26–01:36Z, commit `504685d`) — live run.** Plan 11-27 fixed the two defects
    behind the resurrection; the orchestrator re-verified the stop rule (resurrection 0) and released the
    gate. The live rebuild ran and its receipt is recorded at the end of this document.
 
-**Git commit at rehearsal:** `455ba7d4841d335c6a834fefbc6634dbced32978`
-**Git commit at live run:** `cb97c8240529cf56e209e0c6045a29a7cd5a9e98`
+**Git commit at rehearsal:** `47816582d7fe83b2f848521543a8a791d576540b`
+**Git commit at live run:** `504685d4c26a75f71f74030a262053376424d9ef`
 
 ---
 
@@ -31,7 +31,7 @@ rehearsal. The orchestrator therefore attached a decision rule, stated to the ow
 ran: the authorization stands **only if the rehearsal broadly matches the projection**, and the plan
 must stop at Task 2 without running anything live if any of the following occurs:
 
-| # | Stop condition | Result at first rehearsal (`455ba7d`) | Result after Plan 11-27 (`cb97c82`) |
+| # | Stop condition | Result at first rehearsal (`4781658`) | Result after Plan 11-27 (`504685d`) |
 |---|---|---|---|
 | (a) | Any anchor that Plan 11-18 pruned is resurrected | **TRIPPED — 1,330 anchors resurrected** | **cleared — 0 resurrected** |
 | (b) | Interrupt-and-resume does not converge to the same receipt | not tripped — converged exactly | unchanged |
@@ -46,7 +46,7 @@ This is threat **T-11-90** in the plan's own register — "the rebuild resurrect
 the plan required (mandatory before/after anchor counts and a resurrection verdict, checked *before*
 authorization rather than discovered after a live run).
 
-**Gate release.** Plan 11-27 (`ecbc1e2`, `cafc8e7`, `cb97c82`) fixed the two defects behind the
+**Gate release.** Plan 11-27 (`54cc66f`, `90e25ae`, `504685d`) fixed the two defects behind the
 resurrection and re-ran a full rebuild on a fresh clone, measuring resurrection at id level as **0**,
 with the post-rebuild anchor id set identical to live (19,268) and classifier `tool_activity: 0`. Its
 rebuild receipt was byte-identical to this document's Run A, confirming the fix touched anchors and
@@ -360,7 +360,7 @@ Recommended at the time: make `survivingDerivationIndices` drop isolated single 
 anchor gate matches post-11-24 `derivationContents`, fix the now-wrong comment, add a regression test,
 and re-rehearse.
 
-That became **Plan 11-27 / GAP-11-G** (`ecbc1e2`, `cafc8e7`, `cb97c82`), which found the defect was in
+That became **Plan 11-27 / GAP-11-G** (`54cc66f`, `90e25ae`, `504685d`), which found the defect was in
 fact twofold and removed the duplicated rule entirely rather than patching the copy:
 `survivingDerivationIndices` now delegates to the same `drivesTopicLabel` predicate every other call
 site uses, so no second copy of the rule remains to drift out of agreement with `derivationContents`.
@@ -428,7 +428,7 @@ match the code.
 
 # Task 3 — Live run against `~/.memory/aaron.db`
 
-**Applied 2026-07-28.** Git commit `cb97c8240529cf56e209e0c6045a29a7cd5a9e98` (includes Plan 11-27's
+**Applied 2026-07-28.** Git commit `504685d4c26a75f71f74030a262053376424d9ef` (includes Plan 11-27's
 anchor-gate fix). Authorization: the owner's advance authorization, released by the orchestrator after
 Plan 11-27 cleared stop condition (a) — see "Gate release" above.
 
@@ -539,8 +539,8 @@ payload bytes — they were **not** pruned by this plan and remain an open owner
 ## Divergences from the rehearsal
 
 **1. Anchors: 19,268 live vs 20,598 rehearsed — a −1,330 divergence. Intended, and the reason the
-rehearsal existed.** Cause: the rehearsal ran at `455ba7d`, before Plan 11-27; the live run ran at
-`cb97c82`, after it. The rehearsal's 1,330 resurrected raw tool-call anchors are exactly the rows
+rehearsal existed.** Cause: the rehearsal ran at `4781658`, before Plan 11-27; the live run ran at
+`504685d`, after it. The rehearsal's 1,330 resurrected raw tool-call anchors are exactly the rows
 11-27's fix suppresses, and the live delta is exactly 1,330 — the same number, from the same id set. In
 consequence, unhygienic anchors went 350 → 350 live, against the rehearsal's predicted 350 → 1,680.
 

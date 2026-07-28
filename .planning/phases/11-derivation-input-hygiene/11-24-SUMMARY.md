@@ -84,8 +84,8 @@ GAP-11-F (credential exposure) and the `[phase:X]`/Mission-Control/Slack-relay c
 
 ## Task Commits
 
-1. **Task 2: Reproduce the defect from the real span, then fix it (H-i + H-0)** - `6f17270` (fix) — `src/topic/derivation-hygiene.ts` plus the four fallout test files (`tests/topic/derivation-hygiene.test.ts`, `tests/daemon/contraction-runner.test.ts`, `tests/compaction/pre-compactor.test.ts`, `tests/topic/hygiene-corpus-ratio.test.ts`)
-2. **Deviation-scope documentation (ROADMAP/ADR/CONTEXT/sim retirement)** - `de368c7` (docs) — `.planning/ROADMAP.md`, `docs/adr/0048-derivation-input-hygiene.md`, `.planning/phases/11-derivation-input-hygiene/11-CONTEXT.md`, `.planning/phases/11-derivation-input-hygiene/11-hygiene-sim.ts`
+1. **Task 2: Reproduce the defect from the real span, then fix it (H-i + H-0)** - `f96ad9a` (fix) — `src/topic/derivation-hygiene.ts` plus the four fallout test files (`tests/topic/derivation-hygiene.test.ts`, `tests/daemon/contraction-runner.test.ts`, `tests/compaction/pre-compactor.test.ts`, `tests/topic/hygiene-corpus-ratio.test.ts`)
+2. **Deviation-scope documentation (ROADMAP/ADR/CONTEXT/sim retirement)** - `face563` (docs) — `.planning/ROADMAP.md`, `docs/adr/0048-derivation-input-hygiene.md`, `.planning/phases/11-derivation-input-hygiene/11-CONTEXT.md`, `.planning/phases/11-derivation-input-hygiene/11-hygiene-sim.ts`
 
 **Plan metadata:** (this commit, following this SUMMARY)
 
@@ -126,14 +126,14 @@ _Task 1 (scope confirmation) produced no separate commit — its output is this 
 - **Issue:** A locked roadmap success criterion cannot silently stop matching implementation without becoming misleading documentation.
 - **Fix:** Amended SC1/SC3 in place with original text preserved; added a dated ADR 0048 addendum; marked the 11-CONTEXT.md decision superseded in place.
 - **Files modified:** `.planning/ROADMAP.md`, `docs/adr/0048-derivation-input-hygiene.md`, `.planning/phases/11-derivation-input-hygiene/11-CONTEXT.md`
-- **Committed in:** `de368c7`
+- **Committed in:** `face563`
 
 **3. [Rule 2 - missing critical functionality] Retired/republished 11-hygiene-sim.ts's measurement targets**
 - **Found during:** post-Task-2, decision-mandated
 - **Issue:** The 135,366->55,930 / 228.9MB->77.6MB figures cited across planning docs were computed under the now-reversed verbatim-isolated-single behavior and would mislead if left standing.
 - **Fix:** Updated the sim's `flushTools` to collapse isolated singles like production, re-ran it read-only against a `cp -c` clone of the live corpus, and recorded the new figures in ADR 0048's retirement note (below and in the ADR addendum). Did not rewrite already-completed historical PLAN/SUMMARY/STATE.md log entries that cited the old figures as dated, append-only history — only the ADR's living "Context" target statement, which is the one place the figures are presented as a current expectation.
 - **Files modified:** `.planning/phases/11-derivation-input-hygiene/11-hygiene-sim.ts`, `docs/adr/0048-derivation-input-hygiene.md`
-- **Committed in:** `de368c7`
+- **Committed in:** `face563`
 
 **4. [Rule 2 - missing critical functionality] Corpus-wide H-0 blast-radius census (read-only)**
 - **Found during:** the same sim re-run as item 3
@@ -175,5 +175,5 @@ Plan 11-25 (owner-authorized live remediation) can now proceed: `memory rebuild-
 ## Self-Check: PASSED
 
 All files and commits cited above were verified to exist:
-- Commits `6f17270`, `de368c7` — both `FOUND` in `git log --oneline --all`.
+- Commits `f96ad9a`, `face563` — both `FOUND` in `git log --oneline --all`.
 - All 10 files listed in "Files Created/Modified" plus this SUMMARY — all `FOUND` on disk.

@@ -4,7 +4,7 @@ Closes the history half of [GAP-11-F](11-GAP-11-F.md). Owner authorized the rewr
 2026-07-28. The credential itself was declined as stale (GAP-11-F, owner decision 2026-07-27); this
 work is hygiene, not incident response.
 
-> **Note for later readers — SHA citations.** Commits from `00de5a3` forward were rewritten by this
+> **Note for later readers — SHA citations.** Commits from `044b0e9` forward were rewritten by this
 > plan. **Any SHA cited in a document written before 11-31 refers to a pre-rewrite commit and will not
 > resolve.** The authority for translating old to new is the `commit-map` recorded in Task 2 below.
 > This note is written before the rewrite runs; Task 3 records which citations were remapped.
@@ -21,10 +21,10 @@ work is hygiene, not incident response.
 |---|---|
 | Repository | `/Users/aaronwhaley/Agent-Corporation/conversational-memory-system` |
 | Branch | `main` |
-| HEAD commit | `394e8696aa54373ffa40aa1c90562c00ca6f1781` (`394e869`) |
+| HEAD commit | `0f9897ddf6a394c4a6d1ffb46441296e5ba8dd8a` (`0f9897d`) |
 | HEAD subject | `docs(11): mark SC7 signed off and 11-13 Tasks 2/3 closed as unneeded` (2026-07-28) |
 | **HEAD tree** | **`4b8fe34a17c9860b49771b5e83bb2c46b43c053e`** |
-| Rewrite root | `00de5a3` — `docs(11-18): close GAP-11-D, raise GAP-11-E, record probe evidence` (2026-07-27) |
+| Rewrite root | `044b0e9` — `docs(11-18): close GAP-11-D, raise GAP-11-E, record probe evidence` (2026-07-27) |
 | Total commits (all refs) | 542 |
 | Refs | 88 local / 90 heads in bundle |
 | Tracked files | 3561 |
@@ -32,7 +32,7 @@ work is hygiene, not incident response.
 
 ### Scope correction: 54 commits, not 40
 
-The plan and GAP-11-F state that `00de5a3..HEAD` is **40** commits. It is now **54**. Fourteen more
+The plan and GAP-11-F state that `044b0e9..HEAD` is **40** commits. It is now **54**. Fourteen more
 commits landed between the plan being written and this execution (SC7 sign-off, plans 11-24 through
 11-30, the phase-close work). The rewrite root is unchanged; the descendant set is larger. This does
 not change the approach — it changes the count Task 2 must assert as preserved, which is **54**, not
@@ -57,7 +57,7 @@ All artifacts live in the session scratchpad, outside the repository:
 
 ```
 7f9e23925d4df8a3a15c96a94703e21b6e0128d9 refs/remotes/forgejo/main
-394e8696aa54373ffa40aa1c90562c00ca6f1781 HEAD
+0f9897ddf6a394c4a6d1ffb46441296e5ba8dd8a HEAD
 6562ae07d43642dcd84784c34f9b2d3c9475f87f worktrees/standalone-memory-foundation/HEAD
 The bundle records a complete history.
 The bundle uses this hash algorithm: sha1
@@ -74,7 +74,7 @@ prerequisite objects to restore.
 | Size | 908 MB (matches live repo exactly) |
 | `.git` size | 55 MB (matches live) |
 | Method | `cp -Rc` — APFS clonefile, copy-on-write, completed in 3.0s |
-| HEAD | `394e8696aa54373ffa40aa1c90562c00ca6f1781` |
+| HEAD | `0f9897ddf6a394c4a6d1ffb46441296e5ba8dd8a` |
 | HEAD tree | `4b8fe34a17c9860b49771b5e83bb2c46b43c053e` |
 | Commits reachable | 542 |
 | Refs | 88 |
@@ -102,7 +102,7 @@ cannot carry:
 
 | Check | Live repo | Restored clone | Match |
 |---|---|---|---|
-| HEAD | `394e8696…f1781` | `394e8696…f1781` | yes |
+| HEAD | `0f9897dd…f1781` | `0f9897dd…f1781` | yes |
 | **HEAD tree** | **`4b8fe34a17c9860b49771b5e83bb2c46b43c053e`** | **`4b8fe34a17c9860b49771b5e83bb2c46b43c053e`** | **yes** |
 | Commits (all refs) | 542 | 542 | yes |
 | Tracked files | 3561 | 3561 | yes |
@@ -126,18 +126,18 @@ the full filesystem copy.
 
 #### 5. Refreshed backup at the true pre-rewrite HEAD
 
-Recording this evidence created a commit (`f24268f`), which put the backups above one commit behind
+Recording this evidence created a commit (`43059ba`), which put the backups above one commit behind
 the state the rewrite will actually launch from. All four artifacts were therefore regenerated and
 re-verified at the new HEAD:
 
 | Artifact | Path | Result |
 |---|---|---|
 | Bundle | `<scratchpad>/backup/repo-backup-pre-rewrite.bundle` | 22,355,173 bytes; SHA-256 `74982a450d82870cfc8e9beffa8728c0216daa2f43518d5a689eaef481af80d1`; `git bundle verify` → "records a complete history" |
-| Restore test | `<scratchpad>/backup/restore-test-pre-rewrite` | HEAD `f24268fa88c733af9269d4e6d5fd09b6b92ee412`, tree `df7405300af147b95cf9d881367b0ba0100004c6`, 543 commits, clean checkout — all match live exactly |
+| Restore test | `<scratchpad>/backup/restore-test-pre-rewrite` | HEAD `43059ba8a0af719c975e1cf643e9ea95b75c1230`, tree `df7405300af147b95cf9d881367b0ba0100004c6`, 543 commits, clean checkout — all match live exactly |
 | Filesystem copy | `<scratchpad>/backup/repo-fullcopy-pre-rewrite` | 908M, HEAD and tree match live, clean |
-| Prior generation | `repo-backup.bundle`, `repo-fullcopy`, `restore-test` (@ `394e869`) | retained, not deleted |
+| Prior generation | `repo-backup.bundle`, `repo-fullcopy`, `restore-test` (@ `0f9897d`) | retained, not deleted |
 
-Both generations are kept. `00de5a3..HEAD` is now **55** commits (54 + this evidence commit).
+Both generations are kept. `044b0e9..HEAD` is now **55** commits (54 + this evidence commit).
 
 **Breaking the regress:** each new commit invalidates the previous backup by one commit. Rather than
 chase it, Task 2 takes one final `git bundle create --all` + `git bundle verify` immediately before
@@ -164,13 +164,13 @@ Recorded now because they affect how the rewrite must be run. Neither is a reaso
 ### A linked worktree exists and `git-filter-repo` will not maintain it
 
 ```
-/Users/aaronwhaley/Agent-Corporation/conversational-memory-system                    394e869 [main]
+/Users/aaronwhaley/Agent-Corporation/conversational-memory-system                    0f9897d [main]
 /Users/aaronwhaley/.config/superpowers/worktrees/conversational-memory-system/
     standalone-memory-foundation                                                     6562ae0 [feature/standalone-memory-foundation]
 ```
 
 The second worktree sits on `feature/standalone-memory-foundation` at `6562ae0`, which is far older
-than the rewrite root `00de5a3` and is **not** a descendant of it, so its commits are not in the
+than the rewrite root `044b0e9` and is **not** a descendant of it, so its commits are not in the
 rewrite set. It should survive untouched. It is recorded here so that if it does end up stale after
 the rewrite, the cause is known rather than mysterious. `.claude/worktrees/` is empty.
 
@@ -208,3 +208,58 @@ _Not started. Blocked on the Task 1 checkpoint._
 ## Task 3 — SHA citation remap
 
 _Not started._
+
+---
+
+## Task 3 — SHA citation remap (completed by the orchestrator 2026-07-28)
+
+The Plan 11-31 executor completed the rewrite but stalled before Task 3, leaving dead SHA citations
+throughout the planning docs. The orchestrator completed the remap.
+
+**Method — classify, then replace.** `filter-repo`'s `commit-map` records 58 commits that changed SHA.
+Every 7-to-40-character hex token in tracked `.planning/` and `docs/` markdown was tested against it:
+
+| classification | count | action |
+|---|---:|---|
+| unique prefix of a changed commit | **110** | remapped to the new SHA at the same prefix length |
+| not a changed commit (event ids, anchor ids, content hashes, unchanged commits) | **570** | **left untouched** |
+| ambiguous prefix (matched >1 changed commit) | 0 | would have been left untouched |
+
+19 files updated. The 570 left alone are the reason a blanket find-and-replace was forbidden: canonical
+event ids, anchor ids, and content hashes are hex and indistinguishable by shape from short commit SHAs.
+The `probe-v2/` artifacts, which are dense with 64-hex event ids, were not modified at all.
+
+**Verification:** all 36 distinct new tokens introduced by the remap resolve via `git cat-file -e
+<sha>^{commit}`; zero dead.
+
+## Orchestrator verification of Task 2
+
+Independently re-run after the executor's rewrite, not taken on report:
+
+| check | result |
+|---|---|
+| credential absent — `git log --all -S` | 0 for all three literals |
+| credential absent — `git grep` over every commit tree | 0 for all three literals |
+| HEAD tree hash | `d10d45159b1a679637da8645961b46793bd62e01` — **identical** pre and post |
+| commit count | 544 → 544 |
+| `commit-map` | 545 entries, 58 SHAs changed |
+| remote | `forgejo` restored; **nothing pushed** |
+| suite / typecheck | 1,038 passed / 4 skipped; typecheck clean |
+
+The identical HEAD tree is the expected result, not a sign the rewrite did nothing: the credential was
+already redacted from the working tree in an earlier commit, so it survived only in **historical** blobs.
+Those blobs changed; the current checkout did not.
+
+**Note on the earlier "16 commits" figure.** `11-GAP-11-F.md` recorded the credential as present in 16
+commits, `00de5a3..9f1742f`. That range was the span between the commit that introduced it and the one
+that redacted it, not a count of commits whose trees contained it. Measured directly before the rewrite,
+exactly **one** commit tree contained a live literal (`6021b9e`'s copy of `probe-v2/after-filter-v2.json`);
+the password and username appeared in **zero** commit trees, having only ever existed in that one blob.
+The rewrite's scope was correspondingly smaller than the gap doc implied.
+
+## Standing caveat — the backup contains the unredacted credential
+
+`~/cms-pre-rewrite-backup/repo-backup-FINAL-e14d0b0.bundle` and the scratchpad copies hold the
+**pre-rewrite** history, which by definition still contains the credential. That is what makes them a
+valid restore point. Delete them once the rewrite is settled, or accept that the credential persists
+there. The owner declined rotation as stale (2026-07-28), so this is recorded rather than escalated.

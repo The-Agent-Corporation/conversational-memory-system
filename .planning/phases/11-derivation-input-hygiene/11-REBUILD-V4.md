@@ -7,8 +7,8 @@ scaffolding anchors. The 20 silent-sentinel anchors survive.
 Owner decision, 2026-07-28, verbatim: **"Prune 330 AND fix the silent-sentinel rule."** Plan 11-28
 shipped the rule (`hygiene-rules/v4`). This plan does the corpus.
 
-**Git commit at rehearsal (Task 1):** `91bb4a0dacc90573863c16d3473059fc62c86952`
-**Git commit at live run (Task 3):** `d6cdad8` (rehearsal recorded) — the live run executed at that
+**Git commit at rehearsal (Task 1):** `c7d46ea2033c9ec0c6d62076beeda39d9de6d978`
+**Git commit at live run (Task 3):** `be54c89` (rehearsal recorded) — the live run executed at that
 tree; no source file was modified by this plan.
 
 > **Timezone convention, stated once.** `stat -f %Sm` on this machine renders **local time (EDT,

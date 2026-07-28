@@ -52,13 +52,13 @@ completed: 2026-07-28
 
 ## Outcome against the decision rule
 
-| # | condition | first rehearsal (`455ba7d`) | after Plan 11-27 (`cb97c82`) |
+| # | condition | first rehearsal (`4781658`) | after Plan 11-27 (`504685d`) |
 |---|---|---|---|
 | (a) | any anchor Plan 11-18 pruned is resurrected | **TRIPPED — 1,330** | **cleared — 0** |
 | (b) | interrupt-and-resume does not converge | not tripped — converged exactly, anchor id sets byte-identical | unchanged |
 | (c) | `--force` required | not tripped — never used, never needed | unchanged |
 
-Condition (a) tripping meant the live operation was not the one the owner authorized, so Task 3 did not run at that point. Plan 11-27 (`ecbc1e2`, `cafc8e7`, `cb97c82`) removed the duplicated rule behind the resurrection and re-measured it at 0 on a fresh clone; the orchestrator released the gate on that basis and Task 3 then ran.
+Condition (a) tripping meant the live operation was not the one the owner authorized, so Task 3 did not run at that point. Plan 11-27 (`54cc66f`, `90e25ae`, `504685d`) removed the duplicated rule behind the resurrection and re-measured it at 0 on a fresh clone; the orchestrator released the gate on that basis and Task 3 then ran.
 
 ## Live receipt (verbatim) — byte-identical to the rehearsal
 

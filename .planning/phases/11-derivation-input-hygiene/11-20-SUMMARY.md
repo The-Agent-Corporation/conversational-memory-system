@@ -59,10 +59,10 @@ completed: 2026-07-27
 
 ## Task Commits
 
-1. **Task 1: Census unrecognised scaffolding in the live corpus** — `6e872b8` (docs)
-2. **Task 2 (RED): failing coverage for the two new rules** — `29bd7cc` (test)
-3. **Task 2 (GREEN): add the rules, bump the version** — `478f8fa` (feat)
-4. **Task 2: ADR 0048 addendum** — `82325f5` (docs)
+1. **Task 1: Census unrecognised scaffolding in the live corpus** — `bdee96d` (docs)
+2. **Task 2 (RED): failing coverage for the two new rules** — `5330eb2` (test)
+3. **Task 2 (GREEN): add the rules, bump the version** — `a84eea7` (feat)
+4. **Task 2: ADR 0048 addendum** — `cad7609` (docs)
 
 ## Files Created/Modified
 
@@ -125,10 +125,10 @@ None.
 
 - FOUND: `.planning/phases/11-derivation-input-hygiene/11-scaffold-census.ts`
 - FOUND: `.planning/phases/11-derivation-input-hygiene/11-SCAFFOLD-AUDIT.md`
-- FOUND: commit `6e872b8` (Task 1)
-- FOUND: commit `29bd7cc` (Task 2 RED)
-- FOUND: commit `478f8fa` (Task 2 GREEN)
-- FOUND: commit `82325f5` (ADR addendum)
+- FOUND: commit `bdee96d` (Task 1)
+- FOUND: commit `5330eb2` (Task 2 RED)
+- FOUND: commit `a84eea7` (Task 2 GREEN)
+- FOUND: commit `cad7609` (ADR addendum)
 - `npx vitest run` — 110 passed | 1 skipped (1007 tests passed, 4 skipped) — green
 - `npm run typecheck` — clean
 - `git diff --stat -- .planning/phases/11-derivation-input-hygiene/11-RECALL-QUERIES.md .planning/phases/11-derivation-input-hygiene/11-recall-probe.ts` — empty

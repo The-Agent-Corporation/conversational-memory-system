@@ -72,7 +72,7 @@ against a written set instead of a count. Their shape matches `11-GAP-11-H.md`: 
 
 ### Task 1 — the full sequence rehearsed on a clone
 
-Rebuild → dry-run prune → `--apply` prune, all against one `cp -c` clone at commit `91bb4a0`, with
+Rebuild → dry-run prune → `--apply` prune, all against one `cp -c` clone at commit `c7d46ea`, with
 before/after counts for every table, the checkpoint, `user_version`, and file size. All four stop
 conditions cleared:
 
@@ -188,6 +188,6 @@ source file.
 
 - Files verified present: `.planning/phases/11-derivation-input-hygiene/11-REBUILD-V4.md`,
   `probe-v2/post-v4.json`, `probe-v2/post-v4.md`, this summary.
-- Commits verified in `git log`: `d6cdad8` (Task 1 rehearsal), `2d43e39` (Tasks 2–3 live run + probe).
+- Commits verified in `git log`: `be54c89` (Task 1 rehearsal), `4e1cfe9` (Tasks 2–3 live run + probe).
 - Live corpus verified at the claimed state by an independent read-only census after the run:
   anchors 18,938, `synthetic_injected` 0, checkpoint `…+hygiene-rules/v4` generation 4.

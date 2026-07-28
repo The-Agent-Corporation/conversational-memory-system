@@ -23,7 +23,7 @@ The frozen query set (`11-RECALL-QUERIES.md`) is byte-unchanged. Only the measur
 | `before-v2` | `cp -c` clone of `~/.memory/aaron.db.pre-phase11` | `{compacted: 135366}` | Pre-hygiene. Original verified unchanged (4,962,574,336 bytes, 2026-07-26 19:26) before and after. |
 | `after-filter-v2` | `cp -c` clone of `~/.memory/aaron.db.pre-anchor-prune` | `{compacted: 50551, superseded: 87727}` | The post-rebuild / pre-anchor-prune state, recovered from the backup taken 2026-07-27 11:23. Original verified unchanged. |
 | `current-v2` | `~/.memory/aaron.db` (live, read-only) | `{compacted: 50551, superseded: 87727}` | Post anchor prune (26,643 anchors deleted, 19,268 retained). |
-| `final-v2` | `~/.memory/aaron.db` (live) | `{compacted: 49253, superseded: 89120}` | Post the owner-authorized live rebuild of 2026-07-28 (Plan 11-25 Task 3, `cb97c82`) at `hygiene-rules/v3`. Added by Plan 11-26. |
+| `final-v2` | `~/.memory/aaron.db` (live) | `{compacted: 49253, superseded: 89120}` | Post the owner-authorized live rebuild of 2026-07-28 (Plan 11-25 Task 3, `504685d`) at `hygiene-rules/v3`. Added by Plan 11-26. |
 | `post-v4` | `~/.memory/aaron.db` (live) | `{compacted: 49314, superseded: 89059}` | Post the owner-authorized `hygiene-rules/v4` rebuild **and** the 330-anchor prune of 2026-07-28 (Plan 11-29, `11-REBUILD-V4.md`). Added by Plan 11-29. |
 
 All five columns were produced by the SAME v2 harness (`11-recall-probe.ts`, byte-unchanged since Plan
@@ -181,7 +181,7 @@ query the full `items[]` array with rank, kind, id, summaryIds, score, preview, 
 embedder `deterministic/keyword-hash-v1`. Artifact: `probe-v2/final-v2.{json,md}`.
 
 **What changed in the corpus since `current-v2`** (per `11-REBUILD.md`, Task 3): the owner-authorized
-live `rebuild-derivations` run of 2026-07-28 (`cb97c82`), which applied all three GAP-11-E fixes at once
+live `rebuild-derivations` run of 2026-07-28 (`504685d`), which applied all three GAP-11-E fixes at once
 via `hygiene-rules/v3` — H-0 (SC1 reversed: an isolated tool call now collapses instead of being kept
 verbatim), H-i (line-anchored `matchesEmbedded` rule matching), H-iii (the corpus reprocessed under the
 v2/v3 rules it had never seen). Active summaries 50,551 → 49,253; superseded 87,727 → 89,120; **anchors
@@ -269,7 +269,7 @@ existed at corpus-write time. The first three arms ran at `hygiene-rules/v2`; `f
 
 - The **tool-call** column is fully comparable across all four arms: `TOOL_CALL_PREFIX` is a literal
   substring test and did not change.
-- The **probe-suspicious** column is fully comparable: `git diff 478f8fa 6f17270 -- src/topic/derivation-hygiene.ts`
+- The **probe-suspicious** column is fully comparable: `git diff a84eea7 f96ad9a -- src/topic/derivation-hygiene.ts`
   confirms v2 → v3 changed only the matching *strategy* (`startsWith` → `matchesEmbedded`); the
   `SYNTHETIC_MARKERS` list itself is unchanged, and `markersFound` is a bare `includes` over that list.
 - The **product-unhygienic** column is **not strictly comparable**: v3's `matchesEmbedded` is a

@@ -57,9 +57,9 @@ completed: 2026-07-27
 
 ## Task Commits
 
-1. **Task 1: Export the marker list and the ranking internals the probe must reuse** - `12d69ae` (feat)
-2. **Task 2: Rewrite the probe's detectors for per-item attribution** - `e62999f` (feat)
-3. **Task 3: Record what the correction invalidates** - `c67a844` (docs)
+1. **Task 1: Export the marker list and the ranking internals the probe must reuse** - `7c80b38` (feat)
+2. **Task 2: Rewrite the probe's detectors for per-item attribution** - `6d3838d` (feat)
+3. **Task 3: Record what the correction invalidates** - `743bd5b` (docs)
 
 ## Files Created/Modified
 
@@ -86,7 +86,7 @@ completed: 2026-07-27
 - **Fix:** Added `export` to the existing `const TOOL_CALL_PREFIX = "[Tool call: ";` declaration — a one-token change, no behavior change.
 - **Files modified:** `src/topic/derivation-hygiene.ts`
 - **Verification:** `npx vitest run tests/topic/derivation-hygiene.test.ts` and `npm run typecheck` both pass; committed alongside Task 2's probe rewrite.
-- **Committed in:** `e62999f` (Task 2 commit)
+- **Committed in:** `6d3838d` (Task 2 commit)
 
 ---
 
@@ -110,9 +110,9 @@ None - no external service configuration required.
 ## Self-Check: PASSED
 
 - FOUND: `.planning/phases/11-derivation-input-hygiene/11-MEASUREMENT-CORRECTION.md`
-- FOUND: commit `12d69ae` (Task 1)
-- FOUND: commit `e62999f` (Task 2)
-- FOUND: commit `c67a844` (Task 3)
+- FOUND: commit `7c80b38` (Task 1)
+- FOUND: commit `6d3838d` (Task 2)
+- FOUND: commit `743bd5b` (Task 3)
 - `npx vitest run` — 110 passed | 1 skipped (1002 tests passed, 4 skipped) — green
 - `npm run typecheck` — clean
 - `npx tsx .planning/phases/11-derivation-input-hygiene/11-recall-probe.ts --help` — exit 0

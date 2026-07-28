@@ -234,7 +234,7 @@ so it re-derived *ungated*. Forward recovery was, for that path, forward re-cont
 ### Verification
 
 A full `rebuild-derivations` on a fresh `cp -c` clone of the live corpus, 2026-07-28, at commit
-`cafc8e7`, using the same id-level differencing:
+`90e25ae`, using the same id-level differencing:
 
 | set | Plan 11-25 (pre-fix) | Plan 11-27 (post-fix) |
 |---|---:|---:|

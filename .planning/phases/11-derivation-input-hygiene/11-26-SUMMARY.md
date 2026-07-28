@@ -96,7 +96,7 @@ Two additions beyond the literal task list, both documentation-only:
 column.** The probe classifies with the product code **as it exists at run time**, not at corpus-write
 time. The first three arms ran at `hygiene-rules/v2`; `final-v2` ran at `v3`. Left unstated, the
 four-column table would silently invite a comparison the data does not support. Verified with
-`git diff 478f8fa 6f17270 -- src/topic/derivation-hygiene.ts` that v2→v3 changed only the matching
+`git diff a84eea7 f96ad9a -- src/topic/derivation-hygiene.ts` that v2→v3 changed only the matching
 *strategy* and not the `SYNTHETIC_MARKERS` list, which makes `tool-call` and `probe-suspicious` fully
 comparable and `product-unhygienic` not strictly so. Recorded in `11-RECALL-PROBE-V2.md` and STATE.md.
 
@@ -145,6 +145,6 @@ the owner's sign-off and the only remaining Phase 11 work.
 
 ## Commits
 
-- `b78d9b8` — `docs(11-26)`: measure the remediated corpus with the frozen probe
-- `8d2700d` — `docs(11-26)`: close GAP-11-E on the measurement and point the phase at 11-14
-- `1abba54` — `docs(11-26)`: mark 11-26 complete in ROADMAP and log the stale REQ-052 text
+- `fc89e4d` — `docs(11-26)`: measure the remediated corpus with the frozen probe
+- `1016570` — `docs(11-26)`: close GAP-11-E on the measurement and point the phase at 11-14
+- `eaedeec` — `docs(11-26)`: mark 11-26 complete in ROADMAP and log the stale REQ-052 text
