@@ -1,0 +1,1 @@
+/Users/aaronwhaley/.claude/skill-library/gsd/agents/gsd-research-synthesizer.md

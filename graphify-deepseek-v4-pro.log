@@ -1,0 +1,1 @@
+error: backend 'openrouter' requires OPENROUTER_API_KEY or OPENAI_API_KEY to be set.
