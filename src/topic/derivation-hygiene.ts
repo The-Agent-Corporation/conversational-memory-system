@@ -23,7 +23,7 @@
  * `PROCESSOR_VERSION` (src/daemon/contraction-runner.ts), per REQ-054.
  */
 
-export const HYGIENE_RULE_VERSION = "hygiene-rules/v3";
+export const HYGIENE_RULE_VERSION = "hygiene-rules/v4";
 
 export type DerivationClass = "conversational" | "tool_activity" | "synthetic_injected";
 
@@ -114,6 +114,38 @@ const markerFor = (ruleId: string): string => {
 const matchesEmbedded = (content: string, marker: string): boolean =>
   content.split("\n").some((line) => line.trimStart().startsWith(marker));
 
+/**
+ * Plan 11-28 (GAP-11-H): true when `content` IS `marker` — i.e. every marker-led line removed
+ * leaves no substantive residue — as opposed to merely CONTAINING a marker line.
+ *
+ * `matchesEmbedded` above is right for a scaffolding BLOCK (`<task-notification>`,
+ * `<system-reminder>`): a block occupying its own lines is harness text wherever it sits. It is
+ * wrong for a RESPONSE SENTINEL like `[SILENT]`, which means "emit nothing" and which agents write
+ * on a trailing line AFTER explaining their reasoning — so under v3 the reasoning was condemned
+ * along with the sentinel, deleting genuine memory ("PID 89914 is not alive. Per decision rule A,
+ * respond silently.", "All 12 Roscoe verification tasks are currently `awaiting_owner`…").
+ *
+ * Counted read-only over the live 292,407-event corpus on 2026-07-28 (11-GAP-11-H.md): of the 2,907
+ * assistant events carrying a `[SILENT]` line, 2,784 are pure sentinel and stay `synthetic_injected`,
+ * 123 are a trailing sentinel after real prose and become `conversational`, and ZERO begin with the
+ * marker yet carry residue. The absence of that third shape is what makes "residue is empty" split
+ * the two populations exactly.
+ *
+ * Lines are dropped when they START with the marker, not when they equal it exactly. The two
+ * predicates were measured against the whole corpus and disagree on 0 of 292,407 events, so the
+ * looser one costs nothing there while keeping the pinned single-line shape (`[SILENT] no response
+ * needed`) synthetic — a line opening with the sentinel is wholly a sentinel emission. It also keeps
+ * the SYNTHETIC_MARKERS drift guard (`rule.test(marker + "x")`) honest for this rule.
+ *
+ * Deliberately NOT applied to any other rule: `matchesEmbedded` stays as Plan 11-24 left it, since
+ * widening this fix past the one sentinel rule would re-open GAP-11-E (T-11-95).
+ */
+const isSentinelOnly = (content: string, marker: string): boolean => {
+  const lines = content.split("\n");
+  if (!lines.some((line) => line.trimStart().startsWith(marker))) return false;
+  return lines.filter((line) => !line.trimStart().startsWith(marker)).join("\n").trim().length === 0;
+};
+
 /** Deterministic, line-anchored rules. Conservative: unmatched stays conversational. */
 export const SYNTHETIC_RULES: readonly SyntheticRule[] = [
   { id: "skill-invocation", test: (c) => matchesEmbedded(c, markerFor("skill-invocation")) },
@@ -132,7 +164,9 @@ export const SYNTHETIC_RULES: readonly SyntheticRule[] = [
   { id: "city-harness-preamble", test: (c) => /^\[[a-z0-9-]+-city\]\s+\S+\s+•\s+20\d\d-/.test(c) },
   // Confirmed 2026-07-26 (11-CONTEXT.md), NOT part of the measured 55,930/77.6MB run —
   // the Plan 06 sim re-run reports the shifted numbers with these included.
-  { id: "silent-sentinel", test: (c) => matchesEmbedded(c, markerFor("silent-sentinel")), roles: ["assistant"] },
+  // Plan 11-28 (GAP-11-H): `isSentinelOnly`, not `matchesEmbedded` — a trailing sentinel must not
+  // condemn the reasoning that precedes it. This is the ONLY rule that uses the narrower predicate.
+  { id: "silent-sentinel", test: (c) => isSentinelOnly(c, markerFor("silent-sentinel")), roles: ["assistant"] },
   { id: "structured-json-emission", test: (c) => isBareJsonObject(c), roles: ["assistant"] },
   // Plan 11-20: counted census additions, both anchored literal prefixes, no role gate
   // (mirrors local-command-stdout / system-reminder-only). See 11-SCAFFOLD-AUDIT.md.
