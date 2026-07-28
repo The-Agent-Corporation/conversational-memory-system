@@ -83,10 +83,19 @@ describe("hygiene corpus ratio (T-11-19: count AND volume, never volume alone)",
     expect(countReduction).toBeGreaterThanOrEqual(MIN_COUNT_REDUCTION);
     expect(volumeReduction).toBeGreaterThanOrEqual(MIN_VOLUME_REDUCTION);
 
-    // Isolated tool singles survive verbatim inside conversational spans (11-MEASUREMENT's
-    // intended ~11,571 residual) — some hygiene summaries must still contain "[Tool call:".
+    // GAP-11-E H-0 (Plan 11-24, 11-REMEDIATION-DECISION.md 2026-07-27): ROADMAP SC1's
+    // isolated-tool-call carve-out was reversed — an isolated tool call now collapses like any
+    // run, so NO hygiene summary may contain verbatim "[Tool call:" argument text, isolated or
+    // collapsed. 11-MEASUREMENT.md's ~11,571 verbatim-residual figure described the OLD
+    // verbatim-isolated-single behavior and no longer applies; see the retirement note in
+    // 11-hygiene-sim.ts and ROADMAP.md's amended SC1 entry.
     const toolCallResidual = hygieneResult.summaries.filter((text) => text.includes("[Tool call:"));
-    expect(toolCallResidual.length).toBeGreaterThan(0);
+    expect(toolCallResidual).toHaveLength(0);
+
+    // A collapsed activity line is still present for tool activity that used to survive as an
+    // isolated single — proves the run wasn't silently dropped, just collapsed.
+    const activityResidual = hygieneResult.summaries.filter((text) => text.includes("[Activity]"));
+    expect(activityResidual.length).toBeGreaterThan(0);
 
     // Synthetic content is excluded from derivation entirely — no hygiene summary may contain
     // either synthetic template's marker prefix.

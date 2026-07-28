@@ -23,7 +23,7 @@
  * `PROCESSOR_VERSION` (src/daemon/contraction-runner.ts), per REQ-054.
  */
 
-export const HYGIENE_RULE_VERSION = "hygiene-rules/v2";
+export const HYGIENE_RULE_VERSION = "hygiene-rules/v3";
 
 export type DerivationClass = "conversational" | "tool_activity" | "synthetic_injected";
 
@@ -92,30 +92,52 @@ const markerFor = (ruleId: string): string => {
   return entry.marker;
 };
 
-/** Deterministic, anchored rules. Conservative: unmatched stays conversational. */
+/**
+ * Plan 11-24 (GAP-11-E, hypothesis H-i): true if `content` begins with `marker`, or `marker`
+ * begins some LATER LINE within `content` — i.e. the marker occupies the start of its own line,
+ * not merely appears somewhere inside a sentence.
+ *
+ * Every literal-prefix rule below used to be a bare `content.startsWith(marker)`, so a scaffolding
+ * block embedded mid-event (harness text prepended/appended to real content within the same event)
+ * was invisible unless it happened to open the event. Widening this to an unanchored substring scan
+ * (`content.includes(marker)`) was considered and rejected: 11-GAP-11-E-FINDING.md traced two
+ * offenders where `[SILENT]` appeared inside a markdown table cell, mid-sentence, as the assistant
+ * *discussing* the marker as a design concept — not emitting one — and a bare `includes()` would
+ * misclassify that conversational prose as scaffolding, exactly the false positive this phase's
+ * conservative anchoring exists to prevent.
+ *
+ * Line-start anchoring is the narrower, evidence-grounded middle ground: it generalizes the SAME
+ * discriminator the H-iii offenders already prove is real (a marker occupying the ENTIRE content of
+ * its own dedicated event) to a marker occupying its own line inside a larger event, while a marker
+ * quoted inline within running prose — never at a line's own start — still reads as conversational.
+ */
+const matchesEmbedded = (content: string, marker: string): boolean =>
+  content.split("\n").some((line) => line.trimStart().startsWith(marker));
+
+/** Deterministic, line-anchored rules. Conservative: unmatched stays conversational. */
 export const SYNTHETIC_RULES: readonly SyntheticRule[] = [
-  { id: "skill-invocation", test: (c) => c.startsWith(markerFor("skill-invocation")) },
-  { id: "harness-system", test: (c) => c.startsWith(markerFor("harness-system")) },
-  { id: "cron-session-tag", test: (c) => c.startsWith(markerFor("cron-session-tag")) },
+  { id: "skill-invocation", test: (c) => matchesEmbedded(c, markerFor("skill-invocation")) },
+  { id: "harness-system", test: (c) => matchesEmbedded(c, markerFor("harness-system")) },
+  { id: "cron-session-tag", test: (c) => matchesEmbedded(c, markerFor("cron-session-tag")) },
   {
     id: "automated-followup",
-    test: (c) => c.startsWith(markerFor("automated-task-block")) && c.includes("follow-up questions")
+    test: (c) => matchesEmbedded(c, markerFor("automated-task-block")) && c.includes("follow-up questions")
   },
-  { id: "automated-task-block", test: (c) => c.startsWith(markerFor("automated-task-block")) },
-  { id: "skill-body-injection", test: (c) => c.startsWith(markerFor("skill-body-injection")) },
-  { id: "context-compaction", test: (c) => c.startsWith(markerFor("context-compaction")) },
-  { id: "session-continuation", test: (c) => c.startsWith(markerFor("session-continuation")) },
-  { id: "local-command-stdout", test: (c) => c.startsWith(markerFor("local-command-stdout")) },
-  { id: "system-reminder-only", test: (c) => c.startsWith(markerFor("system-reminder-only")) },
+  { id: "automated-task-block", test: (c) => matchesEmbedded(c, markerFor("automated-task-block")) },
+  { id: "skill-body-injection", test: (c) => matchesEmbedded(c, markerFor("skill-body-injection")) },
+  { id: "context-compaction", test: (c) => matchesEmbedded(c, markerFor("context-compaction")) },
+  { id: "session-continuation", test: (c) => matchesEmbedded(c, markerFor("session-continuation")) },
+  { id: "local-command-stdout", test: (c) => matchesEmbedded(c, markerFor("local-command-stdout")) },
+  { id: "system-reminder-only", test: (c) => matchesEmbedded(c, markerFor("system-reminder-only")) },
   { id: "city-harness-preamble", test: (c) => /^\[[a-z0-9-]+-city\]\s+\S+\s+•\s+20\d\d-/.test(c) },
   // Confirmed 2026-07-26 (11-CONTEXT.md), NOT part of the measured 55,930/77.6MB run —
   // the Plan 06 sim re-run reports the shifted numbers with these included.
-  { id: "silent-sentinel", test: (c) => c.startsWith(markerFor("silent-sentinel")), roles: ["assistant"] },
+  { id: "silent-sentinel", test: (c) => matchesEmbedded(c, markerFor("silent-sentinel")), roles: ["assistant"] },
   { id: "structured-json-emission", test: (c) => isBareJsonObject(c), roles: ["assistant"] },
   // Plan 11-20: counted census additions, both anchored literal prefixes, no role gate
   // (mirrors local-command-stdout / system-reminder-only). See 11-SCAFFOLD-AUDIT.md.
-  { id: "task-notification", test: (c) => c.startsWith(markerFor("task-notification")) },
-  { id: "local-command-caveat", test: (c) => c.startsWith(markerFor("local-command-caveat")) }
+  { id: "task-notification", test: (c) => matchesEmbedded(c, markerFor("task-notification")) },
+  { id: "local-command-caveat", test: (c) => matchesEmbedded(c, markerFor("local-command-caveat")) }
 ];
 
 export const TOOL_CALL_PREFIX = "[Tool call: ";
@@ -205,15 +227,22 @@ const computeSegments = (events: readonly ClassifiableEvent[]): Segment[] => {
 
 /**
  * Turns an ordered window of events into the derivation content that feeds
- * summarization: synthetic dropped, a run of >=2 consecutive tool_activity events
- * emitted as ONE `collapseText(...)` entry at the run's first index, an isolated
- * tool event emitted verbatim at its own index, conversational emitted verbatim.
+ * summarization: synthetic dropped, every tool_activity run — including an isolated
+ * single — collapses to ONE `collapseText(...)` entry at the run's first index,
+ * conversational emitted verbatim.
+ *
+ * Plan 11-24 (GAP-11-E H-0, owner override of ROADMAP SC1 recorded 2026-07-27 in
+ * 11-REMEDIATION-DECISION.md): a single isolated tool call USED TO be returned verbatim
+ * (`segment.entries.length === 1` short-circuit). SC1 explicitly locked that carve-out
+ * during Phase 11 planning; the owner chose to revisit and reverse it rather than
+ * accept the isolated-call text as an unfixable residue in injection packets. See
+ * ROADMAP.md's Phase 11 SC1 entry (amended in place, original text preserved) and
+ * ADR 0048's SC1-reversal addendum for the full rationale.
  */
 export const derivationContents = (events: readonly ClassifiableEvent[]): DerivationContentEntry[] => {
   const segments = computeSegments(events);
   return segments.map((segment) => {
     if (segment.kind === "conversational") return { index: segment.index, content: segment.content };
-    if (segment.entries.length === 1) return segment.entries[0];
     const names = segment.entries.map((entry) => toolNameOf(entry.content));
     return { index: segment.startIndex, content: collapseText(names) };
   });

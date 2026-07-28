@@ -334,7 +334,10 @@ describe("ContractionRunner", () => {
     }
   });
 
-  it("keeps an isolated single tool call", async () => {
+  // GAP-11-E H-0 (Plan 11-24): ROADMAP SC1's "isolated tool call keeps its existing form" carve-out
+  // was reversed by 11-REMEDIATION-DECISION.md (2026-07-27) — an isolated tool call now collapses
+  // like any run, so no verbatim `[Tool call:` argument text reaches the summary.
+  it("collapses an isolated single tool call like any run (GAP-11-E H-0 / SC1 reversal)", async () => {
     const store = await seededStore();
     await seedEvents(store, [
       event("hygiene-d-1", 1, "Switch to Delta migration planning.", 0),
@@ -346,8 +349,8 @@ describe("ContractionRunner", () => {
     await drain(runner, job);
 
     const [summary] = await store.listSummaries();
-    expect(summary!.summaryText).toContain("[Tool call: Bash]");
-    expect(summary!.summaryText).not.toMatch(/\[Activity\]/);
+    expect(summary!.summaryText).not.toContain("[Tool call: Bash]");
+    expect(summary!.summaryText).toMatch(/\[Activity\] ran 1 tool calls: 1 Bash/);
   });
 
   it("provenance: sourceCanonicalEventIds and sourceTurnRanges cover the full raw window including collapsed and synthetic events", async () => {
@@ -444,7 +447,10 @@ describe("ContractionRunner", () => {
     expect(summaries[0]!.summaryText).toContain("[Activity] ran 2 tool calls:");
   });
 
-  it("slice boundary: a withheld length-1 tail followed by a conversational event stays an isolated single", async () => {
+  // GAP-11-E H-0 (Plan 11-24): withholding an open length-1 tail across a slice boundary still
+  // resolves to one collapsed activity entry once the run closes, not verbatim tool-call text —
+  // see the SC1 reversal note on the "collapses an isolated single tool call" test above.
+  it("slice boundary: a withheld length-1 tail followed by a conversational event still collapses once resolved", async () => {
     const store = await seededStore();
     await seedEvents(store, [
       event("hygiene-f3b-1", 1, "Switch to India provisioning setup.", 0),
@@ -462,8 +468,8 @@ describe("ContractionRunner", () => {
     expect(second.complete).toBe(true);
     expect(second.checkpoint.pendingToolRun).toBeNull();
     const [summary] = await store.listSummaries();
-    expect(summary!.summaryText).toContain("[Tool call: Bash]");
-    expect(summary!.summaryText).not.toMatch(/\[Activity\]/);
+    expect(summary!.summaryText).not.toContain("[Tool call: Bash]");
+    expect(summary!.summaryText).toMatch(/\[Activity\] ran 1 tool calls: 1 Bash/);
   });
 
   it("pendingToolRun drift guard forces the rewind path instead of emitting a second activity line", async () => {

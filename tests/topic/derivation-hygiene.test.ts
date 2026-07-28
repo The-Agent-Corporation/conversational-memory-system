@@ -15,8 +15,10 @@ import {
 // parses JSON. Neither can become a SYNTHETIC_MARKERS entry (T-11-60).
 const NON_LITERAL_RULE_IDS = ["city-harness-preamble", "structured-json-emission"];
 
-// hygiene-rules/v2 (Plan 11-20): confirmed by 11-SCAFFOLD-AUDIT.md's census of the live corpus.
-const EXPECTED_HYGIENE_RULE_VERSION = "hygiene-rules/v2";
+// hygiene-rules/v3 (GAP-11-E, Plan 11-24): H-i's embedded-marker matching change and H-0's SC1
+// reversal both change classifyEvent/derivationContents output for some inputs, so the rule
+// version bumps again (REQ-054) — see 11-REMEDIATION-DECISION.md and ADR 0048's SC1 addendum.
+const EXPECTED_HYGIENE_RULE_VERSION = "hygiene-rules/v3";
 
 const conv = (content: string, overrides: Partial<ClassifiableEvent> = {}): ClassifiableEvent => ({
   content,
@@ -115,6 +117,54 @@ describe("classifyEvent", () => {
     });
   });
 
+  // GAP-11-E H-i (11-GAP-11-E-FINDING.md): every SYNTHETIC_RULES entry used to be a bare
+  // `content.startsWith(marker)`, so a marker embedded mid-event (not at the event's own start)
+  // was invisible to classifyEvent. Plan 11-24 widens matching to "marker starts SOME LINE within
+  // the event," not a bare substring scan — the fixture below is the real offender span
+  // 11-GAP-11-E-FINDING.md traced for GAP-11-E's Q2 rank 1
+  // (`historical_summary_72ee7793622ebfaa449be2143d76e0b421765ac510fb73e9fdf7b7022facf913`,
+  // source event `event_236ff37d9133…`), used here as the FALSE-POSITIVE CONTROL the finding
+  // itself flagged: the assistant is discussing `[SILENT]` as a design concept inside a markdown
+  // table cell, mid-sentence, never at the start of a line — this must stay conversational both
+  // before and after the fix, or the fix over-matches exactly the case this phase's conservative
+  // anchoring exists to prevent.
+  describe("classify — embedded markers (GAP-11-E H-i, Plan 11-24)", () => {
+    it("classify — GAP-11-E Q2's real offender (marker quoted inline, mid-sentence, never at a line start) stays conversational", () => {
+      const result = classifyEvent(
+        conv(
+          "Now I have everything needed. I'll emit the integration artifact next.\n\n" +
+            "| finding | detail |\n" +
+            "|---|---|\n" +
+            "| noise | ~40/79 spans were silent `[SILENT]` cron noise; a recurrence=1 thread can be highly memory-worthy. |",
+          { role: "assistant" }
+        )
+      );
+      expect(result.derivationClass).toBe("conversational");
+    });
+
+    it("classify — a marker occupying the START OF ITS OWN LINE mid-event is now detected (was invisible before Plan 11-24)", () => {
+      // Constructed illustrative fixture, not a literal corpus span: 11-GAP-11-E-FINDING.md's own
+      // conclusion for H-i is that no second, cleaner mid-body offender exists in the traced
+      // evidence to extract verbatim (see "A caveat this finding will not paper over"). This
+      // generalizes the SAME discriminator H-iii proves is real in the corpus — a marker as the
+      // entire content of its own dedicated event — one level down, to a marker as the entire
+      // content of its own dedicated LINE inside a larger event, mirroring how harness scaffolding
+      // is actually observed to be prepended/appended around real content within one event.
+      const result = classifyEvent(
+        conv("Here is what I found in the logs.\n[SYSTEM: context injected for this turn]\nLet's continue from there.")
+      );
+      expect(result.derivationClass).toBe("synthetic_injected");
+      expect(result.ruleId).toBe("harness-system");
+    });
+
+    it("classify — a marker inline within a line's running prose (not at the line's own start) still stays conversational", () => {
+      const result = classifyEvent(
+        conv("Here is what I found in the logs. The [SYSTEM: config] token appeared once. Let's continue.")
+      );
+      expect(result.derivationClass).toBe("conversational");
+    });
+  });
+
   describe("classify — determinism", () => {
     it("classify — is a pure function: identical input yields identical output across repeated calls", () => {
       const fixtures: ClassifiableEvent[] = [
@@ -137,7 +187,7 @@ describe("classifyEvent", () => {
       expect(result.ruleVersion).toBe(HYGIENE_RULE_VERSION);
     });
 
-    it("classify — HYGIENE_RULE_VERSION is hygiene-rules/v2 (Plan 11-20 bump)", () => {
+    it("classify — HYGIENE_RULE_VERSION is hygiene-rules/v3 (Plan 11-24 bump)", () => {
       expect(HYGIENE_RULE_VERSION).toBe(EXPECTED_HYGIENE_RULE_VERSION);
     });
   });
@@ -196,11 +246,19 @@ describe("derivationContents", () => {
     expect(result[1].content).not.toContain("{");
   });
 
-  it("isolated — a single tool event between two conversational events keeps its original content verbatim", () => {
+  // GAP-11-E H-0 (11-GAP-11-E-FINDING.md, offenders e.g.
+  // `historical_summary_015a8c0126ac90404eb9fb32c7211761fb2959708e8d4150b33067789321c730`): ROADMAP
+  // SC1 used to lock "a slice containing a single isolated tool call summarizes it in its existing
+  // form" — the owner reversed that in 11-REMEDIATION-DECISION.md (2026-07-27) because it left
+  // verbatim `[Tool call:` argument text reachable in injection packets. An isolated tool call now
+  // collapses exactly like any run, via the same `collapseText(...)` path.
+  it("collapse — an isolated single tool event between two conversational events now collapses like any run (GAP-11-E H-0 / SC1 reversal)", () => {
     const events = [conv("hi"), tool("Bash", '{"cmd":"ls -la"}'), conv("bye")];
     const result = derivationContents(events);
     expect(result).toHaveLength(3);
-    expect(result[1]).toEqual({ index: 1, content: '[Tool call: Bash] {"cmd":"ls -la"}' });
+    expect(result[1]).toEqual({ index: 1, content: "[Activity] ran 1 tool calls: 1 Bash" });
+    expect(result[1].content).not.toContain("cmd");
+    expect(result[1].content).not.toContain("{");
   });
 
   it("collapse — synthetic events contribute no entry and do not break a surrounding tool run", () => {

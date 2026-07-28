@@ -281,7 +281,10 @@ describe("PreCompactor", () => {
     expect(result.sourceTurnCount).toBe(5);
   });
 
-  it("keeps an isolated single tool turn verbatim", async () => {
+  // GAP-11-E H-0 (Plan 11-24): ROADMAP SC1's isolated-tool-call carve-out was reversed by
+  // 11-REMEDIATION-DECISION.md (2026-07-27) — an isolated tool turn now collapses like any run,
+  // via the same shared `derivationContents` path this seam calls.
+  it("collapses an isolated single tool turn like any run (GAP-11-E H-0 / SC1 reversal)", async () => {
     const store = new InMemoryStore();
     const summarizer: Summarizer = {
       async summarize({ sourceTurns }) {
@@ -320,7 +323,8 @@ describe("PreCompactor", () => {
       turnCount: 3
     }));
 
-    expect(result.summary.summaryText).toContain("[Tool call: Bash] {\"command\":\"grep -R foo\"}");
+    expect(result.summary.summaryText).not.toContain("[Tool call: Bash]");
+    expect(result.summary.summaryText).toMatch(/\[Activity\] ran 1 tool calls: 1 Bash/);
   });
 
   it("drops a <system-reminder> turn from the summarizer input entirely", async () => {
