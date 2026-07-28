@@ -73,3 +73,40 @@ remain conversational for the same reason.
 - **Plan 11-13 Tasks 2/3** (the superseded-summary prune) remain withheld and unrelated to SC7.
 - **Which predicate SC7 is judged against** — tool-call, synthetic-marker, or their union — must be
   stated explicitly at sign-off (Plan 11-14). The union (6/12 today) is the honest default.
+
+
+---
+
+## Addendum (2026-07-27, after Plan 11-24) — which predicate SC7 is judged against
+
+Plan 11-24's H-i fix changed the PRODUCT classifier to line-anchored matching
+(`matchesEmbedded`: a marker counts if it starts the text or starts any later line). The PROBE's
+`markersFound` field was deliberately built in Plan 11-19 as a bare `text.includes(marker)` scan —
+matching anywhere, including mid-sentence — precisely so it could surface embedded scaffolding the
+then-anchored classifier could not see.
+
+After 11-24 these two are no longer the same standard, and the probe's `unhygienicRanks` predicate
+combines them:
+
+```
+classification.derivationClass === "synthetic_injected"  ||  item.markersFound.length > 0
+```
+
+So the probe flags a strict SUPERSET of what the product considers scaffolding. A summary that merely
+*discusses* `[SILENT]` inside a markdown table cell is `markersFound: ['silent-sentinel']` to the probe
+and `conversational` to the product — and Plan 11-24 confirmed that both real H-i offenders are exactly
+this shape, which is why they remain conversational after the fix.
+
+**Consequence for SC7:** the "6/12 union" figure recorded above mixes two standards and must not be
+used as the sign-off number without qualification. Plans 11-26 and 11-14 must report three figures
+separately and label them:
+
+| figure | predicate | meaning |
+|---|---|---|
+| tool-call | `containsToolCallText` (`[Tool call: ` substring) | unambiguous — this is the text SC3 forbids |
+| product-unhygienic | `classification.derivationClass === "synthetic_injected"` | the product's own definition of scaffolding |
+| probe-suspicious | `markersFound.length > 0` | investigative superset; may include legitimate prose that mentions a marker |
+
+**SC7 should be judged on tool-call + product-unhygienic.** `probe-suspicious` is advisory:each  hit
+must be inspected individually before it counts against the criterion, because the fix that would
+"close" it is the over-matching one this phase deliberately rejected.
