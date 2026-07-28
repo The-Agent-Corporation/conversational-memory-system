@@ -46,6 +46,26 @@ export interface DaemonLoopDependencies {
   syncReplication?: {
     runCycle(authority: DaemonWriteAuthority): Promise<unknown>;
   };
+  /**
+   * Optional bounded embedding repair pass (REQ-043 / ADR 0052, Plan 12-04). Heals a summary that
+   * a crash between `commitContractionSlice` and the post-commit embed stage left without a
+   * vector. Modelled on `syncReplication` above and for the same reason: a failure here (embedder
+   * fault, store error, corrupt model) is swallowed exactly like `safePowerState()`/notification
+   * failures -- it NEVER loses writer-lease authority, blocks local ingestion/contraction/MCP, or
+   * prevents graceful shutdown. It is a best-effort second line behind the primary embed stage,
+   * never a liveness dependency, so it must NOT be wired like `proposalScheduler`, whose throw
+   * calls `loseAuthority()`.
+   *
+   * Unlike `syncReplication` this is ALWAYS spread by the production factory: the embedder is
+   * resolved asynchronously AFTER the loop object exists, so presence cannot depend on it (F2).
+   * With no embedder resolved, `runDue` is a no-op that issues no store query.
+   *
+   * It takes no authority: the pass writes only to the derived vector sidecar, on ids the store
+   * itself reports as missing.
+   */
+  embeddingRepair?: {
+    runDue(): Promise<unknown>;
+  };
 }
 
 export interface DaemonLoopOptions {
@@ -174,6 +194,8 @@ export class DaemonLoop {
         // graceful shutdown (T-06-30 "accept": delivery cannot be forced by a malicious/offline relay).
       }
     }
+
+    await this.runEmbeddingRepair();
     return didWork;
   }
 
@@ -265,6 +287,10 @@ export class DaemonLoop {
             this.dependencies.scheduler.completeWork(item, { ok: true }))) break;
         }
       }
+      // `runOnce` has its OWN contraction loop and never calls `drainOne`, so the repair pass has
+      // to be invoked here too or it is dead in `once` mode (F11) -- including `memory daemon once`.
+      await this.runEmbeddingRepair();
+
       for (const personId of this.people) {
         if (!await this.assertLeaseAuthority()) break;
         let result: unknown;
@@ -280,6 +306,23 @@ export class DaemonLoop {
       return { scannedSources, contractionSlices, proposalRuns, ...remaining };
     } finally {
       await this.shutdown();
+    }
+  }
+
+  /**
+   * One bounded repair invocation, behind the same lease guard the other post-item stages use.
+   * Its result NEVER gates `didWork` -- for the same reason a sync cycle does not (:169-170): a
+   * pass that reported work would turn an idle daemon into a hot poll loop.
+   */
+  private async runEmbeddingRepair(): Promise<void> {
+    if (!this.dependencies.embeddingRepair) return;
+    if (!await this.assertLeaseAuthority()) return;
+    try {
+      await this.dependencies.embeddingRepair.runDue();
+    } catch {
+      // Swallow-and-continue, like `syncReplication` above. `EmbeddingRepairRunner.runDue` already
+      // returns on every path and throws on none; this catch covers any other implementation and
+      // guarantees at the loop boundary that a repair fault cannot cost the writer lease.
     }
   }
 

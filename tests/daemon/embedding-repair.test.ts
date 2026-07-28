@@ -1,13 +1,68 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContractionRunner } from "../../src/daemon/contraction-runner.js";
+import { DaemonLoop, type DaemonLoopDependencies } from "../../src/daemon/daemon.js";
+import { runDaemonCommand } from "../../src/daemon/daemon-command.js";
 import { EmbeddingRepairRunner } from "../../src/daemon/embedding-repair.js";
+import { DaemonScheduler } from "../../src/daemon/scheduler.js";
 import type { ContractionJob, WriteAuthority } from "../../src/daemon/types.js";
 import type { CanonicalEvent, MemorySource, Person } from "../../src/domain/canonical.js";
 import type { Summary } from "../../src/domain/types.js";
+import type { EmbedderHealth } from "../../src/embeddings/embedder-resolver.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import type { SummaryVectorRecord } from "../../src/storage/memory-store.js";
+import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import { DifferingIdentityEmbedder } from "../embeddings/fixtures.js";
-import { FIXED_NOW, FakeDaemonClock, FaultBoundaryInjector } from "./fixtures.js";
+import {
+  FIXED_NOW,
+  FakeDaemonClock,
+  FakeNotificationAdapter,
+  FakePowerStateProvider,
+  FakeTimerQueue,
+  FakeWatcherFactory,
+  FaultBoundaryInjector
+} from "./fixtures.js";
+
+/**
+ * The daemon's repair wiring is only observable through the REAL `createDefaultDependencies` path,
+ * so the resolver module is mocked (the Plan 12-03 precedent in `daemon-commands.test.ts`). Nothing
+ * else in this file imports `embedder-resolver`, so the mock is inert for every other case here.
+ */
+const embedderMock = vi.hoisted(() => ({
+  calls: [] as string[],
+  health: {
+    enabled: false,
+    provider: "deterministic",
+    model: "keyword-hash-v1",
+    revision: "",
+    healthy: true,
+    reason: null
+  } as EmbedderHealth
+}));
+
+vi.mock("../../src/embeddings/embedder-resolver.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/embeddings/embedder-resolver.js")>();
+  return {
+    ...actual,
+    probeEmbedderHealth: async () => {
+      embedderMock.calls.push("probe");
+      return embedderMock.health;
+    },
+    resolveEmbedder: async () => {
+      embedderMock.calls.push("resolve");
+      const { DifferingIdentityEmbedder: Fake } = await import("../embeddings/fixtures.js");
+      return new Fake();
+    }
+  };
+});
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
 
 const PERSON_ID = "person_repair";
 const SCOPE_ID = "scope_repair";
@@ -317,6 +372,165 @@ describe("EmbeddingRepairRunner", () => {
     expect(records[0]!.personId).toBe(PERSON_ID);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 12-04 Task 2 — the daemon wiring (F2, F11)
+// ---------------------------------------------------------------------------
+
+describe("DaemonLoop embeddingRepair wiring", () => {
+  it("invokes the repair pass on every drain, and its throw never fails the drain or drops the lease", async () => {
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    await store.savePerson({ id: "person_loop_drain", displayName: null, createdAt: FIXED_NOW });
+    let proposalRuns = 0;
+    const runDueCalls: string[] = [];
+    const harness = loopHarness(store, clock, "owner-repair-drain", 601, {
+      runProposals: async () => { proposalRuns += 1; return { proposals: 0 }; },
+      embeddingRepair: {
+        runDue: async () => {
+          runDueCalls.push("drain");
+          throw new Error("simulated repair-pass failure");
+        }
+      }
+    });
+
+    for (let index = 0; index < 3; index += 1) {
+      await expect(harness.loop.drainOne()).resolves.toBeDefined();
+    }
+
+    expect(runDueCalls).toHaveLength(3);
+    // Local work keeps flowing: the repair pass is a best-effort second line, never a dependency.
+    expect(proposalRuns).toBe(3);
+    expect((await store.getDaemonLease("memory-db"))?.ownerToken).toBe("owner-repair-drain");
+
+    await harness.loop.requestStop();
+    await harness.loop.drainOne();
+    expect(await store.getDaemonLease("memory-db")).toBeNull();
+  });
+
+  it("invokes the repair pass in `runOnce` too, which has its own loop and never calls drainOne (F11)", async () => {
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    await store.savePerson({ id: "person_loop_once", displayName: null, createdAt: FIXED_NOW });
+    const order: string[] = [];
+    const harness = loopHarness(store, clock, "owner-repair-once", 602, {
+      runProposals: async () => { order.push("proposals"); return { proposals: 0 }; },
+      embeddingRepair: {
+        runDue: async () => {
+          order.push("repair");
+          throw new Error("simulated repair-pass failure");
+        }
+      }
+    });
+
+    const result = await harness.loop.runOnce();
+
+    expect(result).toMatchObject({ scannedSources: 0, contractionSlices: 0 });
+    // Exactly once, and before the proposal tier — a throw there would have ended the run.
+    expect(order).toEqual(["repair", "proposals"]);
+  });
+
+  it("does not contribute to didWork, so a repairing daemon still idles", async () => {
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    const harness = loopHarness(store, clock, "owner-repair-idle", 603, {
+      embeddingRepair: {
+        // Reports real work; the loop must still call this an idle drain, or an idle daemon
+        // becomes a hot poll loop (the sync-cycle precedent, daemon.ts:169-170).
+        runDue: async () => ({ skipped: false, examined: 200, persisted: 200, failed: 0, remainingInBatch: 0 })
+      }
+    });
+
+    await expect(harness.loop.drainOne()).resolves.toBe(false);
+
+    await harness.loop.requestStop();
+    await harness.loop.drainOne();
+  });
+});
+
+describe("daemon repair-pass wiring through the real dependency path (F2)", () => {
+  const runOnceAgainstTempDatabase = async (name: string) => {
+    embedderMock.calls.length = 0;
+    const directory = await mkdtemp(join(tmpdir(), `daemon-repair-${name}-`));
+    temporaryDirectories.push(directory);
+    const missingSetQueries: unknown[][] = [];
+    const spy = vi.spyOn(SqliteStore.prototype, "listSummaryIdsMissingVector")
+      .mockImplementation(async function (this: SqliteStore, ...args: unknown[]) {
+        missingSetQueries.push(args);
+        return [];
+      } as never);
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const result = await runDaemonCommand({
+        subcommand: "once",
+        databasePath: join(directory, "memory.sqlite")
+      });
+      return { result, missingSetQueries };
+    } finally {
+      spy.mockRestore();
+      write.mockRestore();
+    }
+  };
+
+  it("no-ops with ZERO store queries when no embedder is resolved", async () => {
+    embedderMock.health = {
+      enabled: false, provider: "deterministic", model: "keyword-hash-v1", revision: "", healthy: true, reason: null
+    };
+
+    const { result, missingSetQueries } = await runOnceAgainstTempDatabase("disabled");
+
+    expect(result).toMatchObject({ ok: true, subcommand: "once" });
+    // The dependency is ALWAYS spread — presence cannot depend on a value that does not exist when
+    // the loop is constructed (F2). "Off" is therefore a no-op `runDue`, proven by zero queries.
+    expect(missingSetQueries).toEqual([]);
+    expect(embedderMock.calls).toEqual(["probe"]);
+  });
+
+  it("runs the pass in `once` mode when an embedder resolves, with the budget in the query", async () => {
+    embedderMock.health = {
+      enabled: true, provider: "fake-differing", model: "fake-repo@r1", revision: "r1", healthy: true, reason: null
+    };
+
+    const { result, missingSetQueries } = await runOnceAgainstTempDatabase("healthy");
+
+    expect(result).toMatchObject({ ok: true, subcommand: "once" });
+    // F11 end-to-end: `memory daemon once` really does exercise the repair pass, so Plan 12-06's
+    // clone check is not silently asserting nothing.
+    expect(missingSetQueries).toEqual([["fake-differing", "fake-repo@r1", { limit: 200 }]]);
+    // One resolve per process — the repair pass reuses the contraction stage's embedder (T-12-23).
+    expect(embedderMock.calls).toEqual(["probe", "resolve"]);
+  });
+});
+
+function loopHarness(
+  store: InMemoryStore,
+  clock: FakeDaemonClock,
+  ownerToken: string,
+  pid: number,
+  overrides: Partial<{
+    runProposals: (personId: string, authority: unknown) => Promise<{ proposals: number }>;
+    embeddingRepair: DaemonLoopDependencies["embeddingRepair"];
+  }> = {}
+): { loop: DaemonLoop } {
+  const authority = { kind: "daemon" as const, databaseId: "memory-db", ownerToken };
+  const dependencies: DaemonLoopDependencies = {
+    store,
+    scheduler: new DaemonScheduler(store, { clock, promptBurstLimit: 1, authority }),
+    clock,
+    timers: new FakeTimerQueue(clock),
+    watcherFactory: new FakeWatcherFactory(),
+    power: new FakePowerStateProvider("external"),
+    notifier: new FakeNotificationAdapter(),
+    sourceRunner: { run: async () => ({ importedEvents: 0 }) },
+    contractionRunner: { drainSlice: async () => ({ complete: true }) },
+    proposalScheduler: {
+      runDue: async (personId, captured) =>
+        (overrides.runProposals ?? (async () => ({ proposals: 0 })))(personId, captured)
+    },
+    ...(overrides.embeddingRepair ? { embeddingRepair: overrides.embeddingRepair } : {})
+  };
+  return { loop: new DaemonLoop(dependencies, { databaseId: "memory-db", ownerToken, pid }) };
+}
 
 /** An embedder that rejects on every call, for the failure-isolation cases. */
 class ThrowingEmbedder {

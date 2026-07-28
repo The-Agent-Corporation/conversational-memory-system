@@ -14,6 +14,7 @@ import type { MemoryStore } from "../storage/memory-store.js";
 import { ApprovedSourceRunner } from "./approved-source-runner.js";
 import { ContractionRunner } from "./contraction-runner.js";
 import { DaemonLoop, type DaemonLoopDependencies, type DaemonOnceResult, type DaemonRunResult } from "./daemon.js";
+import { EmbeddingRepairRunner } from "./embedding-repair.js";
 import { MacOSLaunchAgent, type LaunchAgentStatus } from "./macos/launch-agent.js";
 import { MacOSNotificationAdapter } from "./macos/notification.js";
 import { MacOSPowerSource } from "./macos/power-source.js";
@@ -298,6 +299,10 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
       //
       // Plan 12-04 wires a second dependency that reads this same variable. Do not rename it.
       let summaryEmbedder: Embedder | undefined;
+      // REQ-043 / Plan 12-04 — the bounded repair pass, built in the SAME initializer so it reuses
+      // the one resolved embedder. Never resolve a second one here: that is a second ONNX session
+      // per process, 72-121 ms (T-12-23).
+      let repairRunner: EmbeddingRepairRunner | undefined;
       let embedderInitialization: Promise<void> | undefined;
       const initializeEmbedder = async (): Promise<void> => {
         embedderInitialization ??= (async () => {
@@ -318,6 +323,7 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
             return;
           }
           summaryEmbedder = await resolveEmbedder(databasePath);
+          repairRunner = new EmbeddingRepairRunner({ store, embedder: summaryEmbedder, clock });
         })();
         await embedderInitialization;
       };
@@ -354,6 +360,12 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
           runDue: (personId, captured) =>
             new ProposalScheduler(store, { clock, authority: captured }).runDue(personId)
         },
+        // ALWAYS spread, never conditionally (F2). `syncReplication` below can be conditional
+        // because it is resolved synchronously, right here; the repair runner cannot, because it
+        // depends on an embedder that does not exist until `initializeEmbedder()` runs inside
+        // `run`/`runOnce` — after this object is constructed. So the dependency is always present
+        // and "no embedder" is expressed as a `runDue` that no-ops without touching the store.
+        embeddingRepair: { runDue: async () => repairRunner?.runDue() },
         ...(() => {
           const syncReplication = resolveProductionSyncReplicationDependency(store, clock, deviceSecretStore);
           return syncReplication ? { syncReplication } : {};

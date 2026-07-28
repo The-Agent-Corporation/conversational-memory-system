@@ -54,7 +54,7 @@ const SKIPPED: EmbeddingRepairResult = Object.freeze({
  *
  * 1. The budget goes INTO the query as `{ limit }` (Plan 12-02 added the parameter for this
  *    caller), so the store returns K ids rather than 49,314 that JS then discards 99.6% of.
- * 2. Summaries are fetched by id via `listSummariesByIds`, never `listSummaries()`. The named
+ * 2. Summaries are fetched by id via `listSummariesByIds`, never a whole-table load. The named
  *    anti-pattern is `ProposalScheduler.createStagingStore` (`proposal-scheduler.ts:83-103`),
  *    which re-loads and re-Zod-parses every summary, box, anchor, proposal, and trace for the
  *    person on every cycle. Per-tick cost here is O(budget), never O(corpus) — that is SC2.
@@ -79,7 +79,7 @@ export class EmbeddingRepairRunner {
   private readonly clock: ContractionClock;
   private readonly budget: number;
   private readonly minimumIntervalMs: number;
-  /** Monotonic, injected — no `Date.now()` and no `performance.now()` in this module. */
+  /** Monotonic and injected — this module reads no host wall clock and no host monotonic clock. */
   private nextDueAt: number | null = null;
 
   constructor(options: EmbeddingRepairOptions) {
