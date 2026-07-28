@@ -256,8 +256,34 @@ export interface MemoryStore {
    */
   saveSummaryVectors(records: SummaryVectorRecord[]): Promise<void>;
   getSummaryVector(summaryId: string, provider: string, model: string): Promise<SummaryVectorRecord | null>;
-  /** Stable ascending-order list of summary ids missing a (provider, model) vector row — the Phase 10 backfill resume key (D-05). */
-  listSummaryIdsMissingVector(provider: string, model: string): Promise<string[]>;
+  /**
+   * Stable ascending-order list of summary ids that a backfill or repair pass **should embed** —
+   * the Phase 10 backfill resume key (D-05). This is deliberately narrower than "every summary
+   * row without a vector": a returned id is one whose summary is in a RETRIEVABLE state
+   * (`RETRIEVABLE_MEMORY_STATES` — active, compacted, revived) *and* which lacks a
+   * `summary_vectors` row for the given (provider, model). A `superseded`, `stale`, `proposed`,
+   * `approved`, `rejected`, or `disputed` summary is never a candidate, because
+   * `findNearestSummaries` filters those rows out of vector search, so embedding them is work
+   * that can never be returned (GAP-12-B: 89,059 of 138,373 rows on the live corpus).
+   *
+   * `options.limit` caps the number of ids returned. It is a pure prefix: a limited call returns
+   * the first N ids of the unlimited call's result, in the same order. Omitting it (or passing
+   * `{}`) is the unbounded behavior every existing caller already relies on.
+   */
+  listSummaryIdsMissingVector(
+    provider: string,
+    model: string,
+    options?: { limit?: number }
+  ): Promise<string[]>;
+  /**
+   * Bounded by-id fetch of summaries, ascending by id, silently omitting ids that do not exist.
+   * `[]` in, `[]` out, with no query issued. Exists so a repair pass can resolve a small id batch
+   * without loading and Zod-parsing the entire `summaries` table (Plan 12-04).
+   *
+   * This is a fetch primitive with **no state filter** — its callers own that policy. If you want
+   * embeddable summaries, get the ids from `listSummaryIdsMissingVector`, which applies it.
+   */
+  listSummariesByIds(ids: readonly string[]): Promise<Summary[]>;
   /** Filter-before-score nearest-neighbor search bounded by personId + allowedScopeIds (D-06/D-07); results ordered score desc then summaryId asc. */
   findNearestSummaries(query: FindNearestSummariesQuery): Promise<SummaryVectorMatch[]>;
   /**

@@ -36,7 +36,7 @@ import type {
   TraceFilter
 } from "./memory-store.js";
 import { cosineSimilarity } from "../embeddings/embedder.js";
-import { isRetrievableState } from "../retrieval/retrievable-state.js";
+import { isRetrievableState, RETRIEVABLE_MEMORY_STATES } from "../retrieval/retrievable-state.js";
 import { packFloat32Vector, unpackFloat32Vector } from "../embeddings/vector-codec.js";
 import { ImportCheckpointSchema, type ImportCheckpoint } from "../imports/types.js";
 import {
@@ -1689,18 +1689,59 @@ export class SqliteStore implements MemoryStore {
     return row ? this.summaryVectorRecordFromRow(row) : null;
   }
 
-  async listSummaryIdsMissingVector(provider: string, model: string): Promise<string[]> {
+  /**
+   * GAP-12-B: the candidate set is "embeddable and unembedded", not "unembedded". The state
+   * predicate binds `RETRIEVABLE_MEMORY_STATES` -- the same allow-list `findNearestSummaries`
+   * filters with -- rather than hand-writing `!= 'superseded'`, which would fail OPEN the moment
+   * a new non-retrievable MemoryState is added. Placeholders are generated from the array length
+   * and the values are bound, never interpolated (T-12-07).
+   *
+   * The predicate is only affordable because of schema v4's `idx_summaries_state_id`: without it
+   * SQLite must read `payload` for every summary row (4,090 ms on the live corpus vs 45 ms with).
+   */
+  async listSummaryIdsMissingVector(
+    provider: string,
+    model: string,
+    options?: { limit?: number }
+  ): Promise<string[]> {
+    const statePlaceholders = RETRIEVABLE_MEMORY_STATES.map(() => "?").join(", ");
+    const limitClause = options?.limit === undefined ? "" : " limit ?";
+    const parameters: Array<string | number> = [...RETRIEVABLE_MEMORY_STATES, provider, model];
+    if (options?.limit !== undefined) parameters.push(options.limit);
     const rows = this.database
       .prepare(
         `select id from summaries
-         where not exists (
-           select 1 from summary_vectors sv
-           where sv.summary_id = summaries.id and sv.provider = ? and sv.model = ?
-         )
-         order by id asc`
+         where json_extract(payload,'$.state') in (${statePlaceholders})
+           and not exists (
+             select 1 from summary_vectors sv
+             where sv.summary_id = summaries.id and sv.provider = ? and sv.model = ?
+           )
+         order by id asc${limitClause}`
       )
-      .all(provider, model) as Array<{ id: string }>;
+      .all(...parameters) as Array<{ id: string }>;
     return rows.map((row) => row.id);
+  }
+
+  /**
+   * Bounded by-id fetch (Plan 12-04's repair pass). Chunked at 500 ids per statement so a caller
+   * with a large id list cannot exceed SQLite's bound-variable ceiling (T-12-08). No state filter
+   * by design -- see the `MemoryStore` docstring. Parsed through `SummarySchema` like every other
+   * summary read, and sorted ascending by id across chunk boundaries.
+   */
+  async listSummariesByIds(ids: readonly string[]): Promise<Summary[]> {
+    if (ids.length === 0) return [];
+    const CHUNK_SIZE = 500;
+    const unique = [...new Set(ids)];
+    const summaries: Summary[] = [];
+    for (let offset = 0; offset < unique.length; offset += CHUNK_SIZE) {
+      const chunk = unique.slice(offset, offset + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.database
+        .prepare(`select payload from summaries where id in (${placeholders})`)
+        .all(...chunk) as PayloadRow[];
+      for (const row of rows) summaries.push(SummarySchema.parse(JSON.parse(row.payload)));
+    }
+    return summaries.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
   }
 
   async findNearestSummaries(query: FindNearestSummariesQuery): Promise<SummaryVectorMatch[]> {

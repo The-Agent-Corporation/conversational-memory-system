@@ -1201,16 +1201,43 @@ export class InMemoryStore implements MemoryStore {
     );
   }
 
-  async listSummaryIdsMissingVector(provider: string, model: string): Promise<string[]> {
+  /**
+   * GAP-12-B: identical semantics to SqliteStore.listSummaryIdsMissingVector -- "embeddable and
+   * unembedded", not merely "unembedded". Filters through the same `isRetrievableState`
+   * allow-list `findNearestSummaries` uses at :1222, so the two stores share one definition of
+   * retrievable rather than two that must be hand-kept in agreement (T-12-05/T-12-06).
+   */
+  async listSummaryIdsMissingVector(
+    provider: string,
+    model: string,
+    options?: { limit?: number }
+  ): Promise<string[]> {
     const covered = new Set(
       this.summaryVectors
         .filter((candidate) => candidate.provider === provider && candidate.model === model)
         .map((candidate) => candidate.summaryId)
     );
-    return this.summaries
+    const missing = this.summaries
+      .filter((summary) => isRetrievableState(summary.state))
       .map((summary) => summary.id)
       .filter((summaryId) => !covered.has(summaryId))
       .sort();
+    // Slicing after the sort is what makes a limited call a true prefix of the unlimited one.
+    return options?.limit === undefined ? missing : missing.slice(0, options.limit);
+  }
+
+  /**
+   * Bounded by-id fetch (Plan 12-04). No state filter by design -- see the `MemoryStore`
+   * docstring. Ascending by id, absent ids silently omitted, `[]` in / `[]` out.
+   */
+  async listSummariesByIds(ids: readonly string[]): Promise<Summary[]> {
+    if (ids.length === 0) return [];
+    const requested = new Set(ids);
+    return structuredClone(
+      this.summaries
+        .filter((summary) => requested.has(summary.id))
+        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    );
   }
 
   async findNearestSummaries(query: FindNearestSummariesQuery): Promise<SummaryVectorMatch[]> {

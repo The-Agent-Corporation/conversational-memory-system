@@ -59,6 +59,24 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
           on summaries (json_extract(payload,'$.personId'), json_extract(payload,'$.state'), id);
       `);
     }
+  },
+  {
+    version: 4,
+    description: "REQ-043: covering index for the state-predicated missing-vector query",
+    apply: (database) => {
+      // GAP-12-B (T-12-09a). `listSummaryIdsMissingVector` gained a state predicate so a
+      // superseded row is no longer a backfill candidate. Without this index that predicate
+      // degrades an id-only covering scan into one that reads `payload` for every summary row
+      // (measured on the 5.0 GB live corpus: 329 ms -> 4,090 ms). This index restores covering
+      // behavior at 45 ms -- 7x faster than the unfiltered query in production today. It leads on
+      // state, unlike v3's idx_summaries_person_state, because the missing-vector query takes no
+      // personId and therefore cannot use a personId-leading index. Build cost on the full live
+      // corpus is 1.16 s.
+      database.exec(`
+        create index if not exists idx_summaries_state_id
+          on summaries (json_extract(payload,'$.state'), id);
+      `);
+    }
   }
 ];
 

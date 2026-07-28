@@ -152,6 +152,86 @@ for (const backend of backends) {
       expect(missingUnderARepeat).toEqual(missingUnderA);
     });
 
+    it("excludes non-retrievable summaries from the missing set — the allow-list is the whole rule (GAP-12-B)", async () => {
+      // One summary per state, none of them vectored. Only the three retrievable states may come
+      // back: embedding a superseded/stale/proposed row is work vector search can never return.
+      const byState: Array<{ id: string; state: Summary["state"] }> = [
+        { id: "summary_active", state: "active" },
+        { id: "summary_compacted", state: "compacted" },
+        { id: "summary_revived", state: "revived" },
+        { id: "summary_superseded", state: "superseded" },
+        { id: "summary_stale", state: "stale" },
+        { id: "summary_proposed", state: "proposed" },
+        { id: "summary_disputed", state: "disputed" }
+      ];
+      for (const { id, state } of byState) {
+        await store.saveSummary(summaryRecord({ id, state }));
+      }
+
+      const missing = await store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A);
+
+      expect(missing).toEqual(["summary_active", "summary_compacted", "summary_revived"]);
+      expect(missing).not.toContain("summary_superseded");
+      expect(missing).not.toContain("summary_stale");
+      expect(missing).not.toContain("summary_proposed");
+      expect(missing).not.toContain("summary_disputed");
+    });
+
+    it("bounds the missing set with an optional limit, prefix-identical to the unbounded call (T-12-09b)", async () => {
+      for (let index = 0; index < 12; index += 1) {
+        await store.saveSummary(summaryRecord({ id: `summary_${String(index).padStart(2, "0")}`, state: "compacted" }));
+      }
+
+      const unbounded = await store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A);
+      const limited = await store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A, { limit: 5 });
+
+      expect(unbounded).toHaveLength(12);
+      expect(limited).toHaveLength(5);
+      // Not merely "5 of them" — the same 5, in the same order, as the front of the full result.
+      expect(limited).toEqual(unbounded.slice(0, 5));
+
+      // A limit larger than the result set is not an error and does not pad.
+      expect(await store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A, { limit: 500 })).toEqual(unbounded);
+      // An explicitly-omitted limit is today's unbounded behavior, byte for byte.
+      expect(await store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A, {})).toEqual(unbounded);
+    });
+
+    describe("listSummariesByIds", () => {
+      it("returns the requested summaries in ascending id order and silently omits absent ids", async () => {
+        for (const id of ["a", "b", "c"]) {
+          await store.saveSummary(summaryRecord({ id }));
+        }
+
+        const loaded = await store.listSummariesByIds(["c", "a", "zz"]);
+
+        expect(loaded.map((summary) => summary.id)).toEqual(["a", "c"]);
+        expect(loaded[0]).toEqual(summaryRecord({ id: "a" }));
+      });
+
+      it("returns [] for an empty id list", async () => {
+        await store.saveSummary(summaryRecord({ id: "a" }));
+        expect(await store.listSummariesByIds([])).toEqual([]);
+      });
+
+      it("is a fetch primitive: it does NOT filter by state, its callers own that policy", async () => {
+        await store.saveSummary(summaryRecord({ id: "a", state: "superseded" }));
+        const loaded = await store.listSummariesByIds(["a"]);
+        expect(loaded.map((summary) => summary.id)).toEqual(["a"]);
+      });
+
+      it("handles an id list larger than one SQLite bound-variable chunk (T-12-08)", async () => {
+        const ids = Array.from({ length: 1200 }, (_unused, index) => `summary_${String(index).padStart(5, "0")}`);
+        for (const id of ids) {
+          await store.saveSummary(summaryRecord({ id }));
+        }
+
+        const loaded = await store.listSummariesByIds([...ids].reverse());
+
+        expect(loaded).toHaveLength(1200);
+        expect(loaded.map((summary) => summary.id)).toEqual(ids);
+      });
+    });
+
     it("never returns another person's or out-of-scope summary from findNearestSummaries, even when it would out-score every authorized row (SC4, D-06, Pitfall 1)", async () => {
       // The unauthorized vector is an exact match for the query; every authorized vector is
       // deliberately weaker, so a boundary bug (score-before-filter) would surface it first.
@@ -476,6 +556,54 @@ describe("cross-store exact parity (SC3, D-07)", () => {
 
       expect(sqliteResult).toHaveLength(3);
       expect(sqliteResult).toEqual(inMemoryResult);
+    } finally {
+      await inMemory.cleanup();
+      await sqlite.cleanup();
+    }
+  });
+
+  it("returns a deep-equal missing set from both stores over an identical mixed-state corpus (T-12-05, GAP-12-B)", async () => {
+    const inMemory = await backends[0]!.create();
+    const sqlite = await backends[1]!.create();
+
+    const mixedCorpus: Array<{ id: string; state: Summary["state"] }> = [
+      { id: "summary_01_active", state: "active" },
+      { id: "summary_02_superseded", state: "superseded" },
+      { id: "summary_03_compacted", state: "compacted" },
+      { id: "summary_04_stale", state: "stale" },
+      { id: "summary_05_revived", state: "revived" },
+      { id: "summary_06_proposed", state: "proposed" },
+      { id: "summary_07_approved", state: "approved" },
+      { id: "summary_08_rejected", state: "rejected" },
+      { id: "summary_09_disputed", state: "disputed" },
+      { id: "summary_10_compacted", state: "compacted" }
+    ];
+
+    try {
+      for (const store of [inMemory.store, sqlite.store]) {
+        for (const { id, state } of mixedCorpus) {
+          await store.saveSummary(summaryRecord({ id, state }));
+        }
+        // One retrievable row already vectored, so the set-difference half is exercised too.
+        await store.saveSummaryVector(vectorRecord({ summaryId: "summary_01_active" }));
+      }
+
+      const inMemoryMissing = await inMemory.store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A);
+      const sqliteMissing = await sqlite.store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A);
+
+      expect(sqliteMissing).toEqual(inMemoryMissing);
+      expect(sqliteMissing).toEqual(["summary_03_compacted", "summary_05_revived", "summary_10_compacted"]);
+
+      const inMemoryLimited = await inMemory.store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A, { limit: 2 });
+      const sqliteLimited = await sqlite.store.listSummaryIdsMissingVector(PROVIDER_A, MODEL_A, { limit: 2 });
+      expect(sqliteLimited).toEqual(inMemoryLimited);
+      expect(sqliteLimited).toEqual(sqliteMissing.slice(0, 2));
+
+      const requested = ["summary_10_compacted", "summary_02_superseded", "summary_absent"];
+      const inMemoryById = await inMemory.store.listSummariesByIds(requested);
+      const sqliteById = await sqlite.store.listSummariesByIds(requested);
+      expect(sqliteById).toEqual(inMemoryById);
+      expect(sqliteById.map((summary) => summary.id)).toEqual(["summary_02_superseded", "summary_10_compacted"]);
     } finally {
       await inMemory.cleanup();
       await sqlite.cleanup();

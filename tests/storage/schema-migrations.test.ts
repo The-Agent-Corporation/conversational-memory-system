@@ -137,7 +137,10 @@ describe("schema-migrations", () => {
     // Simulate a database that stopped at version 2, before migration 3 existed.
     const raw = new DatabaseSync(databasePath);
     raw.exec("drop index if exists idx_summaries_person_state");
-    raw.exec("delete from schema_migrations where version = 3");
+    raw.exec("drop index if exists idx_summaries_state_id");
+    // Every row above 2, not just row 3 -- `runSchemaMigrations` resumes from max(version), so
+    // leaving a later row behind would make this read as an already-current database.
+    raw.exec("delete from schema_migrations where version > 2");
     raw.exec("pragma user_version = 2");
 
     const result = runSchemaMigrations(raw);
@@ -151,6 +154,50 @@ describe("schema-migrations", () => {
       .prepare("select name from sqlite_master where type = 'index' and name = 'idx_summaries_person_state'")
       .get();
     expect(indexRow).toBeDefined();
+
+    raw.close();
+  });
+
+  it("applies version 4 (idx_summaries_state_id) when upgrading from version 3", () => {
+    const store = new SqliteStore(databasePath);
+    expect(store.getSchemaVersion()).toBe(4);
+    store.close();
+
+    // Simulate a database that stopped at version 3, before migration 4 existed.
+    const raw = new DatabaseSync(databasePath);
+    raw.exec("drop index if exists idx_summaries_state_id");
+    raw.exec("delete from schema_migrations where version > 3");
+    raw.exec("pragma user_version = 3");
+
+    const result = runSchemaMigrations(raw);
+    expect(result.from).toBe(3);
+    expect(result.to).toBe(latestVersion);
+
+    const userVersionRow = raw.prepare("pragma user_version").get() as { user_version: number };
+    expect(userVersionRow.user_version).toBe(latestVersion);
+
+    const indexRow = raw
+      .prepare("select name from sqlite_master where type = 'index' and name = 'idx_summaries_state_id'")
+      .get();
+    expect(indexRow).toBeDefined();
+
+    // The whole point of the expression index: the state-predicated missing-vector query must be
+    // covered by it, or the predicate is an 11x regression on a full-payload scan (T-12-09a).
+    const plan = raw
+      .prepare(
+        `explain query plan
+         select id from summaries
+         where json_extract(payload,'$.state') in (?, ?, ?)
+           and not exists (
+             select 1 from summary_vectors sv
+             where sv.summary_id = summaries.id and sv.provider = ? and sv.model = ?
+           )
+         order by id asc`
+      )
+      .all("active", "compacted", "revived", "deterministic", "keyword-hash-v1") as Array<{ detail: string }>;
+    const planText = plan.map((row) => row.detail).join("\n");
+    expect(planText).toContain("idx_summaries_state_id");
+    expect(planText).toMatch(/COVERING INDEX idx_summaries_state_id/);
 
     raw.close();
   });
