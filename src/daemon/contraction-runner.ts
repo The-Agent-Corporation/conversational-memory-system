@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { anchorsForTurn } from "../anchors/anchor-detector.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
 import type { Anchor, Summary, Turn } from "../domain/types.js";
 import { DerivationInvalidator } from "../service/derivation-invalidator.js";
@@ -252,12 +253,19 @@ export class ContractionRunner {
       // the pre-reversal carve-out, which is how that defect survived review). Gating on
       // `[windowStart, derivationEnd)` — the exact same range summaryForSpan derives text from —
       // means a withheld open run's events are considered only once the run closes, on whichever
-      // future slice recomputes this span's (bounded, run-length-sized) window. `anchorsForTurn`
-      // itself is unchanged; only its call site is gated.
+      // future slice recomputes this span's (bounded, run-length-sized) window.
+      //
+      // `anchorsForTurn` is the shared minter in src/anchors/anchor-detector.ts, which re-applies the
+      // hygiene gate itself (with `eventKind`, which a CanonicalEvent has and a Turn does not). That
+      // is deliberate belt-and-braces: this call site's own filter and the minter's gate are the two
+      // halves that GAP-11-G found had drifted apart when they were separate implementations.
       for (const relativeIndex of survivingDerivationIndices(allEvents.slice(window.windowStart, window.derivationEnd))) {
         const globalIndex = window.windowStart + relativeIndex;
         const event = allEvents[globalIndex]!;
-        anchors.push(...anchorsForTurn(turnFromEvent(event, threadId, globalIndex + 1)));
+        anchors.push(...anchorsForTurn(
+          turnFromEvent(event, threadId, globalIndex + 1),
+          { eventKind: event.eventKind }
+        ));
       }
     }
 
@@ -580,31 +588,6 @@ function turnFromEvent(event: CanonicalEvent, threadId: string, sequence: number
       nativeEventId: event.nativeEventId
     }
   };
-}
-
-function anchorsForTurn(turn: Turn): Anchor[] {
-  const normalized = turn.content.toLowerCase();
-  const kinds: Anchor["anchorType"][] = [];
-  if (/\b(deadline|due|expires?|statute|limitations?|calendar|hearing|trial|deposition)\b/.test(normalized)) kinds.push("deadline");
-  if (/\b(decided|decision|we will|we should|strategy is|approved|rejected|agreed)\b/.test(normalized)) kinds.push("decision");
-  if (/\b(key fact|fact is|confirmed|undisputed|liability|coverage limit|policy limit|pip|bodily injury)\b/.test(normalized)) kinds.push("key_fact");
-  if (/\b(strategy|leverage|risk|lesson|insight|because|therefore)\b/.test(normalized)) kinds.push("strategic_insight");
-  if (/\b(bookmark|remember this|save this|come back to this)\b/.test(normalized)) kinds.push("bookmark");
-  return [...new Set(kinds)].map((anchorType) => ({
-    id: `anchor_${turn.id}_${anchorType}`,
-    personId: String(turn.metadata.personId),
-    canonicalEventId: String(turn.metadata.canonicalEventId),
-    scopeId: String(turn.metadata.scopeId),
-    turnId: turn.id,
-    threadId: turn.threadId,
-    boxId: null,
-    anchorType,
-    content: turn.content,
-    embedding: null,
-    createdAt: turn.createdAt,
-    trustLevel: turn.trustLevel,
-    source: turn.provenance
-  }));
 }
 
 function summaryId(personId: string, firstEventId: string, topicLabel: string): string {

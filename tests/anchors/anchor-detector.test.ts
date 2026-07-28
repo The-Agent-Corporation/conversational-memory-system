@@ -127,6 +127,63 @@ describe("AnchorDetector", () => {
     });
   });
 
+  // GAP-11-G defect 2: the gate classified on (content, role) only, while the store's prune
+  // classifies on (content, eventKind, role). An event the prune calls `tool_activity` on eventKind —
+  // content CONTAINING `[Tool call: ` without starting with it — was `conversational` to the gate,
+  // so the gate admitted anchors the prune would delete. See 11-GAP-11-G.md.
+  describe("eventKind-aware gate (GAP-11-G)", () => {
+    const EMBEDDED_TOOL_CONTENT =
+      'Checking the build first.\n[Tool call: Bash] {"command":"npm test","note":"we decided this ' +
+      'because of the deadline risk"}';
+
+    it("creates no anchors for a tool_call-kind turn whose content does not start with the prefix", async () => {
+      const store = new InMemoryStore();
+      const detector = new AnchorDetector(store);
+
+      const result = await detector.detectForTurn(
+        makeTurn({ id: "turn_kind_tool", role: "assistant", content: EMBEDDED_TOOL_CONTENT }),
+        { eventKind: "tool_call" }
+      );
+
+      expect(result.anchors).toEqual([]);
+      await expect(store.listAnchors()).resolves.toEqual([]);
+    });
+
+    it("leaves the no-eventKind path exactly as it was: the same turn still mints anchors", async () => {
+      const store = new InMemoryStore();
+      const detector = new AnchorDetector(store);
+
+      const result = await detector.detectForTurn(
+        makeTurn({ id: "turn_kind_tool", role: "assistant", content: EMBEDDED_TOOL_CONTENT })
+      );
+
+      expect(result.anchors.map((anchor) => anchor.anchorType)).toEqual([
+        "deadline",
+        "decision",
+        "strategic_insight"
+      ]);
+    });
+
+    it("mints byte-identical anchors for a conversational turn with or without eventKind", async () => {
+      const conversational = makeTurn({
+        id: "turn_kind_conv",
+        content: "We decided the strategy is to wait because the coverage limit creates leverage."
+      });
+
+      const withoutKind = await new AnchorDetector(new InMemoryStore()).detectForTurn(conversational);
+      const withKind = await new AnchorDetector(new InMemoryStore()).detectForTurn(conversational, {
+        eventKind: "message"
+      });
+
+      expect(withKind.anchors).toEqual(withoutKind.anchors);
+      expect(withKind.anchors.map((anchor) => anchor.content)).toEqual([
+        "We decided the strategy is to wait because the coverage limit creates leverage.",
+        "We decided the strategy is to wait because the coverage limit creates leverage.",
+        "We decided the strategy is to wait because the coverage limit creates leverage."
+      ]);
+    });
+  });
+
   it("upserts deterministic anchor ids when the same turn is processed again", async () => {
     const store = new InMemoryStore();
     const detector = new AnchorDetector(store);

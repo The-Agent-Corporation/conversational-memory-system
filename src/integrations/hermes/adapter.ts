@@ -79,14 +79,21 @@ export class HermesMemoryAdapter {
     // 11-CONTEXT decision 5: the live bridge applies the SAME shared hygiene classifier as
     // the daemon/contraction path. control_signal events always reach the monitor (they close
     // spans); conversation_turn events only drive topic labeling when drivesTopicLabel says so.
-    // Note: this live path never sets eventKind, so `role: "tool"` is the tool signal here.
+    // Note: this live path never sets eventKind today, so `role: "tool"` is the tool signal here.
     const topicResult: TopicMonitorResult =
       event.type === "control_signal" ||
       drivesTopicLabel({ content: event.content, eventKind: event.eventKind, role: event.role })
         ? this.monitor.observe(event)
         : { current: this.monitor.current(event.hostSessionId), topicChanged: false, completed: null };
 
-    const anchorResult = turn ? await this.anchorDetector.detectForTurn(turn) : { anchors: [] };
+    // GAP-11-G: forward the same third classification input the topic gate above already receives, so
+    // the anchor gate and the topic gate can never disagree on this seam. `event.eventKind` is
+    // undefined for every Hermes row today, which is exactly the pre-11-27 gate inputs — this is a
+    // tightening that arms itself if Hermes ever starts emitting a kind, not a behavior change now.
+    const eventKind = event.type === "conversation_turn" ? event.eventKind : undefined;
+    const anchorResult = turn
+      ? await this.anchorDetector.detectForTurn(turn, { eventKind })
+      : { anchors: [] };
     const compaction = topicResult.completed
       ? await this.preCompactor.compactCompletedTopic(topicResult.completed)
       : null;

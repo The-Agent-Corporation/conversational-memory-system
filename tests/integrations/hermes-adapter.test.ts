@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { AnchorDetector } from "../../src/anchors/anchor-detector.js";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import type { Summary } from "../../src/domain/types.js";
 import type { Embedder } from "../../src/embeddings/embedder.js";
@@ -88,6 +89,49 @@ describe("HermesMemoryAdapter", () => {
     const summaries = await store.listSummaries();
     expect(summaries).toHaveLength(1);
     expect(summaries[0].summaryText).toContain("Smith PIP");
+  });
+
+  // GAP-11-G / T-11-93: the anchor gate gained an optional `eventKind`, and this is the live agent
+  // bridge, so the seam gets explicit coverage. Hermes rows carry no eventKind today, so the
+  // observable behavior here must be exactly what it was; what the seam guarantees going forward is
+  // that the anchor gate receives the SAME third classification input the topic gate on the line
+  // above already receives, instead of silently diverging the way it did before this plan.
+  describe("anchor gate eventKind forwarding (GAP-11-G)", () => {
+    it("forwards the host event's eventKind to the anchor gate", async () => {
+      const store = new InMemoryStore();
+      const adapter = new HermesMemoryAdapter(store);
+      const spy = vi.spyOn(AnchorDetector.prototype, "detectForTurn");
+
+      try {
+        await adapter.processTimelineRow(row({ content: "The Smith PIP demand deadline is June 1." }));
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        const [, options] = spy.mock.calls[0]!;
+        expect(options).toEqual({ eventKind: undefined });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("keeps live-bridge anchor behavior unchanged: conversational mints, role tool does not", async () => {
+      const store = new InMemoryStore();
+      const adapter = new HermesMemoryAdapter(store);
+
+      const conversational = await adapter.processTimelineRow(
+        row({ content: "The Smith PIP demand deadline is June 1." })
+      );
+      const toolRole = await adapter.processTimelineRow(row({
+        id: "2",
+        sequence: 2,
+        role: "tool",
+        content: "We decided the deadline is June 1 because the policy limit is confirmed.",
+        created_at: "2026-05-04T10:00:10.000Z"
+      }));
+
+      expect(conversational.anchors.map((anchor) => anchor.anchorType)).toEqual(["deadline", "key_fact"]);
+      expect(conversational.anchors[0]?.content).toBe("The Smith PIP demand deadline is June 1.");
+      expect(toolRole.anchors).toEqual([]);
+    });
   });
 
   it("compacts the active topic when Hermes sends a new-conversation command", async () => {

@@ -1337,9 +1337,13 @@ export class SqliteStore implements MemoryStore {
    * authorization. Precedence: not_found, person_unattributed, person_mismatch,
    * retained_conversational. Classification input is `{ content, role, eventKind }` where
    * role/eventKind come from the anchor's resolved canonical event (falling back to content-only
-   * when `canonicalEventId` is absent or does not resolve) -- a strict superset of the forward
-   * gate's inputs (`AnchorDetector.detectForTurn` passes content + role only), so this can never
-   * retain an anchor the gate would have refused. Deletes through an inline
+   * when `canonicalEventId` is absent or does not resolve). These are now the SAME inputs the
+   * forward gate uses: `AnchorDetector.detectForTurn` used to pass content + role only, making the
+   * prune's inputs a strict superset -- safe in one direction (the prune can never retain an anchor
+   * the gate refused) but not the converse, which GAP-11-G measured as 1,330 resurrected anchors.
+   * Plan 11-27 gave the gate an optional `eventKind`, so the two now agree in both directions for
+   * any caller that knows the kind; a caller that does not still falls back to content + role, which
+   * remains a subset and therefore stays safe in the original direction. Deletes through an inline
    * `delete from anchors where id = ?` in the same `begin immediate` transaction -- never calls
    * `deleteAnchors`, which opens its own transaction and would nest. Never touches
    * canonical_events, turns, summaries, boxes, traces, proposals, or injections.
