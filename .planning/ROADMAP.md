@@ -432,7 +432,7 @@ Plans:
 ### Phase 12: Daemon Incremental Embedding
 
 **Goal**: The daemon embeds every newly contracted summary automatically, per device, without recomputing embeddings for the existing corpus and without ever syncing embeddings across devices.
-**Depends on**: Phase 10 (existing corpus already has vectors; incremental step only needs to handle new arrivals cleanly)
+**Depends on**: Phase 10 (the `memory backfill-embeddings` command). NOTE: Phase 10 shipped that command but it was never run against the live corpus, which held **zero** `summary_vectors` rows as of 2026-07-28. Phase 12 therefore both creates the baseline and keeps it current; the earlier "existing corpus already has vectors" wording was false and is corrected here.
 **Requirements**: REQ-043, REQ-045
 **Success Criteria**:
 
@@ -441,7 +441,17 @@ Plans:
   3. Embeddings never appear in any sync payload or outbox operation — a freshly paired device recomputes its own vectors locally from replicated canonical events rather than receiving them from a peer.
   4. Each device's vectors record embedder provider/model/version, so a device running a stale model relative to its peers is detectable.
 
-**Plans**: TBD
+**Plans**: 7 plans in 6 waves
+
+Plans:
+
+- [ ] 12-01-PLAN.md — Close GAP-12-A: one canonical embedder identity, used for both the missing-set query and every written vector row. (wave 1)
+- [ ] 12-02-PLAN.md — Close GAP-12-B: state-predicate the missing-set query in BOTH stores, add `listSummariesByIds`, and make `memory status` query the real identity with a real denominator. (wave 2)
+- [ ] 12-03-PLAN.md — The seam: post-commit embed stage in `ContractionRunner`, one process-lifetime embedder in the daemon, the SC3 never-sync negative test, and ADR 0052. (wave 2)
+- [ ] 12-04-PLAN.md — Bounded missing-set repair pass for the crash-between-commit-and-embed hole, wired as a failure-swallowing daemon dependency. (wave 3)
+- [ ] 12-05-PLAN.md — Stop the daemon, fresh `pre-phase12` backup, `memory embeddings enable` (the only network path), and the live pre-backfill measurement. (wave 4, owner-gated)
+- [ ] 12-06-PLAN.md — Full-scale rehearsal on clones: measured backfill cost, resume, idempotence. (wave 5)
+- [ ] 12-07-PLAN.md — Live backfill of 49,314 summaries, completeness verification, daemon restart with the incremental stage. (wave 6, owner-gated)
 
 ### Phase 13: Forward-Only Vector Trace Discovery
 
