@@ -211,3 +211,84 @@ F3 is a cost of *implementing* it, not an argument against it — the remedy is 
 
 Return to the planner for F1, F2, F3, and — since they are one-line edits in the same files — F4–F13.
 Nothing here changes the wave structure or the phase shape. Re-verify after revision.
+
+---
+
+# Re-check — revision `0ec1ded` (2026-07-28)
+
+Focused re-check of the deltas only. Everything established sound in the first pass was not re-derived.
+All source claims below were re-verified in the tree; two read-only probes were taken against
+`~/.memory/aaron.db` (`readOnly: true` — which does **not** migrate, since `sqlite-store.ts:195-198` gates
+`migrate()` on `!options.readOnly`).
+
+## Verdict
+
+**READY TO EXECUTE.** All 13 findings are closed. No blocker remains. One stale premise is noted below as
+an operational note, not a finding — it makes the phase safer, not riskier.
+
+## Fix-by-fix
+
+| # | Status | Evidence |
+|---|---|---|
+| F1 SC4 | **Closed** | ADR 0052 gains decision 5 recording the A3 reading pending owner confirmation (`12-03` Task 3), with the correct argument that the literal reading contradicts SC3. Mechanical half now testable twice: `12-02` Task 2 asserts the reported `model` contains `ea104dac…` as a substring; `12-05` Task 3 asserts it on live data. `12-07` Task 3 amends ROADMAP SC4 inline, dated, pointing at ADR 0052, and handles the not-yet-confirmed case explicitly. SC4 now has a criterion that can pass. |
+| F2 wiring | **Closed** | `12-04` Task 2 now always spreads `embeddingRepair: { runDue: async () => repairRunner?.runDue() }` reading `summaryEmbedder`; `12-03` Task 2 pins that variable name and records the synchronous-constructor/async-embedder shape at `daemon-command.ts:287,319-322,325-327` so the constraint is visible from both sides. Criterion restated as "no-ops when no embedder is resolved", asserted by a store spy showing zero queries, plus `resolveEmbedder` appearing exactly once. Implementable as written. |
+| F3 index | **Closed** | v4 appended to `MIGRATIONS` as `create index if not exists idx_summaries_state_id on summaries (json_extract(payload,'$.state'), id)`; v1–v3 byte-unchanged asserted via `git diff`; `user_version` 3→4 and re-open idempotence asserted; `explain query plan` recorded as an acceptance criterion, with `USE TEMP B-TREE FOR ORDER BY` pre-labelled as expected so it is not misread as a half-failure. Gated again on a clone in `12-06` and on live data in `12-05`. **`limit` does not change backfill semantics:** `backfill-embeddings-command.ts:64` passes no options, and the plan requires an omitted `limit` to reproduce today's unbounded behavior exactly, with a prefix-identity assertion in both stores. The rename to `remainingInBatch` is a good catch — with a limited query `ids.length === budget` means "at least this many". |
+| F4 | Closed | "Byte-unchanged" replaced by row-count invariance in `12-05`, `12-06`, with the mtime/WAL/index churn named explicitly. |
+| F5 | Closed as accepted limitation — see adjudication below. |
+| F6 | Closed | `deleteSummaryVectors(supersededSummaryIds)` added post-commit from `slice.supersessions`, ordered **after** the write so the tombstone wins when an id appears in both, with that case asserted. Ordering was decided rather than left to chance. |
+| F7 WAL | Closed | `-wal` checked in `12-05` Task 1, re-checked immediately before the clone in Task 2, and again in `12-06` Task 1; non-zero stops the plan. |
+| F8 rollback | Closed | Concrete sequence in `12-05` and `12-07`, with `mv` not `rm`, `-wal`/`-shm` moved alongside, and the correct judgement that a partial backfill is resumable and not a rollback trigger. |
+| F9 | Closed | `DifferingIdentityEmbedder` exported from `tests/embeddings/fixtures.ts` by `12-01`; `12-03` and `12-04` are required to import it and forbidden a local double. |
+| F10 | Closed | `listSummariesByIds` and the `limit` behavior both routed through the existing backend matrix at `tests/storage/summary-vectors.test.ts:66-93`. |
+| F11 | Closed | Repair pass invoked in **both** `drainOne` and `runOnce` (`daemon.ts:246-262`), asserted separately; `12-06`'s `memory daemon once` check now expects `persisted: 0` from a pass that actually ran. |
+| F12 | Closed | The false claim is corrected in place *and* labelled as the reason the index was nearly missed. |
+| F13 | Closed structurally — `12-03` moved to wave 3 / `depends_on: ["12-02"]` and `12-04` to wave 4, so the phase is now fully serial (7 plans, 7 waves; ROADMAP updated). Explicit staging discipline added to every plan's verification block. `12-04`'s `depends_on` dropped `12-02`, but the order is preserved transitively (04→03→02→01). |
+| F14 | Closed | Recorded as ADR 0052 decision 7. |
+
+## The structural change — no remaining unbacked open
+
+**No path in 12-01 through 12-05 opens the live database non-read-only before the `pre-phase12` backup
+exists.** 12-01–12-04 are code/test plans whose verifies are `vitest`/`typecheck`/`test -f`/greps; their
+store tests use `InMemoryStore` and temp-file `SqliteStore`. 12-05 Task 1 now forbids every `memory`
+subcommand against the live DB and verifies the stop via `ps`/`launchctl`/`ls`/`stat`; Task 2 clones;
+Task 3 owns the first open and treats the v4 migration as a measured step with a stated rollback.
+
+I checked the one path the plans could not control — a `KeepAlive` LaunchAgent relaunching the daemon on
+the new build between 12-02 landing and 12-05 Task 1, which would migrate the live corpus unbacked.
+`launch-agent.ts:48-51` does set `KeepAlive: true`, **but that risk does not exist here:**
+
+- no `com.conversational-memory.daemon.plist` in `~/Library/LaunchAgents/`
+- no daemon process (`ps` for `tsx`/`bin/memory`/`conversational-memory` is empty)
+- `daemon_lease` is **empty** and `pragma user_version` reads **3** (read-only probe)
+
+## Operational note (not a finding)
+
+`12-05` Task 1 is written to stop an *actively cycling* daemon ("`attempts: 4680`… do not assume it is
+idle"). That was true when CONTEXT was written; it is not true now — nothing is running and no LaunchAgent
+is installed. The task's acceptance criteria pass trivially. The executor should record "no daemon
+running, no plist installed, `daemon_lease` empty" as the expected outcome rather than hunt for a
+`launchctl` label that does not exist. A `readOnly: true` probe to confirm the empty lease is safe and does
+not migrate — Task 1's "`pragma user_version` NOT read yet — that requires an open" is imprecise on that
+point, though harmless.
+
+## F5 adjudication — the planner's correction is accepted
+
+Verified independently: `SummarySchema` (`src/domain/types.ts:104-129`) has `createdAt`, `version`,
+`lastAccessedAt` — and **no `updatedAt`**; `contraction-runner.ts:447` sets `version: 1` unconditionally.
+`lastAccessedAt` is a read-time field, not a write marker, so it is not a substitute. There is no monotonic
+field to compare a vector's `createdAt` against. **My suggested detector was not implementable and the
+correction is right.**
+
+"Accepted limitation" is the right disposition **for this phase** — inventing a heuristic here would be
+worse than the gap, and ADR 0052 decision 6 records it with the verified reason rather than as a vague
+caveat. But it should *also* be a follow-up item with a named owner: the failure mode is silent
+(`memory status` reports `missingVectors: 0` while a vector no longer matches its text), and the fix — a
+stored content hash or an `updatedAt` on `SummarySchema` — is a one-field schema change that belongs with
+the vector-native work in Phases 13–14. An ADR entry makes it discoverable; it does not make it owned.
+**Recommendation:** keep the ADR record as written and file a `bd` issue pointing at ADR 0052 decision 6,
+targeted at the phase that adds the field. Not a blocker for Phase 12.
+
+## Bottom line
+
+Execute. The revision closed every finding, and in three places (F3's `limit`, F6's write/delete ordering,
+F11's `runOnce`) it went further than the finding asked.
