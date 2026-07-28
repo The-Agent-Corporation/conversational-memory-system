@@ -113,8 +113,8 @@ A fresh installation is immediately useful when it can discover approved histori
 | REQ-052 | Phase 11 — Derivation Input Hygiene | Complete |
 | REQ-053 | Phase 11 — Derivation Input Hygiene | Complete |
 | REQ-054 | Phase 11 — Derivation Input Hygiene | Complete |
-| REQ-043 | Phase 12 — Daemon Incremental Embedding | Pending |
-| REQ-045 | Phase 12 — Daemon Incremental Embedding | In progress (12-01: provider/model/version recorded in one canonical composed identity) |
+| REQ-043 | Phase 12 — Daemon Incremental Embedding | In progress (12-02: bounded missing-set query — state-predicated, index-covered at 29 ms, `limit`-capable — plus `listSummariesByIds`; the daemon stage itself is 12-03/12-04) |
+| REQ-045 | Phase 12 — Daemon Incremental Embedding | In progress (12-01: provider/model/version recorded in one canonical composed identity; 12-02: `memory status` reports that identity with the revision, asserted, over an embeddable-only denominator) |
 | REQ-046 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
 | REQ-047 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
 | REQ-048 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
