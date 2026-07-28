@@ -23,8 +23,12 @@ The frozen query set (`11-RECALL-QUERIES.md`) is byte-unchanged. Only the measur
 | `before-v2` | `cp -c` clone of `~/.memory/aaron.db.pre-phase11` | `{compacted: 135366}` | Pre-hygiene. Original verified unchanged (4,962,574,336 bytes, 2026-07-26 19:26) before and after. |
 | `after-filter-v2` | `cp -c` clone of `~/.memory/aaron.db.pre-anchor-prune` | `{compacted: 50551, superseded: 87727}` | The post-rebuild / pre-anchor-prune state, recovered from the backup taken 2026-07-27 11:23. Original verified unchanged. |
 | `current-v2` | `~/.memory/aaron.db` (live, read-only) | `{compacted: 50551, superseded: 87727}` | Post anchor prune (26,643 anchors deleted, 19,268 retained). |
+| `final-v2` | `~/.memory/aaron.db` (live) | `{compacted: 49253, superseded: 89120}` | Post the owner-authorized live rebuild of 2026-07-28 (Plan 11-25 Task 3, `cb97c82`) at `hygiene-rules/v3`. Added by Plan 11-26. |
 
-All three columns were produced by the SAME v2 harness and ARE comparable with each other.
+All four columns were produced by the SAME v2 harness (`11-recall-probe.ts`, byte-unchanged since Plan
+11-19) against the SAME frozen query set (`11-RECALL-QUERIES.md`, byte-unchanged) and ARE comparable
+with each other — **with one qualification stated in "Comparability qualification" below, which affects
+the `product-unhygienic` column only.**
 None of them is comparable to any number in `11-RECALL-PROBE.md`.
 
 ## Totals
@@ -161,7 +165,250 @@ must answer with evidence before any remediation is chosen.
 
 ## Raw artifacts
 
-`probe-v2/before-v2.{json,md}`, `probe-v2/after-filter-v2.{json,md}`, `probe-v2/current-v2.{json,md}`.
+`probe-v2/before-v2.{json,md}`, `probe-v2/after-filter-v2.{json,md}`, `probe-v2/current-v2.{json,md}`,
+`probe-v2/final-v2.{json,md}`.
 Each JSON records `probeVersion`, the database path, summary counts by state, total elapsed, and per
 query the full `items[]` array with rank, kind, id, summaryIds, score, preview, classification and
 `markersFound`.
+
+---
+
+# `final-v2` — post-remediation measurement (Plan 11-26, 2026-07-28)
+
+**Run:** `2026-07-28T01:44:04Z`, 689,217.8 ms across 12 queries, against the live
+`~/.memory/aaron.db` at `hygiene-rules/v3`, `{compacted: 49253, superseded: 89120}`,
+embedder `deterministic/keyword-hash-v1`. Artifact: `probe-v2/final-v2.{json,md}`.
+
+**What changed in the corpus since `current-v2`** (per `11-REBUILD.md`, Task 3): the owner-authorized
+live `rebuild-derivations` run of 2026-07-28 (`cb97c82`), which applied all three GAP-11-E fixes at once
+via `hygiene-rules/v3` — H-0 (SC1 reversed: an isolated tool call now collapses instead of being kept
+verbatim), H-i (line-anchored `matchesEmbedded` rule matching), H-iii (the corpus reprocessed under the
+v2/v3 rules it had never seen). Active summaries 50,551 → 49,253; superseded 87,727 → 89,120; **anchors
+19,268 → 19,268, unchanged, zero resurrected.** No anchor was pruned, added, or altered between
+`current-v2` and `final-v2`. Every corpus-side delta below is therefore a **summary**-side delta.
+
+## The three predicates, reported separately
+
+Per `11-REMEDIATION-DECISION.md`'s addendum, which is the recorded acceptance target and is quoted
+verbatim here:
+
+> **SC7 should be judged on tool-call + product-unhygienic.** `probe-suspicious` is advisory: each hit
+> must be inspected individually before it counts against the criterion, because the fix that would
+> "close" it is the over-matching one this phase deliberately rejected.
+
+| figure | predicate | `final-v2` items | `final-v2` queries |
+|---|---|---:|---:|
+| **tool-call** | `containsToolCallText` (`[Tool call: ` substring) | **0 / 33** | **0 / 12** |
+| **product-unhygienic** | `classification.derivationClass === "synthetic_injected"` | **2 / 33** | **2 / 12** (Q1, Q3) |
+| *probe-suspicious (advisory)* | `markersFound.length > 0` | *4 / 33* | *3 / 12* (Q1, Q2, Q3) |
+
+Both tally forms, as measured, with no rounding and no framing:
+
+- **queries affected:** tool-call **0/12**; product-unhygienic **2/12**; probe-suspicious **3/12**.
+- **total unhygienic items:** tool-call **0**; product-unhygienic **2**; probe-suspicious **4**, out of
+  **33 packet items across 12 queries**.
+
+The **2 product-unhygienic items are one and the same anchor row**, retrieved by two different queries.
+There is exactly **one** distinct offending object in the entire packet set.
+
+**No union figure is reported as a headline.** The old "6/12 union" mixed two standards and
+`11-REMEDIATION-DECISION.md` forbids using it unqualified. For completeness: the union of all three
+predicates over `final-v2` is Q1, Q2, Q3 = **3/12**, unioning predicates that do not share a standard —
+`probe-suspicious` deliberately over-matches relative to the other two.
+
+## Per-query detail — `final-v2`
+
+Columns: packet items · items containing tool-call text · product-unhygienic items · probe-suspicious
+items · ranks flagged by the probe's combined `unhygienicRanks` · kind of the top item · elapsed.
+
+| Q | items | tool-call | product-unhyg | probe-susp | probe ranks | top kind | elapsed ms |
+|---|---|---|---|---|---|---|---|
+| Q1 | 3 | 0 | 1 | 1 | [0] | anchor | 98,614.5 |
+| Q2 | 3 | 0 | 0 | 2 | [1, 2] | summary | 22,960.8 |
+| Q3 | 3 | 0 | 1 | 1 | [0] | anchor | 11,102.5 |
+| Q4 | 3 | 0 | 0 | 0 | [] | summary | 49,480.1 |
+| Q5 | 1 | 0 | 0 | 0 | [] | anchor | 11,717.4 |
+| Q6 | 3 | 0 | 0 | 0 | [] | anchor | 128,147.8 |
+| Q7 | 3 | 0 | 0 | 0 | [] | anchor | 120,052.3 |
+| Q8 | 3 | 0 | 0 | 0 | [] | anchor | 48,086.0 |
+| Q9 | 2 | 0 | 0 | 0 | [] | anchor | 97,600.6 |
+| Q10 | 3 | 0 | 0 | 0 | [] | summary | 36,209.7 |
+| Q11 | 3 | 0 | 0 | 0 | [] | summary | 54,385.7 |
+| Q12 | 3 | 0 | 0 | 0 | [] | summary | 10,860.3 |
+
+## Four-column totals, one harness, all four arms
+
+| arm | elapsed ms | items | tool-call items | product-unhyg items | probe-susp items | Q tool-call | Q product-unhyg | Q probe-susp |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `before-v2` | 2,940,407.9 | 36 | 19 (52.8%) | 0 | 6 | 9/12 | 0/12 | 4/12 |
+| `after-filter-v2` | 1,044,483.0 | 34 | 22 (64.7%) | 2 | 3 | 10/12 | 2/12 | 3/12 |
+| `current-v2` | 762,497.0 | 33 | 6 (18.2%) | 0 | 6 | 4/12 | 0/12 | 4/12 |
+| **`final-v2`** | **689,217.8** | **33** | **0 (0.0%)** | **2** | **4** | **0/12** | **2/12** | **3/12** |
+
+Named queries per predicate per arm:
+
+| arm | tool-call | product-unhygienic | probe-suspicious |
+|---|---|---|---|
+| `before-v2` | Q1 Q3 Q4 Q5 Q7 Q8 Q9 Q10 Q12 | — | Q2 Q4 Q5 Q12 |
+| `after-filter-v2` | Q1 Q2 Q3 Q4 Q6 Q7 Q9 Q10 Q11 Q12 | Q7 Q8 | Q7 Q8 Q12 |
+| `current-v2` | Q1 Q3 Q4 Q10 | — | Q2 Q3 Q4 Q12 |
+| **`final-v2`** | **—** | **Q1 Q3** | **Q1 Q2 Q3** |
+
+Note the totals table in the earlier part of this document reports `before-v2`/`after-filter-v2`/
+`current-v2` under the column headings `items w/ tool-call`, `unhygienic items`, `Q w/ unhygienic`.
+Its `unhygienic` columns are the probe's COMBINED predicate (`synthetic_injected` OR
+`markersFound.length > 0`), which is why its `unhygienic items` for `current-v2` reads 6 while this
+table splits the same 6 into 0 product-unhygienic + 6 probe-suspicious. Same underlying data, decomposed.
+
+### Comparability qualification — the `product-unhygienic` column
+
+**This is a real limitation and it is stated rather than smoothed over.** The probe computes
+`classification` and `markersFound` with the product code **as it exists at run time**, not as it
+existed at corpus-write time. The first three arms ran at `hygiene-rules/v2`; `final-v2` ran at `v3`.
+
+- The **tool-call** column is fully comparable across all four arms: `TOOL_CALL_PREFIX` is a literal
+  substring test and did not change.
+- The **probe-suspicious** column is fully comparable: `git diff 478f8fa 6f17270 -- src/topic/derivation-hygiene.ts`
+  confirms v2 → v3 changed only the matching *strategy* (`startsWith` → `matchesEmbedded`); the
+  `SYNTHETIC_MARKERS` list itself is unchanged, and `markersFound` is a bare `includes` over that list.
+- The **product-unhygienic** column is **not strictly comparable**: v3's `matchesEmbedded` is a
+  superset of v2's leading-anchored match, so a v3 hit is not proof the same item would have been a v2
+  hit. For the one offender this actually matters for, the ambiguity is resolved by inspection rather
+  than left open — see below.
+
+## Per-item attribution of every flagged item in `final-v2`
+
+| Q | rank | kind | id | tool-call | classification | ruleId | markersFound |
+|---|---|---|---|---|---|---|---|
+| Q1 | 0 | anchor | `anchor_personal_turn_event_1a2df6be…_decision` | false | **synthetic_injected** | `task-notification` | `['task-notification']` |
+| Q2 | 1 | summary | `historical_summary_72ee7793622e…` | false | conversational | — | `['silent-sentinel']` |
+| Q2 | 2 | summary | `historical_summary_b8edf3787d49…` | false | conversational | — | `['silent-sentinel']` |
+| Q3 | 0 | anchor | `anchor_personal_turn_event_1a2df6be…_decision` | false | **synthetic_injected** | `task-notification` | `['task-notification']` |
+
+Q1 rank 0 and Q3 rank 0 are **the same anchor id**.
+
+### Inspection of the 1 product-unhygienic object (required before it counts)
+
+`anchor_personal_turn_event_1a2df6becaf54cc1bd30060f77fd42070ceab4f5419bf77ad5f28f6e1fc9712b_decision`,
+7,153 chars, `createdAt: 2026-07-19T19:10:26.265Z`. Its content begins at offset 0 with:
+
+```
+<task-notification>
+<task-id>ad9fcda454611c95c</task-id>
+<tool-use-id>toolu_01WJGjq9visnXBJrc3NTEQZ1</tool-use-id>
+<output-file>/private/tmp/claude-501/…/tasks/ad9fcda454611c95c.output</output-file>
+<status>completed</status>
+<summary>Agent "Execute plan 08 of phase 06" finished</summary>
+```
+
+**This is genuine harness scaffolding, not prose about scaffolding.** It is a true positive and counts
+as residual. Four facts establish where it came from, each checked directly rather than inferred:
+
+1. **It is not summary-derived.** `kind: anchor`, `summaryIds: []`. GAP-11-E is a summary-path gap; this
+   object is not on that path.
+2. **It is not rebuild damage.** It is present in `~/.memory/aaron.db.pre-rebuild-v3` and in
+   `~/.memory/aaron.db.pre-anchor-prune` — it predates both the rebuild and the anchor prune, and
+   survived 11-18's prune because that prune classified under `hygiene-rules/v1`, in which the
+   `task-notification` rule did not yet exist (Plan 11-20 added it in v2).
+3. **Its appearance is a ranking change, not a classifier artifact.** The marker sits at offset 0, so
+   v2's leading-anchored matcher would have classified it `synthetic_injected` too — the v2→v3 matcher
+   widening is not what surfaced it. It simply was **not in `current-v2`'s packets at all**: in
+   `current-v2`, Q1 rank 0 was a different anchor and Q3's three items were all summaries. The rebuild
+   rewrote or eliminated the summaries that previously outranked it, and it rose to rank 0.
+4. **It is one of the known 350.** `11-REBUILD.md`'s second finding records exactly 350 anchors in the
+   live corpus that classify `conversational` under v1 but `synthetic_injected` under v3, unchanged in
+   count by the rebuild and already carried into Plan 11-14 as open owner decision (a).
+
+**Consequence worth stating plainly rather than burying:** the top-ranked memory for Q1 and Q3 is raw
+`<task-notification>` harness scaffolding. Tool-call text is gone from the packets; this particular
+shape of harness text is not.
+
+### Inspection of the 2 probe-suspicious-only items (advisory, per the recorded target)
+
+Both are Q2 summaries flagged `['silent-sentinel']` by the probe's bare `includes` scan while the
+product classifies them `conversational`. Every occurrence of the `[SILENT]` marker in both was located
+and its line printed:
+
+| item | occurrences | at a line start? | context |
+|---|---:|---|---|
+| `historical_summary_72ee7793622e…` (33,658 chars) | 4 | **0 of 4** | e.g. `` | D11 | **Noise suppression** … | ~40/79 spans were silent `[SILENT]` cron noise; … | `` — a markdown table cell; the other three are backtick-quoted mentions inside bullet prose about noise-suppression design |
+| `historical_summary_b8edf3787d49…` (18,650 chars) | 2 | **0 of 2** | the same D11 table row, and `` - **Light:** … collapse/dedupe repetitive automated `[SILENT]` / heartbeat runs … `` |
+
+**These are exactly the shape Plan 11-24 predicted and the expected residue, not a defect.** They are
+design prose *discussing* the `[SILENT]` sentinel, always backtick-quoted and never at a line start, so
+the product's line-anchored classifier correctly leaves them `conversational`. Making the probe's
+verdict here "pass" would require the unanchored mid-sentence matching this phase deliberately
+rejected, which would suppress legitimate memory. **They do not count against SC7** under the recorded
+target, and no follow-on work is proposed for them.
+
+## Compliant-by-design vs. genuinely residual
+
+The acceptance target changed under this phase, so the split has to be read against the *revised* target,
+not 11-CONTEXT.md's original one. `11-REMEDIATION-DECISION.md` Decision 1 **reversed ROADMAP SC1** as an
+explicit owner override: "**Revise SC1 so an isolated tool call is collapsed rather than kept
+verbatim**, closing H-0." **The isolated-tool-call compliant-by-design class therefore no longer
+exists** — it was not merely unhit in this run, it was abolished, and the measurement confirms the
+reversal took effect (0 tool-call items, from 6).
+
+| class | count | items |
+|---|---:|---|
+| compliant-by-design (isolated tool call, SC1's old carve-out) | **0** | the carve-out was removed by the SC1 reversal; nothing is excused under it |
+| **genuinely residual** (counts against the target) | **1 distinct object, 2 packet items** | the `task-notification` anchor at Q1 r0 / Q3 r0 |
+| advisory-only, inspected and dismissed | 2 items | the two Q2 `[SILENT]`-mentioning summaries |
+
+## Per-query delta, `current-v2` → `final-v2` — improvements and regressions together
+
+Read `tc / pu / ps` = tool-call / product-unhygienic / probe-suspicious item counts.
+
+| Q | `current-v2` tc/pu/ps (items) | `final-v2` tc/pu/ps (items) | Δtc | Δpu | Δps | attribution |
+|---|---|---|---:|---:|---:|---|
+| Q1 | 2/0/0 (3) | 0/1/1 (3) | **−2** | **+1** | **+1** | H-0/H-iii cleaned two tool-call summaries; **regression**: a pre-existing `task-notification` anchor rose to rank 0 in their place |
+| Q2 | 0/0/2 (3) | 0/0/2 (3) | 0 | 0 | 0 | unchanged — the two `[SILENT]`-discussing summaries, the expected H-i residue |
+| Q3 | 2/0/1 (3) | 0/1/1 (3) | **−2** | **+1** | 0 | as Q1: two tool-call summaries cleaned, the same anchor surfaced in their place |
+| Q4 | 1/0/1 (3) | 0/0/0 (3) | −1 | 0 | −1 | H-0 collapsed the tool-call summary; the `task-notification` summary at rank 2 was replaced by a clean one (H-iii) |
+| Q5 | 0/0/0 (1) | 0/0/0 (1) | 0 | 0 | 0 | already clean |
+| Q6 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | already clean |
+| Q7 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | already clean |
+| Q8 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | already clean |
+| Q9 | 0/0/0 (2) | 0/0/0 (2) | 0 | 0 | 0 | already clean |
+| Q10 | 1/0/0 (3) | 0/0/0 (3) | −1 | 0 | 0 | H-0/H-iii cleaned the tool-call summary |
+| Q11 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | already clean |
+| Q12 | 0/0/2 (3) | 0/0/0 (3) | 0 | 0 | −2 | H-iii: both `task-notification` summaries replaced by clean ones — this is the `<task-notification>` scaffolding GAP-11-E anomaly 2 flagged, now gone from the summary path |
+
+**The result is mixed and is reported mixed.** Six tool-call items were eliminated across Q1, Q3, Q4 and
+Q10 and four probe-suspicious summary items across Q4 and Q12, with **zero tool-call items anywhere in
+the packet set**. Against that, **Q1 and Q3 each regressed by one product-unhygienic item** — the same
+pre-existing `task-notification` anchor, previously outranked by the tool-call summaries the rebuild
+cleaned, now winning rank 0 in both. The corpus contains no more of that anchor than it did before; the
+cleanup changed what wins ranking, and what won next was already dirty.
+
+Direct evidence of the rebuild rewriting a summary in place: `historical_summary_069babea…` appears at
+Q1 in both arms under the same id, `containsToolCallText: true` in `current-v2` and `false` in
+`final-v2` — the SC1 reversal collapsing an isolated tool call inside an existing summary id, exactly as
+`11-REBUILD.md` describes upsert-on-deterministic-id behaving.
+
+**Elapsed continued to fall**: 2,940,408 → 1,044,483 → 762,497 → **689,218 ms**.
+
+## Instrument integrity
+
+`11-RECALL-QUERIES.md` and `11-recall-probe.ts` are **byte-unchanged** — `git diff --exit-code` on both
+is clean, verified before the run and after it. Neither was touched by this plan.
+
+`~/.memory/aaron.db` was `stat`-checked before and after: inode **171672602** and size
+**5,031,448,576 bytes** identical on both sides. Its **mtime advanced** (2026-07-27T21:36:32 →
+21:55:36 local), which is expected and not incidental damage: `prepareInjection` writes by design
+(`saveInjection`, summary access bookkeeping, deferred-revival promotion), the probe's header documents
+this, and `current-v2` was produced against the live database the same way. No backup was read from,
+written to, moved, or deleted.
+
+## Secret scanning (GAP-11-F)
+
+`probe-v2/final-v2.json` was scanned before staging and **contained the GAP-11-F plaintext Mission
+Control login in a summary preview**, reproduced faithfully into the rebuilt summaries from the
+untouched canonical events, exactly as `11-REBUILD.md` warned it would be. The password was replaced
+with `[REDACTED]` in the committed artifact (1 occurrence; the file still parses as JSON). The
+`onrender.com` 64-hex API key did not appear in either artifact. A follow-up sweep for vendor key
+prefixes (`sk-`, `ghp_`, `AKIA`, `xox*`, JWTs), bare 32/40/64-hex runs, and `key|token|secret|password`
+assignments is clean on both files — the one bare 64-hex string in the JSON is the public Bun installer
+SHA-256, not a credential. The underlying corpus is unremediated; only the committed artifacts were
+redacted.
