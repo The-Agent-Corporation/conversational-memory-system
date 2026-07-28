@@ -124,6 +124,26 @@ diff -r docs       <restore-test>/docs        -> IDENTICAL   (excluding .DS_Stor
 preserve. Everything not tracked is in the ignored set enumerated above, and all of it is carried in
 the full filesystem copy.
 
+#### 5. Refreshed backup at the true pre-rewrite HEAD
+
+Recording this evidence created a commit (`f24268f`), which put the backups above one commit behind
+the state the rewrite will actually launch from. All four artifacts were therefore regenerated and
+re-verified at the new HEAD:
+
+| Artifact | Path | Result |
+|---|---|---|
+| Bundle | `<scratchpad>/backup/repo-backup-pre-rewrite.bundle` | 22,355,173 bytes; SHA-256 `74982a450d82870cfc8e9beffa8728c0216daa2f43518d5a689eaef481af80d1`; `git bundle verify` → "records a complete history" |
+| Restore test | `<scratchpad>/backup/restore-test-pre-rewrite` | HEAD `f24268fa88c733af9269d4e6d5fd09b6b92ee412`, tree `df7405300af147b95cf9d881367b0ba0100004c6`, 543 commits, clean checkout — all match live exactly |
+| Filesystem copy | `<scratchpad>/backup/repo-fullcopy-pre-rewrite` | 908M, HEAD and tree match live, clean |
+| Prior generation | `repo-backup.bundle`, `repo-fullcopy`, `restore-test` (@ `394e869`) | retained, not deleted |
+
+Both generations are kept. `00de5a3..HEAD` is now **55** commits (54 + this evidence commit).
+
+**Breaking the regress:** each new commit invalidates the previous backup by one commit. Rather than
+chase it, Task 2 takes one final `git bundle create --all` + `git bundle verify` immediately before
+invoking `git-filter-repo`, with no commit in between, and records its hash. That final bundle is the
+authoritative restore point.
+
 ### Restorability statement
 
 Two independent restore paths exist, and each was exercised or verified:
