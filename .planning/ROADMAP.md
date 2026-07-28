@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 22/26 plans executed
+**Plans:** 24/27 plans executed
 
 Plans:
 **Wave 1**
@@ -418,10 +418,11 @@ Plans:
 
 **Wave 23** *(blocked on Wave 22)*
 
-- [ ] 11-25-PLAN.md — Live-corpus remediation: clone rehearsal, fresh backup, owner authorization, receipt (`11-REBUILD.md`).
+- [x] 11-25-PLAN.md — Live-corpus remediation: clone rehearsal, fresh backup, owner authorization, receipt (`11-REBUILD.md`).
 
 **Wave 24** *(blocked on Wave 23)*
 
+- [x] 11-27-PLAN.md — GAP-11-G closure: gate the rebuild path's anchor minting and make the forward gate eventKind-aware; re-measure resurrection on a clone (result: 0).
 - [ ] 11-26-PLAN.md — Final frozen-probe run against the remediated corpus, real tally recorded, GAP-11-E disposition.
 
 **Wave 25** *(blocked on Wave 24 — re-waved from 13, then 16; SC7 judgement needs 11-26's corrected evidence)*

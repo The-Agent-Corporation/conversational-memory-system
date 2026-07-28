@@ -171,3 +171,93 @@ post-prune recall quality.
 | REQ-053 (derivation-input hygiene, cleanup of pre-gate anchor residue) | `commitUnhygienicAnchorPrune` (Plan 11-16, `src/storage/{sqlite,in-memory}-store.ts`) |
 | REQ-054 (resumable/idempotent safety properties applied to cleanup) | Id-cursor resumability (`listAnchorIds`) and idempotent completion, tested in `tests/storage/anchor-hygiene-prune.test.ts` |
 | GAP-11-D | This ADR; forward gate landed in `4d17978`; store-layer removal path built by Plan 11-16; live execution against the real corpus remains owner-gated and out of this plan's scope |
+
+---
+
+## Addendum — 2026-07-28 (GAP-11-G): anchors were minted by TWO implementations, and only one was gated
+
+This addendum records a defect in the decision above, not a change to it. Nothing in the original
+text is retracted; the gate, the prune, and the "no lifecycle" position all stand.
+
+### What was wrong
+
+The ADR's Context section says the forward gate was missing at
+`src/integrations/hermes/adapter.ts:89` and describes landing it in `AnchorDetector.detectForTurn`.
+That was accurate, and incomplete: **`AnchorDetector` was never the only anchor minter.**
+`src/daemon/contraction-runner.ts` carried its own private `anchorsForTurn` — the same five keyword
+regexes, the same `anchor_${turn.id}_${anchorType}` id scheme — which never imported `AnchorDetector`
+and therefore never ran the GAP-11-D gate. The gate covered the live Hermes bridge and nothing else.
+The rebuild/contraction path's only hygiene protection was a separate helper,
+`survivingDerivationIndices`, which re-implemented `computeSegments`' run walk and still admitted an
+isolated single tool call (`if (currentRun.length === 1) survivors.add(...)`) — the pre-reversal SC1
+carve-out that Plan 11-24 had already removed from `derivationContents`. The call-site comment above
+it still described that carve-out verbatim, which is how the mismatch survived Plan 11-24's review.
+
+A second, independent defect: the gate classified on `(content, role)` while
+`commitUnhygienicAnchorPrune` classifies on `(content, eventKind, role)`. This ADR recorded that
+asymmetry as safe because the prune's inputs are a strict superset — true, and it only defends one
+direction. The converse was open: an event with `eventKind: "tool_call"` whose content *contains*
+`[Tool call: ` without *starting* with it is `tool_activity` to the prune and `conversational` to the
+gate, so the gate minted precisely the anchors the prune deletes.
+
+### What it cost — measured, not projected
+
+Plan 11-25's rehearsal ran `rebuild-derivations` on an APFS clone of the live corpus and found that
+**1,330 of the 26,643 anchors Plan 11-18 permanently deleted came back**, every one carrying raw
+`[Tool call: …]` payload text. Measured at id level: the deleted set was reconstructed by
+differencing `~/.memory/aaron.db.pre-anchor-prune` (45,911 ids) against live (19,268 ids), yielding
+exactly 26,643 — matching 11-18's `prunedCount` receipt — then intersected with the post-rebuild
+anchor ids. The product's own classifier agreed independently: `tool_activity: 1330` on the rebuilt
+clone versus `0` on live. Because of this the owner-authorized live rebuild was **stopped before it
+ran**; see `.planning/phases/11-derivation-input-hygiene/11-REBUILD.md`.
+
+This is the concrete counterexample to a claim in the Recovery section above: "anchors re-derive
+automatically on subsequent contraction, since `AnchorDetector.detectForTurn` runs against every
+ingested turn." Re-derivation on the contraction path did **not** go through `detectForTurn` at all,
+so it re-derived *ungated*. Forward recovery was, for that path, forward re-contamination.
+
+### The fix (Plan 11-27)
+
+1. **One minter.** `anchorsForTurn` is now a single exported pure function in
+   `src/anchors/anchor-detector.ts`. `AnchorDetector.detectForTurn` is that function plus a save;
+   `ContractionRunner` calls the same function instead of its own copy. There is no longer a second
+   implementation to leave ungated.
+2. **One rule.** `survivingDerivationIndices` no longer re-implements the run walk; it delegates to
+   the shared `drivesTopicLabel` predicate, so an isolated tool call is excluded on the anchor side
+   exactly as Plan 11-24 excluded it on the summary side. The stale call-site comment is corrected.
+3. **Symmetric classification inputs.** `detectForTurn` takes an optional `eventKind`, supplied by
+   the contraction path (which has a `CanonicalEvent`) and by the Hermes seam. The gate and the
+   prune now agree in both directions for any caller that knows the kind; a caller that does not
+   still classifies on `(content, role)`, which remains a subset and stays safe in the original
+   direction. The superset note at `src/storage/sqlite-store.ts` is updated accordingly.
+
+### Verification
+
+A full `rebuild-derivations` on a fresh `cp -c` clone of the live corpus, 2026-07-28, at commit
+`cafc8e7`, using the same id-level differencing:
+
+| set | Plan 11-25 (pre-fix) | Plan 11-27 (post-fix) |
+|---|---:|---:|
+| anchors on the clone after rebuild | 20,598 | **19,268** |
+| pruned ∩ post-rebuild (**resurrected**) | **1,330** | **0** |
+| pre-rebuild live anchors dropped by the rebuild | 0 | 0 |
+| brand-new anchors never seen before | 0 | 0 |
+| classifier `tool_activity` on the rebuilt clone | 1,330 | **0** |
+
+The rebuilt clone's anchor id set is now identical to the live corpus's. Summary figures are
+unchanged from the 11-25 rehearsal (active 50,551 → 49,253, superseded 87,727 → 89,120, total
+138,278 → 138,373), confirming the fix touched anchors only. `~/.memory/aaron.db` was never opened
+for writing and is `stat`-identical before and after.
+
+### Still open — the 350
+
+Separately, 350 anchors **already in the live corpus** classify `synthetic_injected` under
+`hygiene-rules/v3` while they were `conversational` under v1 — Plan 11-24's line-anchored embedded
+marker matching (H-i) detecting scaffolding v1 could not see. They are not rebuild damage: they are
+present on an unrebuilt clone, they are disjoint from the 1,330, and the post-fix rebuild leaves the
+count at exactly 350. **Plan 11-27 does not prune them and takes no position on whether it should.**
+Both readings are live: they are genuine v3-detectable scaffolding residue that a second
+`prune-unhygienic-anchors --apply` run would remove, or some fraction is prose that merely quotes a
+marker at the start of a line, which is exactly the false positive the conservative anchoring in
+`matchesEmbedded` exists to avoid. Per Plan 11-24's own analysis these should be inspected
+individually before any second prune. **Owner decision, deliberately left open.**

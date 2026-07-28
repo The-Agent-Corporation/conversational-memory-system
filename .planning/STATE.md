@@ -5,14 +5,14 @@ milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 27
 status: executing
-stopped_at: "Plan 11-22 complete -- GAP-11-E root cause: three distinct causes (H-0 by-design, H-i rule-matching defect, H-iii stale derivation). rebuild-derivations fixes H-iii only. No product code changed, no database written. Next: Plan 11-23 (owner decision)."
-last_updated: "2026-07-28T00:15:30.207Z"
+stopped_at: "Plan 11-27 complete -- GAP-11-G closed. Two anchor minters unified into one gated anchorsForTurn; forward gate now eventKind-aware. Measured on a fresh clone: a full rebuild resurrects 0 of the 26,643 anchors Plan 11-18 deleted (was 1,330). Live corpus untouched. Next: re-run Plan 11-25's live rebuild (stop condition (a) now clears), then 11-26."
+last_updated: "2026-07-28T01:23:26.656Z"
 last_activity: 2026-07-28
 progress:
   total_phases: 15
   completed_phases: 8
-  total_plans: 90
-  completed_plans: 86
+  total_plans: 91
+  completed_plans: 88
   percent: 53
 ---
 
@@ -57,8 +57,8 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-28T00:15:24.856Z
-**Stopped at:** Plan 11-22 complete -- GAP-11-E root cause: three distinct causes (H-0 by-design, H-i rule-matching defect, H-iii stale derivation). rebuild-derivations fixes H-iii only. No product code changed, no database written. Next: Plan 11-23 (owner decision).
+**Last session:** 2026-07-28T01:23:18.384Z
+**Stopped at:** Plan 11-27 complete -- GAP-11-G closed. Two anchor minters unified into one gated `anchorsForTurn`; forward gate now eventKind-aware. Measured on a fresh clone: a full rebuild resurrects 0 of the 26,643 anchors Plan 11-18 deleted (was 1,330). Live corpus untouched. Next: re-run Plan 11-25's live rebuild (stop condition (a) now clears), then 11-26.
 **Resume file:** None
 
 ## Performance Metrics
@@ -85,6 +85,7 @@ progress:
 | Phase 11 P20 | ~40min | 2 tasks | 5 files |
 | Phase 11 P22 | 35min | 3 tasks | 5 files |
 | Phase 11 P24 | 65min | 2 tasks | 9 files |
+| Phase 11 P27 | 30min | 3 tasks | 8 files |
 
 ## Decisions
 
@@ -140,6 +141,7 @@ progress:
 - [Phase 11]: GAP-11-E H-0 fixed by reversing ROADMAP SC1 (owner override 2026-07-27): an isolated tool call now collapses via collapseText like any run. SC1/SC3 amended in place, ADR 0048 addendum added, 11-CONTEXT.md decision marked superseded.
 - [Phase 11]: GAP-11-E H-iii confirmed ready with no code change: PROCESSOR_VERSION already embeds HYGIENE_RULE_VERSION (now hygiene-rules/v3), so the next rebuild-derivations run applies all three GAP-11-E fixes together.
 - [Phase 11]: Corpus-wide H-0 blast radius measured read-only via cp -c clone: 15,996 isolated tool-call events (vs. 5 traced by the 12-query probe). Old 135,366->55,930/228.9MB->77.6MB sim targets retired; republished as 110,308/74.0MB (raw) and 49,253/64.6MB (RECOMMENDED) under hygiene-rules/v3.
+- [Phase ?]: Plan 11-27: unified the two anchor minters into one gated anchorsForTurn and gave the forward gate an optional eventKind, so gate and prune agree in both directions (GAP-11-G closed; rebuild resurrection count 0)
 
 ## Current Position
 
