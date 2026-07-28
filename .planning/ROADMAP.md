@@ -441,17 +441,17 @@ Plans:
   3. Embeddings never appear in any sync payload or outbox operation — a freshly paired device recomputes its own vectors locally from replicated canonical events rather than receiving them from a peer.
   4. Each device's vectors record embedder provider/model/version, so a device running a stale model relative to its peers is detectable.
 
-**Plans**: 7 plans in 6 waves
+**Plans**: 7 plans in 7 waves
 
 Plans:
 
 - [ ] 12-01-PLAN.md — Close GAP-12-A: one canonical embedder identity, used for both the missing-set query and every written vector row. (wave 1)
-- [ ] 12-02-PLAN.md — Close GAP-12-B: state-predicate the missing-set query in BOTH stores, add `listSummariesByIds`, and make `memory status` query the real identity with a real denominator. (wave 2)
-- [ ] 12-03-PLAN.md — The seam: post-commit embed stage in `ContractionRunner`, one process-lifetime embedder in the daemon, the SC3 never-sync negative test, and ADR 0052. (wave 2)
-- [ ] 12-04-PLAN.md — Bounded missing-set repair pass for the crash-between-commit-and-embed hole, wired as a failure-swallowing daemon dependency. (wave 3)
-- [ ] 12-05-PLAN.md — Stop the daemon, fresh `pre-phase12` backup, `memory embeddings enable` (the only network path), and the live pre-backfill measurement. (wave 4, owner-gated)
-- [ ] 12-06-PLAN.md — Full-scale rehearsal on clones: measured backfill cost, resume, idempotence. (wave 5)
-- [ ] 12-07-PLAN.md — Live backfill of 49,314 summaries, completeness verification, daemon restart with the incremental stage. (wave 6, owner-gated)
+- [ ] 12-02-PLAN.md — Close GAP-12-B: state-predicate the missing-set query in BOTH stores plus a schema v4 covering index, add `listSummariesByIds` and a `limit`, and make `memory status` query the real identity with a real denominator. (wave 2)
+- [ ] 12-03-PLAN.md — The seam: post-commit embed stage in `ContractionRunner`, one process-lifetime embedder in the daemon, the SC3 never-sync negative test, and ADR 0052. (wave 3)
+- [ ] 12-04-PLAN.md — Bounded missing-set repair pass for the crash-between-commit-and-embed hole, wired as a failure-swallowing daemon dependency. (wave 4)
+- [ ] 12-05-PLAN.md — Stop the daemon, fresh `pre-phase12` backup, `memory embeddings enable` (the only network path), and the live pre-backfill measurement. (wave 5, owner-gated)
+- [ ] 12-06-PLAN.md — Full-scale rehearsal on clones: measured backfill cost, resume, idempotence. (wave 6)
+- [ ] 12-07-PLAN.md — Live backfill of 49,314 summaries, completeness verification, daemon restart with the incremental stage. (wave 7, owner-gated)
 
 ### Phase 13: Forward-Only Vector Trace Discovery
 
