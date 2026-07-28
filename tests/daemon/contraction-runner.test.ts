@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { ContractionRunner } from "../../src/daemon/contraction-runner.js";
 import { ProposalScheduler } from "../../src/daemon/proposal-scheduler.js";
-import type { ContractionJob, WriteAuthority } from "../../src/daemon/types.js";
+import type { CommitContractionSliceInput, ContractionJob, WriteAuthority } from "../../src/daemon/types.js";
 import type { CanonicalEvent, MemorySource, Person } from "../../src/domain/canonical.js";
 import type { SourceGrant } from "../../src/domain/source-lifecycle.js";
+import type { Embedder } from "../../src/embeddings/embedder.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
+import type { SummaryVectorRecord } from "../../src/storage/memory-store.js";
+import { DifferingIdentityEmbedder } from "../embeddings/fixtures.js";
 import { HYGIENE_RULE_VERSION, TOOL_CALL_PREFIX } from "../../src/topic/derivation-hygiene.js";
 import { FIXED_NOW, FakeDaemonClock, FaultBoundaryInjector } from "./fixtures.js";
 
@@ -1108,3 +1111,398 @@ async function derivationFingerprint(store: InMemoryStore) {
 function unique(items: Array<{ id: string }>): boolean {
   return new Set(items.map((item) => item.id)).size === items.length;
 }
+
+// ---------------------------------------------------------------------------
+// Plan 12-03 — the post-commit embed stage (REQ-043, ADR 0052)
+// ---------------------------------------------------------------------------
+
+interface EmbedStageHooks {
+  /**
+   * Runs against the commit input AFTER it is delegated and before the embed stage reads it, so a
+   * test can inject an in-slice condition the commit validator would otherwise reject.
+   */
+  afterCommit?: (input: CommitContractionSliceInput) => void;
+  /** Appends to a shared log so a test can assert the write-then-delete ordering. */
+  calls?: string[];
+  /** Makes `saveSummaryVectors` reject, exercising the stage's store-failure path. */
+  failSave?: boolean;
+}
+
+/**
+ * A thin passthrough over `InMemoryStore` used ONLY to observe or perturb the embed stage.
+ * It never reimplements store behavior — every method delegates to the real store bound to itself.
+ */
+function embedStageStore(store: InMemoryStore, hooks: EmbedStageHooks = {}): InMemoryStore {
+  return new Proxy(store, {
+    get(target, property) {
+      if (property === "commitContractionSlice" && hooks.afterCommit) {
+        return async (input: CommitContractionSliceInput) => {
+          const checkpoint = await target.commitContractionSlice(input);
+          hooks.afterCommit!(input);
+          return checkpoint;
+        };
+      }
+      if (property === "saveSummaryVectors") {
+        return async (records: SummaryVectorRecord[]) => {
+          hooks.calls?.push("save");
+          if (hooks.failSave) throw new Error("synthetic saveSummaryVectors failure");
+          return target.saveSummaryVectors(records);
+        };
+      }
+      if (property === "deleteSummaryVectors") {
+        return async (ids: string[]) => {
+          hooks.calls?.push("delete");
+          return target.deleteSummaryVectors(ids);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    }
+  }) as InMemoryStore;
+}
+
+/** An embedder that rejects on every call, for the failure-isolation case. */
+class ThrowingEmbedder implements Embedder {
+  readonly provider = "throwing";
+  readonly model = "always-fails";
+  readonly dimensions = 4;
+  calls = 0;
+
+  async embed(_text: string): Promise<never> {
+    this.calls += 1;
+    throw new Error("synthetic embedder failure");
+  }
+}
+
+/** Preloads `count` non-bootstrap summaries so corpus size varies without changing the slice. */
+async function preloadCorpus(store: InMemoryStore, count: number): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    await store.saveSummary({
+      id: `preloaded_summary_${index}`,
+      personId: PERSON_ID,
+      scopeIds: [SCOPE_ID],
+      // Deliberately NOT `historical_bootstrap`: the supersession scan filters on that origin, so
+      // these rows change corpus size without changing what the slice does.
+      origin: "host_session",
+      summaryText: `Preloaded corpus summary ${index}.`,
+      sourceTurnRanges: [{ threadId: `person:${PERSON_ID}`, startSequence: 1, endSequence: 1 }],
+      sourceCanonicalEventIds: [],
+      sourceSummaryIds: [],
+      boxIds: [],
+      embedding: null,
+      createdAt: FIXED_NOW,
+      model: "preload",
+      promptVersion: "preload/v1",
+      confidence: 0.5,
+      state: "compacted",
+      detailLevel: "brief",
+      tokenCount: 4,
+      lastAccessedAt: null,
+      version: 1,
+      strength: 0.5,
+      retrievalCount: 0,
+      retrievedAt: null,
+      halfLifeHours: 168,
+      outcomeScore: null
+    });
+  }
+}
+
+/**
+ * Three topic spans in one slice. The labels share NO significant word — `isTopicChange` requires a
+ * zero-word intersection, so a shared token would silently collapse these into a single span.
+ */
+function threeSpanEvents(prefix: string): CanonicalEvent[] {
+  return [
+    event(`${prefix}-1`, 1, "Alpha roadmap milestones.", 0),
+    event(`${prefix}-2`, 2, "Switch to Beta pricing negotiation.", 1),
+    event(`${prefix}-3`, 3, "Switch to Gamma hiring interviews.", 2)
+  ];
+}
+
+describe("ContractionRunner post-commit embed stage", () => {
+  it("persists one vector per summary the slice committed, calling embed exactly that many times", async () => {
+    const store = await seededStore();
+    await seedEvents(store, threeSpanEvents("embed-basic"));
+    const job = await enqueue(store, "job-embed-basic", "embed-basic-1", "embed-basic-3");
+    const embedder = new DifferingIdentityEmbedder();
+    const runner = new ContractionRunner(store, {
+      clock: new FakeDaemonClock(),
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    });
+
+    const slice = await runner.drainSlice(PERSON_ID, job.id);
+
+    expect(slice.immediate.summaries).toBe(3);
+    expect(embedder.embedCalls).toBe(3);
+    expect(slice.embedded).toEqual({ attempted: 3, persisted: 3, failed: 0 });
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(3);
+    for (const summary of summaries) {
+      const vector = await store.getSummaryVector(summary.id, embedder.provider, embedder.model);
+      expect(vector).not.toBeNull();
+      expect(vector?.dimensions).toBe(embedder.dimensions);
+      // SC3's third leg, pinned here too: contraction never populates the summary's own field.
+      expect(summary.embedding).toBeNull();
+    }
+  });
+
+  it("makes embed calls per slice depend on summaries written, not on corpus size (SC2)", async () => {
+    const runSlice = async (preloaded: number): Promise<number> => {
+      const store = await seededStore();
+      await preloadCorpus(store, preloaded);
+      await seedEvents(store, [
+        event(`embed-sc2-${preloaded}-1`, 1, "Gamma embed corpus independence check.", 0),
+        event(`embed-sc2-${preloaded}-2`, 2, "Gamma embed corpus independence continues.", 1, "assistant")
+      ]);
+      const job = await enqueue(
+        store,
+        `job-embed-sc2-${preloaded}`,
+        `embed-sc2-${preloaded}-1`,
+        `embed-sc2-${preloaded}-2`
+      );
+      const embedder = new DifferingIdentityEmbedder();
+      const slice = await new ContractionRunner(store, {
+        clock: new FakeDaemonClock(),
+        authority: foregroundContractionAuthority(),
+        summaryEmbedder: embedder
+      }).drainSlice(PERSON_ID, job.id);
+      expect(embedder.embedCalls).toBe(slice.immediate.summaries);
+      return embedder.embedCalls;
+    };
+
+    const small = await runSlice(1);
+    const large = await runSlice(1_000);
+
+    expect(small).toBe(1);
+    // The whole point: a 1,000x larger corpus costs exactly the same, because the stage never queries.
+    expect(large).toBe(small);
+  });
+
+  it("refreshes a re-emitted active-span summary's vector instead of leaving it stale (upsert)", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore();
+    const embedder = new DifferingIdentityEmbedder();
+    const makeRunner = () => new ContractionRunner(store, {
+      clock,
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    });
+
+    const first = await commitStableBatch(store, "embed-upsert-initial", [
+      event("embed-upsert-1", 1, "Delta embed upsert planning roadmap.", 0),
+      event("embed-upsert-2", 2, "Delta embed upsert planning continues.", 1, "assistant")
+    ], clock.now());
+    await drain(makeRunner(), first);
+
+    const activeSummary = (await store.listSummaries())[0]!;
+    const before = await store.getSummaryVector(activeSummary.id, embedder.provider, embedder.model);
+    expect(before).not.toBeNull();
+
+    const appended = await commitStableBatch(store, "embed-upsert-append", [
+      event("embed-upsert-3", 3, "Delta embed upsert planning gains new detail.", 2)
+    ], clock.now());
+    await drain(makeRunner(), appended);
+
+    const after = await store.getSummaryVector(activeSummary.id, embedder.provider, embedder.model);
+    const reEmitted = (await store.listSummaries()).find((summary) => summary.id === activeSummary.id);
+    // The same deterministic id, changed text — the case a missing-set-driven scheduler can never see.
+    expect(reEmitted?.summaryText).not.toBe(activeSummary.summaryText);
+    expect(after).not.toBeNull();
+    expect(after?.vector).not.toEqual(before?.vector);
+  });
+
+  it("is entirely off when no summaryEmbedder is supplied", async () => {
+    const store = await seededStore();
+    await seedEvents(store, threeSpanEvents("embed-absent"));
+    const job = await enqueue(store, "job-embed-absent", "embed-absent-1", "embed-absent-3");
+    const calls: string[] = [];
+
+    const slice = await new ContractionRunner(embedStageStore(store, { calls }), {
+      clock: new FakeDaemonClock(),
+      authority: foregroundContractionAuthority()
+    }).drainSlice(PERSON_ID, job.id);
+
+    expect(slice.embedded).toEqual({ attempted: 0, persisted: 0, failed: 0 });
+    expect(calls).toEqual([]);
+    for (const summary of await store.listSummaries()) {
+      expect(await store.getSummaryVector(summary.id, "deterministic", "keyword-hash-v1")).toBeNull();
+    }
+  });
+
+  it("does not fail the contraction when the embedder throws on every call", async () => {
+    const store = await seededStore();
+    await seedEvents(store, threeSpanEvents("embed-throw"));
+    const job = await enqueue(store, "job-embed-throw", "embed-throw-1", "embed-throw-3");
+    const embedder = new ThrowingEmbedder();
+
+    const slice = await new ContractionRunner(store, {
+      clock: new FakeDaemonClock(),
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    }).drainSlice(PERSON_ID, job.id);
+
+    expect(slice.complete).toBe(true);
+    expect(slice.immediate.summaries).toBe(3);
+    expect(slice.embedded.attempted).toBe(3);
+    expect(slice.embedded.failed).toBe(slice.embedded.attempted);
+    expect(slice.embedded.persisted).toBe(0);
+    expect(embedder.calls).toBe(3);
+    // The contraction itself committed: summaries exist, and they simply have no vectors yet.
+    const summaries = await store.listSummaries();
+    expect(summaries).toHaveLength(3);
+    for (const summary of summaries) {
+      expect(await store.getSummaryVector(summary.id, embedder.provider, embedder.model)).toBeNull();
+    }
+    expect(await store.getContractionCheckpoint(`contraction_checkpoint_${job.id}`)).not.toBeNull();
+  });
+
+  it("does not fail the contraction when saveSummaryVectors rejects", async () => {
+    const store = await seededStore();
+    await seedEvents(store, threeSpanEvents("embed-save-fail"));
+    const job = await enqueue(store, "job-embed-save-fail", "embed-save-fail-1", "embed-save-fail-3");
+    const embedder = new DifferingIdentityEmbedder();
+
+    const slice = await new ContractionRunner(embedStageStore(store, { failSave: true }), {
+      clock: new FakeDaemonClock(),
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    }).drainSlice(PERSON_ID, job.id);
+
+    expect(slice.complete).toBe(true);
+    expect(slice.embedded).toEqual({ attempted: 3, persisted: 0, failed: 3 });
+    expect(await store.listSummaries()).toHaveLength(3);
+  });
+
+  it("skips a summary with no personId, counts it failed, and never substitutes one (T-10-05)", async () => {
+    const store = await seededStore();
+    await seedEvents(store, threeSpanEvents("embed-no-person"));
+    const job = await enqueue(store, "job-embed-no-person", "embed-no-person-1", "embed-no-person-3");
+    const embedder = new DifferingIdentityEmbedder();
+    let strippedId: string | undefined;
+
+    const slice = await new ContractionRunner(embedStageStore(store, {
+      afterCommit: (input) => {
+        // Strip the field rather than blank it: `personId` is optional in SummarySchema, and the
+        // stage must treat "absent" as "never guess a personId for this vector row".
+        const target = input.summaries[0]!;
+        strippedId = target.id;
+        delete (target as { personId?: string }).personId;
+      }
+    }), {
+      clock: new FakeDaemonClock(),
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    }).drainSlice(PERSON_ID, job.id);
+
+    expect(slice.embedded).toEqual({ attempted: 3, persisted: 2, failed: 1 });
+    expect(embedder.embedCalls).toBe(2);
+    expect(await store.getSummaryVector(strippedId!, embedder.provider, embedder.model)).toBeNull();
+    const vectors = await Promise.all((await store.listSummaries())
+      .filter((summary) => summary.id !== strippedId)
+      .map((summary) => store.getSummaryVector(summary.id, embedder.provider, embedder.model)));
+    expect(vectors.every((vector) => vector?.personId === PERSON_ID)).toBe(true);
+  });
+
+  it("tags every vector row with the summary's own personId and scopeIds", async () => {
+    const store = await seededStore();
+    await seedEvents(store, threeSpanEvents("embed-scope"));
+    const job = await enqueue(store, "job-embed-scope", "embed-scope-1", "embed-scope-3");
+    const embedder = new DifferingIdentityEmbedder();
+
+    await new ContractionRunner(store, {
+      clock: new FakeDaemonClock(),
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    }).drainSlice(PERSON_ID, job.id);
+
+    for (const summary of await store.listSummaries()) {
+      const vector = await store.getSummaryVector(summary.id, embedder.provider, embedder.model);
+      expect(vector?.personId).toBe(summary.personId);
+      expect(vector?.scopeIds).toEqual(summary.scopeIds);
+    }
+  });
+
+  it("tombstones vectors for the summaries a slice supersedes, leaving every other row intact", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore();
+    const embedder = new DifferingIdentityEmbedder();
+    const calls: string[] = [];
+    const hooked = embedStageStore(store, { calls });
+    const makeRunner = () => new ContractionRunner(hooked, {
+      clock,
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    });
+
+    const initial = await commitStableBatch(store, "embed-supersede-initial", [
+      event("embed-supersede-1", 1, "Epsilon roadmap milestones.", 0),
+      event("embed-supersede-2", 2, "Switch to Zeta pricing negotiation.", 10)
+    ], clock.now());
+    await drain(makeRunner(), initial);
+    const beforeIds = (await store.listSummaries()).map((summary) => summary.id);
+    expect(beforeIds.length).toBeGreaterThan(1);
+
+    // A late event landing BEFORE the corpus head rewinds the job AND moves the first span's first
+    // event, which changes its deterministic id — that is what produces a real supersession rather
+    // than an upsert. It shares words with the Epsilon span so it joins it instead of splitting it.
+    const late = await commitStableBatch(store, "embed-supersede-late", [
+      event("embed-supersede-late", 99, "Epsilon roadmap kickoff.", -1)
+    ], clock.now());
+    const slices = await drain(makeRunner(), late);
+
+    const supersededIds = slices
+      .flatMap((slice) => slice.supersessions)
+      .filter((supersession) => supersession.kind === "summary")
+      .map((supersession) => supersession.id);
+    expect(supersededIds.length).toBeGreaterThan(0);
+    expect(calls).toContain("delete");
+    for (const id of supersededIds) {
+      expect(await store.getSummaryVector(id, embedder.provider, embedder.model)).toBeNull();
+    }
+    const survivors = (await store.listSummaries())
+      .filter((summary) => summary.state !== "superseded" && !supersededIds.includes(summary.id));
+    expect(survivors.length).toBeGreaterThan(0);
+    for (const summary of survivors) {
+      expect(await store.getSummaryVector(summary.id, embedder.provider, embedder.model)).not.toBeNull();
+    }
+  });
+
+  it("writes before deleting, so an id both re-emitted and superseded in one slice ends tombstoned", async () => {
+    const store = await seededStore();
+    await seedEvents(store, threeSpanEvents("embed-both"));
+    const job = await enqueue(store, "job-embed-both", "embed-both-1", "embed-both-3");
+    const embedder = new DifferingIdentityEmbedder();
+    const calls: string[] = [];
+    let overlappedId: string | undefined;
+
+    const slice = await new ContractionRunner(embedStageStore(store, {
+      calls,
+      afterCommit: (input) => {
+        // Force the overlap the ordering rule exists for: production's `preserveIds` keeps a
+        // re-emitted id out of `supersessions`, so the only way to pin the ordering is to inject it.
+        overlappedId = input.summaries[0]!.id;
+        input.supersessions.push({
+          personId: PERSON_ID,
+          kind: "summary",
+          id: overlappedId,
+          supersededAt: FIXED_NOW
+        });
+      }
+    }), {
+      clock: new FakeDaemonClock(),
+      authority: foregroundContractionAuthority(),
+      summaryEmbedder: embedder
+    }).drainSlice(PERSON_ID, job.id);
+
+    // Ordering is decided, not incidental: the write runs first, the tombstone second and wins.
+    expect(calls).toEqual(["save", "delete"]);
+    expect(slice.embedded.persisted).toBe(3);
+    expect(await store.getSummaryVector(overlappedId!, embedder.provider, embedder.model)).toBeNull();
+    const others = (await store.listSummaries()).filter((summary) => summary.id !== overlappedId);
+    for (const summary of others) {
+      expect(await store.getSummaryVector(summary.id, embedder.provider, embedder.model)).not.toBeNull();
+    }
+  });
+});

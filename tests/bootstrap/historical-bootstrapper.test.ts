@@ -232,6 +232,8 @@ function contractionResult(
     complete,
     immediate: { summaries: 1, anchors: 1 },
     supersessions: [],
+    // The bootstrap passes no `summaryEmbedder`, so its slices never embed (Plan 12-03).
+    embedded: { attempted: 0, persisted: 0, failed: 0 },
     checkpoint: {
       id: "contraction_checkpoint_test",
       personId: "person_1",

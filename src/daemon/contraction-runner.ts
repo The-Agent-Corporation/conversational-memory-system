@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { anchorsForTurn } from "../anchors/anchor-detector.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
 import type { Anchor, Summary, Turn } from "../domain/types.js";
+import type { Embedder } from "../embeddings/embedder.js";
 import { DerivationInvalidator } from "../service/derivation-invalidator.js";
 import type { DerivationSupersession, PendingToolRun } from "./types.js";
-import type { MemoryStore } from "../storage/memory-store.js";
+import type { MemoryStore, SummaryVectorRecord } from "../storage/memory-store.js";
 import { DeterministicSummarizer, type Summarizer } from "../summarization/summarizer.js";
 import {
   HYGIENE_RULE_VERSION,
@@ -60,6 +61,23 @@ export interface ContractionRunnerOptions {
   authority?: WriteAuthority;
   beforeCommit?: () => void | Promise<void>;
   faults?: { reach(boundary: string): void };
+  /**
+   * REQ-043 / ADR 0052: when supplied, a post-commit stage embeds exactly the summaries this slice
+   * committed and tombstones the vectors of the summaries it superseded. ABSENT MEANS OFF — every
+   * caller that omits it (`rebuild-derivations-command.ts`, `historical-bootstrapper.ts`, every
+   * pre-12-03 test) keeps its previous behavior with no edit, so a bulk rebuild never embeds.
+   *
+   * `resolveEmbedder()` costs 72-121 ms of ONNX session construction, so the instance passed here
+   * must be resolved once per PROCESS by the caller, never once per slice (T-12-17).
+   */
+  summaryEmbedder?: Embedder;
+}
+
+/** Per-slice outcome of the post-commit embed stage. `attempted` counts committed summaries. */
+export interface EmbedStageCounts {
+  attempted: number;
+  persisted: number;
+  failed: number;
 }
 
 export interface ContractionSliceResult {
@@ -71,6 +89,7 @@ export interface ContractionSliceResult {
   checkpoint: ContractionCheckpoint;
   immediate: { summaries: number; anchors: number };
   supersessions: DerivationSupersession[];
+  embedded: EmbedStageCounts;
 }
 
 export class ContractionRunner {
@@ -138,7 +157,8 @@ export class ContractionRunner {
         complete: true,
         checkpoint: previous,
         immediate: { summaries: 0, anchors: 0 },
-        supersessions: []
+        supersessions: [],
+        embedded: { attempted: 0, persisted: 0, failed: 0 }
       };
     }
 
@@ -350,6 +370,15 @@ export class ContractionRunner {
     });
     this.options.faults?.reach("after_contraction_checkpoint");
 
+    // POST-COMMIT, and deliberately so (ADR 0052). Running inside the transaction would couple
+    // memory formation to embedder health; running above `drainSlice` would put it on the far side
+    // of `daemon.ts:145-148`, which maps any contraction throw to `storage_failure`, and of
+    // `daemon.ts:158-161`, which drops the writer lease. It is driven by the summary set the slice
+    // just committed, so its cost is O(summaries) with no query — which is why it stays cheap on a
+    // large corpus, and why it catches a re-emitted active span (an upsert under the same
+    // deterministic id) that a missing-set-driven scheduler could never see.
+    const embedded = await this.embedCommittedSummaries(summaries, supersessions);
+
     return {
       processedEvents: processed.length,
       processedEventIds: processed.map((event) => event.id),
@@ -358,8 +387,106 @@ export class ContractionRunner {
       complete,
       checkpoint: nextCheckpoint,
       immediate: { summaries: summaries.length, anchors: anchors.length },
-      supersessions
+      supersessions,
+      embedded
     };
+  }
+
+  /**
+   * Embeds the summaries this slice committed and tombstones the vectors of the ones it superseded.
+   *
+   * FAILURE ISOLATION IS THE LOAD-BEARING PROPERTY (ADR 0052 decision 2): this never throws. A
+   * summary without a vector is a recoverable state — the repair pass heals it and `memory status`
+   * reports it — whereas a throw here would be classified as a storage failure and could cost the
+   * daemon its writer lease.
+   *
+   * Ordering is decided, not incidental: the write runs FIRST and the tombstone SECOND, so an id
+   * that is both re-emitted and superseded within one slice ends tombstoned rather than leaving an
+   * orphan vector behind. This is the delete half of the precedent at
+   * `rebuild-derivations-command.ts:167-175`; without it, stale vector rows accumulate unboundedly
+   * and are unreachable by the state-predicated missing-set query.
+   */
+  private async embedCommittedSummaries(
+    summaries: Summary[],
+    supersessions: DerivationSupersession[]
+  ): Promise<EmbedStageCounts> {
+    const embedder = this.options.summaryEmbedder;
+    if (!embedder) return { attempted: 0, persisted: 0, failed: 0 };
+
+    const attempted = summaries.length;
+    let persisted = 0;
+    let failed = 0;
+
+    try {
+      const records: SummaryVectorRecord[] = [];
+      for (const summary of summaries) {
+        if (!summary.personId) {
+          // Skip and count. NEVER substitute a sentinel personId (T-10-05/T-12-12): a mis-tagged
+          // vector row is cross-person retrieval.
+          failed += 1;
+          continue;
+        }
+        try {
+          // Passage mode. NEVER `embedQuery` — bge is asymmetric and only queries carry the
+          // instruction prefix (Phase 9, locked).
+          const embedding = await embedder.embed(summary.summaryText);
+          records.push({
+            summaryId: summary.id,
+            provider: embedding.provider,
+            model: embedding.model,
+            dimensions: embedding.dimensions,
+            vector: embedding.vector,
+            personId: summary.personId,
+            scopeIds: summary.scopeIds ?? [],
+            createdAt: embedding.createdAt
+          });
+        } catch {
+          failed += 1;
+        }
+      }
+
+      if (records.length > 0) {
+        // One batched call for the whole slice, not a per-record loop.
+        try {
+          await this.store.saveSummaryVectors(records);
+          persisted = records.length;
+        } catch {
+          failed += records.length;
+        }
+      }
+
+      const supersededSummaryIds = supersessions
+        .filter((supersession) => supersession.kind === "summary")
+        .map((supersession) => supersession.id);
+      if (supersededSummaryIds.length > 0) {
+        try {
+          await this.store.deleteSummaryVectors(supersededSummaryIds);
+        } catch {
+          // A missed tombstone is a stale row, not a correctness failure: `findNearestSummaries`
+          // already drops vectors whose summary is non-retrievable.
+        }
+      }
+    } catch {
+      // Defence in depth — nothing above is expected to escape its own catch, but the whole stage
+      // is still wrapped so that no unforeseen throw can reach the contraction's caller.
+      failed = attempted - persisted;
+    }
+
+    if (failed > 0) {
+      // Counts, provider, and model ONLY (V7/T-12-15). Never a summary id alongside its text, never
+      // the text itself, never an error message that quotes the input — the same discipline as
+      // `backfill-embeddings-command.ts:114-122`.
+      process.stderr.write(`${JSON.stringify({
+        event: "summary_embed_incomplete",
+        attempted,
+        persisted,
+        failed,
+        provider: embedder.provider,
+        model: embedder.model
+      })}\n`);
+    }
+
+    return { attempted, persisted, failed };
   }
 
   private async affectedStartIndex(
