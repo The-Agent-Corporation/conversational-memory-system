@@ -274,4 +274,84 @@ describe("memory status embeddingBackfill snapshot (REQ-042 SC4)", () => {
     expect(status.embeddingBackfill.missingVectors).toBe(0);
     expect(status.embeddingBackfill.completedFraction).toBe(1);
   });
+
+  it("reports the pinned revision as part of the model identity, so a stale-model vector is detectable (REQ-045, F1)", async () => {
+    // REQ-045 requires the embedding model *version* be recorded so stale-model vectors can be
+    // detected. A revision-less key cannot tell a current model from a stale one, so the
+    // mechanical test is that the reported identity carries the revision, not that it equals some
+    // fixture string.
+    const PINNED_REVISION = "ea104dacec62c0de699686887e3f920caeb4f3e3";
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-status-backfill-pinned-"));
+    const databasePath = join(tempDirectory, "memory.db");
+    const modelPath = resolvePath(process.env.MEMORY_MODEL_PATH ?? "tests/fixtures/models");
+    writeEmbeddingsConfig(databasePath, {
+      enabled: true,
+      provider: "onnx-transformers",
+      model: "Xenova/bge-small-en-v1.5",
+      revision: PINNED_REVISION,
+      modelPath
+    });
+
+    const store = new SqliteStore(databasePath);
+    await store.savePerson({ id: "person_1", displayName: null, createdAt: "2026-07-16T10:00:00.000Z" });
+    await store.saveSummary(summaryRecord({ id: "summary_a" }));
+    await store.saveSummaryVector(
+      vectorRecord({
+        summaryId: "summary_a",
+        provider: "onnx-transformers",
+        model: composeModelIdentity("Xenova/bge-small-en-v1.5", PINNED_REVISION)
+      })
+    );
+    store.close();
+
+    const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
+
+    expect(status.embeddingBackfill.model).toContain(PINNED_REVISION);
+    expect(status.embeddingBackfill.missingVectors).toBe(0);
+    expect(status.embeddingBackfill.completedFraction).toBe(1);
+  });
+
+  it("counts only retrievable summaries in the denominator, not the whole table (GAP-12-B)", async () => {
+    // The live corpus is 49,314 compacted + 89,059 superseded. Counting all 138,373 inflates
+    // every mid-backfill fraction and misreports the corpus size the owner gates the run on.
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-status-backfill-denominator-"));
+    const databasePath = join(tempDirectory, "memory.db");
+    const store = new SqliteStore(databasePath);
+    await store.savePerson({ id: "person_1", displayName: null, createdAt: "2026-07-16T10:00:00.000Z" });
+    for (const id of ["summary_a", "summary_b", "summary_c"]) {
+      await store.saveSummary(summaryRecord({ id, state: "compacted" }));
+    }
+    for (let index = 0; index < 7; index += 1) {
+      await store.saveSummary(summaryRecord({ id: `summary_superseded_${index}`, state: "superseded" }));
+    }
+    store.close();
+
+    const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
+
+    expect(status.embeddingBackfill.totalSummaries).toBe(3);
+    expect(status.embeddingBackfill.missingVectors).toBe(3);
+    expect(status.embeddingBackfill.completedFraction).toBe(0);
+  });
+
+  it("reports a fraction over the embeddable denominator when superseded rows outnumber them", async () => {
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-status-backfill-mixed-"));
+    const databasePath = join(tempDirectory, "memory.db");
+    const store = new SqliteStore(databasePath);
+    await store.savePerson({ id: "person_1", displayName: null, createdAt: "2026-07-16T10:00:00.000Z" });
+    for (const id of ["summary_a", "summary_b", "summary_c", "summary_d"]) {
+      await store.saveSummary(summaryRecord({ id, state: "compacted" }));
+    }
+    for (let index = 0; index < 20; index += 1) {
+      await store.saveSummary(summaryRecord({ id: `summary_superseded_${index}`, state: "superseded" }));
+    }
+    await store.saveSummaryVector(vectorRecord({ summaryId: "summary_a" }));
+    store.close();
+
+    const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
+
+    // 1 of 4 embeddable, not 1 of 24.
+    expect(status.embeddingBackfill.totalSummaries).toBe(4);
+    expect(status.embeddingBackfill.missingVectors).toBe(3);
+    expect(status.embeddingBackfill.completedFraction).toBe(0.25);
+  });
 });

@@ -8,6 +8,7 @@ import type { MemoryStore } from "../storage/memory-store.js";
 import type { LaunchAgentStatus } from "../daemon/macos/launch-agent.js";
 import { probeEmbedderHealth, type EmbedderHealth } from "../embeddings/embedder-resolver.js";
 import { composeModelIdentity } from "../embeddings/embedder-identity.js";
+import { isRetrievableState } from "../retrieval/retrievable-state.js";
 
 export interface DaemonStatusSnapshot {
   state: "running" | "stopping" | "stale" | "stopped";
@@ -201,7 +202,12 @@ export async function runMemoryStatusCommand(
       ? composeModelIdentity(embedder.model, embedder.revision)
       : "keyword-hash-v1";
     const missingVectorSummaryIds = await store.listSummaryIdsMissingVector(activeProvider, activeModel);
-    const totalSummaries = summaries.length;
+    // GAP-12-B: the denominator must agree with the numerator. `listSummaryIdsMissingVector`
+    // counts only embeddable (retrievable-state) summaries, so counting every row here inflates
+    // the corpus size and deflates every mid-backfill fraction -- on the live corpus by 89,059
+    // superseded rows that will never be embedded. Filtered from the array already in hand from
+    // the Promise.all above rather than issuing a second query.
+    const totalSummaries = summaries.filter((summary) => isRetrievableState(summary.state)).length;
     const missingVectors = missingVectorSummaryIds.length;
     const completedFraction = totalSummaries === 0 ? 1 : (totalSummaries - missingVectors) / totalSummaries;
 
