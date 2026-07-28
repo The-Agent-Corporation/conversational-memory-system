@@ -7,7 +7,7 @@
 <domain>
 ## Phase Boundary
 
-Derivations are built from conversational content. Consecutive tool-call runs collapse into compact activity descriptions, isolated tool calls keep their text, neither drives topic labels, and harness-injected scaffolding is excluded from derivation input — while the canonical event timeline stays complete, immutable, and auditable.
+Derivations are built from conversational content. Consecutive tool-call runs collapse into compact activity descriptions, isolated tool calls keep their text (superseded 2026-07-27, Plan 11-24 — see the decision entry below), neither drives topic labels, and harness-injected scaffolding is excluded from derivation input — while the canonical event timeline stays complete, immutable, and auditable.
 
 **In scope:** deterministic event classification; tool-run collapse in the contraction path; removing tool activity from topic-label computation; excluding synthetic content from summarization/embedding/trace discovery/injection; rule versioning; audit reporting of exclusion rationale; resumable retroactive rebuild of existing derivations.
 
@@ -23,7 +23,7 @@ Derivations are built from conversational content. Consecutive tool-call runs co
 
 ### Tool activity (REQ-052)
 - A run of **≥2 consecutive tool-call events** within a contraction slice collapses to **one** derived activity line naming distinct tools and counts, never arguments (e.g. `ran 12 terminal commands, 3 file edits`).
-- A **single isolated tool call keeps its existing text** — one deliberate action between two messages carries the "why."
+- A **single isolated tool call keeps its existing text** — one deliberate action between two messages carries the "why." **SUPERSEDED 2026-07-27 (Plan 11-24, `11-REMEDIATION-DECISION.md`, GAP-11-E hypothesis H-0).** This carve-out is preserved here for the historical record, not deleted — it is no longer the live behavior. GAP-11-E's investigation (`11-GAP-11-E-FINDING.md`) traced 5 of 11 residual-contamination offenders directly to it: each was compliant with this decision as written yet still carried verbatim `[Tool call:` argument text into recallable summaries and injection packets. The owner chose to reverse the carve-out rather than accept that as permanent residue; an isolated tool call now collapses via `collapseText` exactly like a run of two or more. See ROADMAP.md's amended SC1 (original text also preserved there) and ADR 0048's 2026-07-27 addendum for the full rationale.
 - **Neither form feeds topic-label extraction or topic-change detection** (D-2, amended after measurement). Both attach to the surrounding conversational span as content only.
 - Run boundaries follow canonical order within the slice, so the rule is deterministic and slice-local.
 

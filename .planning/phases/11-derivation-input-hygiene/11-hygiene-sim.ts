@@ -134,18 +134,18 @@ const main = async (): Promise<void> => {
   let collapsedEvents = 0;
   let cursor = { occurredAt: "", nativeSequence: -1, id: "" };
 
+  // Plan 11-24 (GAP-11-E H-0, SC1 reversal, 2026-07-27): production's `derivationContents` no
+  // longer special-cases a length-1 run — every tool_activity run, isolated or not, collapses via
+  // `collapseText`. Mirrored here so this sim stops drifting from the shared module it exists to
+  // measure. `isolatedSingles` is retained as a counter (not a behavior branch) — it is exactly
+  // the corpus-wide blast-radius count Plan 11-24 must report before Plan 11-25 rebuilds anything.
   const flushTools = (): void => {
     if (!pendingTools) return;
-    if (pendingTools.names.length === 1) {
-      isolatedSingles += 1;
-      hygiene.observe(pendingTools.content, pendingTools.role, pendingTools.occurredAt, pendingTools.id);
-      recommended.observeContentOnly(pendingTools.content);
-    } else {
-      collapsedRuns += 1;
-      collapsedEvents += pendingTools.names.length;
-      hygiene.observe(collapseText(pendingTools.names), "assistant", pendingTools.occurredAt, pendingTools.id);
-      recommended.observeContentOnly(collapseText(pendingTools.names));
-    }
+    if (pendingTools.names.length === 1) isolatedSingles += 1;
+    else collapsedRuns += 1;
+    collapsedEvents += pendingTools.names.length;
+    hygiene.observe(collapseText(pendingTools.names), "assistant", pendingTools.occurredAt, pendingTools.id);
+    recommended.observeContentOnly(collapseText(pendingTools.names));
     pendingTools = null;
   };
 
@@ -205,7 +205,7 @@ const main = async (): Promise<void> => {
   console.log(`  hygiene    ${hygiene.summaries.toLocaleString().padStart(9)}  ${mb(hygiene.chars).padStart(10)}  tool-text: ${hygiene.toolTextSummaries.toLocaleString()} (${pct(hygiene.toolTextSummaries, Math.max(1, hygiene.summaries))})`);
   console.log(`  conv-only  ${convOnly.summaries.toLocaleString().padStart(9)}  ${mb(convOnly.chars).padStart(10)}  (tool activity never drives topic labels)`);
   console.log(`  RECOMMENDED${recommended.summaries.toLocaleString().padStart(8)}  ${mb(recommended.chars).padStart(10)}  tool-text: ${recommended.toolTextSummaries.toLocaleString()} (collapse + singles as content, never labels)`);
-  console.log(`\n  tool runs collapsed: ${collapsedRuns.toLocaleString()} runs covering ${collapsedEvents.toLocaleString()} events; isolated singles kept verbatim: ${isolatedSingles.toLocaleString()}`);
+  console.log(`\n  tool runs collapsed: ${collapsedRuns.toLocaleString()} runs (length>=2) + ${isolatedSingles.toLocaleString()} isolated singles, all collapsed (GAP-11-E H-0/SC1 reversal, Plan 11-24) covering ${collapsedEvents.toLocaleString()} events`);
   console.log(`\n  summary count   ${pct(hygiene.summaries, baseline.summaries)} of baseline  (${(baseline.summaries - hygiene.summaries).toLocaleString()} fewer)`);
   console.log(`  summary volume  ${pct(hygiene.chars, baseline.chars)} of baseline  (${mb(baseline.chars - hygiene.chars)} less)`);
   console.log(`\n  RECOMMENDED: count ${pct(recommended.summaries, baseline.summaries)} of baseline, volume ${pct(recommended.chars, baseline.chars)} of baseline`);

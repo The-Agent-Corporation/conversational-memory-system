@@ -35,6 +35,21 @@ Target (measured, not estimated, by replaying the full corpus through the real
 -> 77.6 MB (-66%), with ~11,571 residual summaries still containing `[Tool call:` — the
 isolated singles inside conversational spans, which is intended, not leftover noise.
 
+**RETIRED 2026-07-27 (Plan 11-24, GAP-11-E H-0/SC1 reversal).** The figures above, and their
+"isolated singles are intended residue" framing, described the pre-Plan-11-24 verbatim-isolated-
+single behavior and pre-`hygiene-rules/v2` rule set — they are not the current target and must not
+be quoted as one. `11-hygiene-sim.ts` re-run against a `cp -c` clone of the live 292,407-event
+corpus (safety: clone `size`/`mtime` unchanged before and after; the live database and its prior
+backups were never opened directly) under `hygiene-rules/v3` with the sim's `flushTools`
+updated to collapse isolated singles exactly like production's `derivationContents` reports:
+**135,366 -> 110,308 raw-hygiene-pass summaries (-18.5%) / 74.0 MB (-67.7%), 0 summaries
+containing `[Tool call:`** (down from 15,176 under the old isolated-verbatim behavior). The sim's
+own `RECOMMENDED` pass (collapse + label-exclusion together, the shape production actually ships)
+reports **135,366 -> 49,253 summaries (-63.6%) / 64.6 MB (-71.8%), 0 summaries containing
+`[Tool call:`**. See `11-24-SUMMARY.md` for the full run output and the corpus-wide blast-radius
+count (15,996 isolated tool-call events across the whole corpus, not just the 5 traced by the
+12-query recall probe) that this same run measured.
+
 ## Decision
 
 **Hygiene is a derivation-layer filter, never an import-time drop (D-1).** Every event is
@@ -240,3 +255,72 @@ change alone marks every existing contraction checkpoint stale — a running dae
 `memory rebuild-derivations` invocation will see the corpus as needing re-derivation. No rebuild
 was run against the live database as part of this plan; that remains an explicit owner-gated
 decision (Plans 11-23/11-25).
+
+## Addendum 2026-07-27 — GAP-11-E remediation: H-i embedded-marker matching and the SC1 reversal (Plan 11-24)
+
+Plan 11-22's investigation (`11-GAP-11-E-FINDING.md`) resolved the residual contamination the
+corrected recall probe (`11-RECALL-PROBE-V2.md`) still showed into three independent causes —
+H-0, H-i, H-iii, see that finding for the full worked evidence. The owner's remediation decision
+(`11-REMEDIATION-DECISION.md`, 2026-07-27) authorized fixing all three. This addendum records the
+two code changes; H-iii (stale checkpoint) required no code change — the existing
+`PROCESSOR_VERSION`/`HYGIENE_RULE_VERSION` staleness gate already forces a full rebuild once the
+rule version bumps below.
+
+### H-i — line-anchored embedded matching (real defect fix)
+
+Every `SYNTHETIC_RULES` entry with a literal-prefix marker was a bare
+`content.startsWith(marker)`, so a marker embedded mid-event — not at the event's own start — was
+invisible to `classifyEvent`. The fix widens matching to "the marker begins the event's own text,
+OR begins some later LINE within the event" (`matchesEmbedded`, `src/topic/derivation-hygiene.ts`),
+not a bare unanchored substring scan.
+
+This distinction matters and was chosen deliberately over the simpler `content.includes(marker)`
+alternative the finding also named: the finding traced GAP-11-E's own two H-i offenders
+(`historical_summary_72ee7793…`, `…b8edf3787d…`) to an assistant message *discussing* `[SILENT]`
+as a design concept inside a markdown table cell — mid-sentence, never at the start of a line. A
+bare substring scan would misclassify that legitimate conversational prose as scaffolding, which
+is exactly the false-positive failure mode this phase's conservative-by-default anchoring exists
+to prevent. Line-start anchoring generalizes the SAME discriminator the H-iii offenders already
+prove is real in the corpus (a marker occupying the ENTIRE content of its own dedicated event) one
+level down, to a marker occupying its own line inside a larger event — while text that merely
+mentions a marker inline within running prose still reads as conversational. Both offenders traced
+by the finding remain classified `conversational` after this change, consistent with the finding's
+own assessment that they read as false positives of the recall probe's unanchored detector, not
+genuine hygiene leaks; the fix's effect is on the general embedded case going forward, verified by
+a constructed illustrative fixture in `tests/topic/derivation-hygiene.test.ts` (the real corpus,
+per the finding, has no second clean mid-body offender to extract verbatim).
+
+### H-0 — SC1 reversed: isolated tool calls now collapse (locked-decision override)
+
+**This reverses a decision Phase 11 planning locked deliberately** (`11-CONTEXT.md`; ROADMAP SC1's
+original text, preserved verbatim in ROADMAP.md's amended entry): *"an isolated single tool call
+summarizes it in its existing form."* `derivationContents`'s `segment.entries.length === 1`
+short-circuit, which returned an isolated tool call's raw `[Tool call: NAME] {args}` text
+unmodified, is removed — an isolated call now collapses via `collapseText` exactly like a run of
+two or more.
+
+**Why the reversal.** GAP-11-E's finding traced 5 of 11 offenders (the majority) directly to this
+carve-out: every one was compliant with SC1/SC3 as originally written, yet still carried verbatim
+tool-call argument text into a recallable summary and, from there, into injection packets — the
+outcome Plan 11-13's own must_have tried and failed to prevent by pruning instead
+(`11-13-SUMMARY.md`). The owner was shown this tension directly (SC1 vs. SC3 vs. 11-13's
+must_have, `11-GAP-11-E-FINDING.md`'s "Resolving the SC3 tension" section) and chose to revise
+SC1 itself rather than treat the 5 offenders as permanent, spec-compliant residue.
+
+**Consequences accepted:** an isolated tool call's "why" — previously readable verbatim in a
+summary — is now only readable as `[Activity] ran 1 tool calls: 1 <tool name>`, the same
+information-loss trade-off already accepted for runs of >=2. The measured 55,930-summary /
+77.6 MB v1 targets and the ~11,571 verbatim-residual figure in this ADR's Context section above
+described the OLD verbatim-isolated-single behavior and are retired by this addendum, not
+re-derived to a new absolute figure against the live corpus (Plan 11-24 is code-only and read-only
+against the corpus; see `11-24-SUMMARY.md` for the corpus-wide blast-radius census this addendum's
+change makes newly relevant).
+
+### Version bump
+
+`HYGIENE_RULE_VERSION` moved from `hygiene-rules/v2` to `hygiene-rules/v3` (REQ-054) — both
+changes alter `classifyEvent`/`derivationContents` output for some inputs. This automatically
+marks every existing contraction checkpoint stale via `PROCESSOR_VERSION`, so H-i and H-0's fixes
+apply in the same full rebuild H-iii already required; the next `memory rebuild-derivations`
+invocation against the live corpus closes all three causes at once. No rebuild was run against the
+live database as part of this plan — that remains the explicit owner-gated Plan 11-25.
