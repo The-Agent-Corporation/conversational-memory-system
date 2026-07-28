@@ -1,8 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runMemoryStatusCommand } from "../../src/bootstrap/status-command.js";
+import { composeModelIdentity } from "../../src/embeddings/embedder-identity.js";
+import { writeEmbeddingsConfig } from "../../src/embeddings/embeddings-config.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import {
   CommitLocalSyncOperationInputSchema,
@@ -234,6 +236,41 @@ describe("memory status embeddingBackfill snapshot (REQ-042 SC4)", () => {
     const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
 
     expect(status.embeddingBackfill.totalSummaries).toBe(0);
+    expect(status.embeddingBackfill.missingVectors).toBe(0);
+    expect(status.embeddingBackfill.completedFraction).toBe(1);
+  });
+
+  it("counts an ONNX-keyed vector as present, not missing (GAP-12-A)", async () => {
+    // The health probe reports the sidecar's bare repo id and revision
+    // separately; vectors are keyed by the composed `repo@revision`. Querying
+    // with the bare id reported every backfilled summary as still missing.
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-status-backfill-onnx-"));
+    const databasePath = join(tempDirectory, "memory.db");
+    const modelPath = resolvePath(process.env.MEMORY_MODEL_PATH ?? "tests/fixtures/models");
+    writeEmbeddingsConfig(databasePath, {
+      enabled: true,
+      provider: "onnx-transformers",
+      model: "Xenova/bge-small-en-v1.5",
+      revision: "main",
+      modelPath
+    });
+
+    const store = new SqliteStore(databasePath);
+    await store.savePerson({ id: "person_1", displayName: null, createdAt: "2026-07-16T10:00:00.000Z" });
+    await store.saveSummary(summaryRecord({ id: "summary_a" }));
+    await store.saveSummaryVector(
+      vectorRecord({
+        summaryId: "summary_a",
+        provider: "onnx-transformers",
+        model: composeModelIdentity("Xenova/bge-small-en-v1.5", "main")
+      })
+    );
+    store.close();
+
+    const status = await runMemoryStatusCommand({ databasePath, personId: "person_1" });
+
+    expect(status.embeddingBackfill.model).toBe("Xenova/bge-small-en-v1.5@main");
+    expect(status.embeddingBackfill.totalSummaries).toBe(1);
     expect(status.embeddingBackfill.missingVectors).toBe(0);
     expect(status.embeddingBackfill.completedFraction).toBe(1);
   });

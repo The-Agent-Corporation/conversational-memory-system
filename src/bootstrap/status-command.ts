@@ -7,6 +7,7 @@ import type { HistoricalBootstrapCheckpoint } from "./types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import type { LaunchAgentStatus } from "../daemon/macos/launch-agent.js";
 import { probeEmbedderHealth, type EmbedderHealth } from "../embeddings/embedder-resolver.js";
+import { composeModelIdentity } from "../embeddings/embedder-identity.js";
 
 export interface DaemonStatusSnapshot {
   state: "running" | "stopping" | "stale" | "stopped";
@@ -192,7 +193,13 @@ export async function runMemoryStatusCommand(
         probeEmbedderHealth(parsed.databasePath)
       ]);
     const activeProvider = embedder.enabled ? embedder.provider : "deterministic";
-    const activeModel = embedder.enabled ? embedder.model : "keyword-hash-v1";
+    // GAP-12-A: the health probe reports the sidecar's bare repo id and its
+    // revision separately, but vectors are keyed by the composed identity. Query
+    // with anything else and `missingVectors` reads as `totalSummaries` forever,
+    // even on a fully backfilled corpus. One composition function, everywhere.
+    const activeModel = embedder.enabled
+      ? composeModelIdentity(embedder.model, embedder.revision)
+      : "keyword-hash-v1";
     const missingVectorSummaryIds = await store.listSummaryIdsMissingVector(activeProvider, activeModel);
     const totalSummaries = summaries.length;
     const missingVectors = missingVectorSummaryIds.length;
