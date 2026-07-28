@@ -24,8 +24,9 @@ The frozen query set (`11-RECALL-QUERIES.md`) is byte-unchanged. Only the measur
 | `after-filter-v2` | `cp -c` clone of `~/.memory/aaron.db.pre-anchor-prune` | `{compacted: 50551, superseded: 87727}` | The post-rebuild / pre-anchor-prune state, recovered from the backup taken 2026-07-27 11:23. Original verified unchanged. |
 | `current-v2` | `~/.memory/aaron.db` (live, read-only) | `{compacted: 50551, superseded: 87727}` | Post anchor prune (26,643 anchors deleted, 19,268 retained). |
 | `final-v2` | `~/.memory/aaron.db` (live) | `{compacted: 49253, superseded: 89120}` | Post the owner-authorized live rebuild of 2026-07-28 (Plan 11-25 Task 3, `cb97c82`) at `hygiene-rules/v3`. Added by Plan 11-26. |
+| `post-v4` | `~/.memory/aaron.db` (live) | `{compacted: 49314, superseded: 89059}` | Post the owner-authorized `hygiene-rules/v4` rebuild **and** the 330-anchor prune of 2026-07-28 (Plan 11-29, `11-REBUILD-V4.md`). Added by Plan 11-29. |
 
-All four columns were produced by the SAME v2 harness (`11-recall-probe.ts`, byte-unchanged since Plan
+All five columns were produced by the SAME v2 harness (`11-recall-probe.ts`, byte-unchanged since Plan
 11-19) against the SAME frozen query set (`11-RECALL-QUERIES.md`, byte-unchanged) and ARE comparable
 with each other — **with one qualification stated in "Comparability qualification" below, which affects
 the `product-unhygienic` column only.**
@@ -412,3 +413,188 @@ prefixes (`sk-`, `ghp_`, `AKIA`, `xox*`, JWTs), bare 32/40/64-hex runs, and `key
 assignments is clean on both files — the one bare 64-hex string in the JSON is the public Bun installer
 SHA-256, not a credential. The underlying corpus is unremediated; only the committed artifacts were
 redacted.
+
+---
+
+# `post-v4` — measurement after the v4 rebuild and the 330-anchor prune (Plan 11-29, 2026-07-28)
+
+**Run:** `2026-07-28T14:47Z` → `14:58Z`, **673,084.3 ms** across 12 queries, against the live
+`~/.memory/aaron.db` at `hygiene-rules/v4`, `{compacted: 49314, superseded: 89059}`, embedder
+`deterministic/keyword-hash-v1`. Artifact: `probe-v2/post-v4.{json,md}`.
+
+**What changed in the corpus since `final-v2`** (per `11-REBUILD-V4.md`): the owner-authorized
+`hygiene-rules/v4` rebuild — which restored the 123 trailing-sentinel events' text to the derived
+corpus after Plan 11-28 narrowed `silent-sentinel` to the sentinel-only shape (GAP-11-H) — followed by
+the owner-authorized prune of the **330** unambiguous scaffolding anchors (329 `task-notification`,
+1 `harness-system`). Summaries: active 49,253 → 49,314, superseded 89,120 → 89,059, total rows
+unchanged at 138,373. **Anchors 19,268 → 18,938.** Unhygienic anchors 330 → 0. The 20 silent-sentinel
+anchors, which carry real reasoning behind a trailing sentinel, were verified present by id after the
+prune and were deliberately NOT deleted.
+
+## The three predicates, reported separately
+
+Per `11-REMEDIATION-DECISION.md`'s addendum, quoted verbatim in the `final-v2` section above: SC7 is
+judged on tool-call + product-unhygienic; `probe-suspicious` is advisory and each hit must be
+inspected individually.
+
+| figure | predicate | `post-v4` items | `post-v4` queries |
+|---|---|---:|---:|
+| **tool-call** | `containsToolCallText` (`[Tool call: ` substring) | **0 / 33** | **0 / 12** |
+| **product-unhygienic** | `classification.derivationClass === "synthetic_injected"` | **0 / 33** | **0 / 12** |
+| *probe-suspicious (advisory)* | `markersFound.length > 0` | *2 / 33* | *1 / 12* (Q2) |
+
+Both tally forms, as measured, with no rounding and no framing:
+
+- **queries affected:** tool-call **0/12**; product-unhygienic **0/12**; probe-suspicious **1/12**.
+- **total flagged items:** tool-call **0**; product-unhygienic **0**; probe-suspicious **2**, out of
+  **33 packet items across 12 queries**.
+
+**No union figure is reported as a headline**, per the recorded target. For completeness the union of
+all three predicates is Q2 alone = 1/12, unioning predicates that do not share a standard.
+
+### Comparability qualification — carried forward, and it applies to this column
+
+`final-v2` ran at `hygiene-rules/v3`; **this column runs at `v4`.** The probe computes
+`classification` and `markersFound` with the product code as it exists at run time, so
+**`product-unhygienic` is not strictly comparable across arms measured at different rule versions.**
+That caveat has real force here rather than being boilerplate: v4 differs from v3 precisely in the
+`silent-sentinel` rule, so an item classified `synthetic_injected` at v3 could classify
+`conversational` at v4 without the corpus changing at all.
+
+It does **not** explain this column's result. The one product-unhygienic object in `final-v2` fired
+the `task-notification` rule, which v4 did not touch — it is absent from `post-v4` because the row was
+**deleted from the anchors table**, verified at id level, not because the classifier changed its mind.
+The **tool-call** column remains fully comparable across all five arms (`TOOL_CALL_PREFIX` is a literal
+substring test, unchanged). The **probe-suspicious** column remains fully comparable (`markersFound`
+is a bare `includes` over an unchanged `SYNTHETIC_MARKERS` list).
+
+## Per-query detail — `post-v4`
+
+Columns: packet items · items containing tool-call text · product-unhygienic items · probe-suspicious
+items · ranks flagged by the probe's combined `unhygienicRanks` · kind of the top item · elapsed.
+
+| Q | items | tool-call | product-unhyg | probe-susp | probe ranks | top kind | elapsed ms |
+|---|---|---|---|---|---|---|---|
+| Q1 | 3 | 0 | 0 | 0 | [] | anchor | 99,640.9 |
+| Q2 | 3 | 0 | 0 | 2 | [1, 2] | summary | 22,819.6 |
+| Q3 | 3 | 0 | 0 | 0 | [] | summary | 10,933.7 |
+| Q4 | 3 | 0 | 0 | 0 | [] | summary | 47,521.4 |
+| Q5 | 1 | 0 | 0 | 0 | [] | anchor | 10,527.8 |
+| Q6 | 3 | 0 | 0 | 0 | [] | anchor | 121,010.1 |
+| Q7 | 3 | 0 | 0 | 0 | [] | anchor | 117,565.9 |
+| Q8 | 3 | 0 | 0 | 0 | [] | anchor | 48,996.1 |
+| Q9 | 2 | 0 | 0 | 0 | [] | anchor | 95,720.6 |
+| Q10 | 3 | 0 | 0 | 0 | [] | summary | 35,664.2 |
+| Q11 | 3 | 0 | 0 | 0 | [] | summary | 52,600.4 |
+| Q12 | 3 | 0 | 0 | 0 | [] | summary | 10,083.6 |
+
+## Five-column totals, one harness, all five arms
+
+| arm | elapsed ms | items | tool-call items | product-unhyg items | probe-susp items | Q tool-call | Q product-unhyg | Q probe-susp |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `before-v2` | 2,940,407.9 | 36 | 19 (52.8%) | 0 | 6 | 9/12 | 0/12 | 4/12 |
+| `after-filter-v2` | 1,044,483.0 | 34 | 22 (64.7%) | 2 | 3 | 10/12 | 2/12 | 3/12 |
+| `current-v2` | 762,497.0 | 33 | 6 (18.2%) | 0 | 6 | 4/12 | 0/12 | 4/12 |
+| `final-v2` | 689,217.8 | 33 | 0 (0.0%) | 2 | 4 | 0/12 | 2/12 | 3/12 |
+| **`post-v4`** | **673,084.3** | **33** | **0 (0.0%)** | **0** | **2** | **0/12** | **0/12** | **1/12** |
+
+Named queries per predicate:
+
+| arm | tool-call | product-unhygienic | probe-suspicious |
+|---|---|---|---|
+| `before-v2` | Q1 Q3 Q4 Q5 Q7 Q8 Q9 Q10 Q12 | — | Q2 Q4 Q5 Q12 |
+| `after-filter-v2` | Q1 Q2 Q3 Q4 Q6 Q7 Q9 Q10 Q11 Q12 | Q7 Q8 | Q7 Q8 Q12 |
+| `current-v2` | Q1 Q3 Q4 Q10 | — | Q2 Q3 Q4 Q12 |
+| `final-v2` | — | Q1 Q3 | Q1 Q2 Q3 |
+| **`post-v4`** | **—** | **—** | **Q2** |
+
+Note the `before-v2` / `after-filter-v2` / `current-v2` rows in the document's earlier totals table use
+the probe's COMBINED predicate under the heading `unhygienic items`; the table here decomposes the
+same underlying data, as the `final-v2` section explains.
+
+## Per-item attribution of every flagged item in `post-v4`
+
+| Q | rank | kind | id | tool-call | classification | ruleId | markersFound |
+|---|---|---|---|---|---|---|---|
+| Q2 | 1 | summary | `historical_summary_72ee7793622e…` | false | conversational | — | `['silent-sentinel']` |
+| Q2 | 2 | summary | `historical_summary_b8edf3787d49…` | false | conversational | — | `['silent-sentinel']` |
+
+**No item in any packet is product-unhygienic, and no item contains tool-call text.**
+
+### Inspection of the 2 probe-suspicious items (required before they count)
+
+These are the same two summaries `final-v2` flagged, at the same ids, re-inspected here rather than
+carried over on trust. Every `[SILENT]` occurrence in each was located and its line printed:
+
+| item | chars | occurrences | at a line start? | context |
+|---|---:|---:|---|---|
+| `historical_summary_72ee7793622e…` | 33,658 | 4 | **0 of 4** | e.g. `` | D11 | **Noise suppression** … ~40/79 spans were silent `[SILENT]` cron noise … | `` — a markdown table cell; the other three are backtick-quoted mentions inside bullet prose about noise-suppression design (`spans.noise_class` marks … `suppressed` for `[SILENT]`) |
+| `historical_summary_b8edf3787d49…` | 18,650 | 2 | **0 of 2** | the same D11 table row, and `` - **Light:** … collapse/dedupe repetitive automated `[SILENT]` / heartbeat runs … `` |
+
+Both are design prose *discussing* the `[SILENT]` sentinel, always backtick-quoted, never at a line
+start — so the product's line-anchored classifier correctly leaves them `conversational`. Making the
+probe's verdict here "pass" would require the unanchored mid-sentence matching this phase deliberately
+rejected (GAP-11-E), which would suppress legitimate memory. Under the recorded target they are
+**advisory only and do not count**. No follow-on work is proposed for them.
+
+Worth stating: these two summaries are *about* the sentinel that Plan 11-28's `isSentinelOnly` fix
+concerns, and they are still here, still classified `conversational`, after a rebuild at v4 — which is
+the fix behaving as designed on the summary side as well as the event side.
+
+## Per-query delta, `final-v2` → `post-v4` — improvements and regressions together
+
+Read `tc / pu / ps` = tool-call / product-unhygienic / probe-suspicious item counts.
+
+| Q | `final-v2` tc/pu/ps (items) | `post-v4` tc/pu/ps (items) | Δtc | Δpu | Δps | packet ids identical? | attribution |
+|---|---|---|---:|---:|---:|---|---|
+| Q1 | 0/1/1 (3) | 0/0/0 (3) | 0 | **−1** | **−1** | no — rank 0 replaced | the `task-notification` anchor at rank 0 was pruned; a clean `conversational` anchor (`anchor_personal_turn_event_6049b2ef…_decision`) took its place. Ranks 1–2 unchanged |
+| Q2 | 0/0/2 (3) | 0/0/2 (3) | 0 | 0 | 0 | yes | unchanged — the two `[SILENT]`-discussing summaries, inspected and dismissed above |
+| Q3 | 0/1/1 (3) | 0/0/0 (3) | 0 | **−1** | **−1** | no — rank 0 removed | the same pruned anchor; the two summaries that were ranks 1–2 moved up and a third clean summary (`historical_summary_7fd648a0…`) entered at rank 2 |
+| Q4 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | yes | already clean |
+| Q5 | 0/0/0 (1) | 0/0/0 (1) | 0 | 0 | 0 | yes | already clean |
+| Q6 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | yes | already clean |
+| Q7 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | yes | already clean |
+| Q8 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | yes | already clean |
+| Q9 | 0/0/0 (2) | 0/0/0 (2) | 0 | 0 | 0 | yes | already clean |
+| Q10 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | yes | already clean |
+| Q11 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | yes | already clean |
+| Q12 | 0/0/0 (3) | 0/0/0 (3) | 0 | 0 | 0 | yes | already clean |
+
+**No regression on any query.** Two improvements (Q1, Q3), both attributable to a single deleted row.
+
+**The narrowness of the change is itself worth reporting, and cuts against an easy reading.** Ten of
+twelve packets are **identical id-for-id** to `final-v2`. The v4 rebuild restored the 123 events' text
+and produced 61 net new active summaries, yet **not one of those summaries reached any packet in this
+query set** — the only packet-visible movement came from the anchor prune. That the restoration was
+worth doing rests on the argument in `11-GAP-11-H.md` (it stops the system deleting genuine memory),
+not on evidence from these 12 queries, which do not exercise it. This probe measures contamination,
+and a restoration that adds no contamination correctly shows up as nothing.
+
+**Elapsed continued to fall**: 2,940,408 → 1,044,483 → 762,497 → 689,218 → **673,084 ms**.
+
+## Instrument integrity
+
+`11-RECALL-QUERIES.md` and `11-recall-probe.ts` are **byte-unchanged** — `git diff --exit-code` on both
+is clean, verified before the run and after it. Neither was touched by this plan.
+
+`~/.memory/aaron.db` was `stat`-checked around the run: inode **171672602** and size
+**5,031,448,576 bytes** unchanged. Its mtime advanced, which is expected and documented behavior of
+`prepareInjection` (`saveInjection`, summary access bookkeeping, deferred-revival promotion), the same
+way `current-v2` and `final-v2` were produced. No backup was read from, written to, moved, or deleted;
+all four (`pre-v4`, `pre-rebuild-v3`, `pre-anchor-prune`, `pre-phase11`) remain intact.
+
+## Secret scanning (GAP-11-F)
+
+`probe-v2/post-v4.json` was scanned before staging and **contained the GAP-11-F plaintext Mission
+Control login in a summary preview** — reproduced faithfully into the rebuilt summaries from the
+untouched canonical events, exactly as `11-REBUILD.md` warned and exactly as happened for `final-v2`.
+The password was replaced with `[REDACTED]` in the committed artifact (1 occurrence; the file still
+parses as JSON). `probe-v2/post-v4.md` contained 0 occurrences and was not modified. A sweep for
+vendor key prefixes (`sk-`, `ghp_`, `gho_`, `AKIA`, `xox*`, JWTs), `key|token|secret|password`
+assignments, and bare 32/40/64-hex runs is otherwise clean on both files — the one bare 64-hex string
+in the JSON is the public Bun 1.3.10 installer SHA-256 (`BUN_INSTALL_SHA`), not a credential. The
+underlying corpus is unremediated; only the committed artifact is redacted.
+
+## No SC7 claim is made here
+
+This column is a measurement, not an acceptance. SC7 sign-off is Plan 11-14 and the owner's call.

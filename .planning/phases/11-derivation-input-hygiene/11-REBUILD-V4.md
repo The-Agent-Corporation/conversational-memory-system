@@ -1,11 +1,15 @@
 # Phase 11 — `hygiene-rules/v4` Rebuild + 330-Anchor Prune (Plan 11-29)
 
-**Status:** Task 1 (rehearsal) complete. Tasks 2–3 recorded below as they happen.
+**Status: COMPLETE. Applied to `~/.memory/aaron.db` on 2026-07-28.** The corpus runs at
+`hygiene-rules/v4`, carries the 123 trailing-sentinel events' restored text, and holds 330 fewer
+scaffolding anchors. The 20 silent-sentinel anchors survive.
 
 Owner decision, 2026-07-28, verbatim: **"Prune 330 AND fix the silent-sentinel rule."** Plan 11-28
 shipped the rule (`hygiene-rules/v4`). This plan does the corpus.
 
-**Git commit at rehearsal:** `91bb4a0dacc90573863c16d3473059fc62c86952`
+**Git commit at rehearsal (Task 1):** `91bb4a0dacc90573863c16d3473059fc62c86952`
+**Git commit at live run (Task 3):** `d6cdad8` (rehearsal recorded) — the live run executed at that
+tree; no source file was modified by this plan.
 
 > **Timezone convention, stated once.** `stat -f %Sm` on this machine renders **local time (EDT,
 > UTC−4)**. Every `mtime` in this document is labelled explicitly. Wall-clock run timings come from
@@ -357,3 +361,285 @@ Measured on a clone, not estimated:
   all unchanged**. No disk space is reclaimed.
 - Checkpoint moves to `continuous-contraction/v1+hygiene-rules/v4`, generation 4, sliceCount 4,680.
 - Resurrection 0; all 20 silent-sentinel anchors survive.
+
+---
+
+# Task 2 — Fresh backup, and the authorization test
+
+## Backup evidence
+
+Taken at 2026-07-28T14:34:23Z, `cp -c` (APFS clone) from the **current** live state, before anything
+in Task 3 wrote to the corpus. Verified an existing regular non-empty file (`test -f` and `test -s`
+both pass), at a **distinct inode** from `aaron.db`, so a write to the live database cannot reach it.
+`~/.memory/aaron.db-wal` was 0 bytes at clone time, so no uncheckpointed WAL content was omitted.
+
+| path | inode | size (bytes) | mtime (local, EDT) | mtime (UTC) |
+|---|---:|---:|---|---|
+| **`~/.memory/aaron.db.pre-v4`** (new) | **181531855** | **5,031,448,576** | **2026-07-27T21:55:36** | **2026-07-28T01:55:36Z** |
+| `~/.memory/aaron.db.pre-rebuild-v3` | 181199709 | 5,031,448,576 | 2026-07-27T19:30:48 | 2026-07-27T23:30:48Z |
+| `~/.memory/aaron.db.pre-anchor-prune` | 180214168 | 5,031,448,576 | 2026-07-27T11:23:59 | 2026-07-27T15:23:59Z |
+| `~/.memory/aaron.db.pre-phase11` | 179000198 | 4,962,574,336 | 2026-07-26T19:26:45 | 2026-07-26T23:26:45Z |
+
+`pre-v4`'s mtime equals `aaron.db`'s mtime at clone time exactly, which is the evidence that it is an
+image of the state Task 3 then operated on, not of some earlier state. It is a **fourth, distinct**
+backup: the three earlier ones predate this state and none was deleted, moved, or overwritten.
+
+> Both columns above are rendered from the same `stat` call, once with the machine's local TZ and
+> once under `TZ=UTC`. Plan 11-25 found `stat -f %Sm` renders LOCAL time and an earlier report
+> mislabeled it UTC; that is not repeated here.
+
+## The authorization test
+
+The owner's standing authorization — "Prune 330 AND fix the silent-sentinel rule" — was conditioned
+on the rehearsal matching a 330/20 split. All three conditions held on the clone, so the
+authorization applied and Task 3 proceeded without re-soliciting a decision already made:
+
+| condition | required | measured on the clone | verdict |
+|---|---|---|---|
+| prune count | exactly 330 | 330 (receipt, dry-run, and id-level diff all agree) | PASS |
+| the 20 silent-sentinel anchors | all survive | 20 / 20 present by id; 0 intersect the deleted set | PASS |
+| resurrection vs. Plan 11-18's 26,643-id set | 0 | 0 | PASS |
+| (`--force` required) | no | not required, never passed | PASS |
+
+Had any of these diverged, the plan would have stopped here: a decision made about a 330/20 split
+does not authorize a different split.
+
+---
+
+# Task 3 — Live run against `~/.memory/aaron.db`
+
+Both commands were run in the background with output captured to a log file and polled to exit.
+
+## Rebuild
+
+```
+NODE_OPTIONS=--max-old-space-size=8192 npx tsx src/cli/bin.ts \
+  rebuild-derivations --db /Users/aaronwhaley/.memory/aaron.db --person aaron
+```
+
+**`--force` was not passed and was not needed.** The live checkpoint sat at
+`continuous-contraction/v1+hygiene-rules/v3` / generation 3 immediately before the run, against a
+code `PROCESSOR_VERSION` of `continuous-contraction/v1+hygiene-rules/v4`, so the staleness predicate
+fired on its own — exactly as it did on the clone.
+
+**Elapsed: 9 min 40 s** (`2026-07-28T14:34:31Z` → `2026-07-28T14:44:11Z` UTC), 1,170 progress lines.
+
+Live rebuild receipt, verbatim:
+
+```json
+{
+  "ok": true,
+  "rebuilt": true,
+  "personId": "aaron",
+  "hygieneRuleVersion": "hygiene-rules/v4",
+  "processorVersion": "continuous-contraction/v1+hygiene-rules/v4",
+  "slices": 1170,
+  "processedEvents": 292407,
+  "summariesWritten": 50483,
+  "supersededSummaries": 49137
+}
+```
+
+Final progress line, verbatim:
+
+```json
+{"event":"progress","slices":1170,"processedEvents":292407,"complete":true}
+```
+
+**This receipt is byte-identical to the rehearsal's.**
+
+## Prune — dry run (verbatim)
+
+`2026-07-28T14:44:36Z` → `14:44:38Z`.
+
+```json
+{
+  "ok": true,
+  "applied": false,
+  "personId": "aaron",
+  "totalCount": 19268,
+  "countsByClass": {
+    "conversational": 18938,
+    "tool_activity": 0,
+    "synthetic_injected": 330
+  },
+  "unhygienicCount": 330,
+  "unhygienicPayloadBytes": 4104307,
+  "unattributedCount": 0,
+  "prunedCount": 0,
+  "prunedByClass": {
+    "tool_activity": 0,
+    "synthetic_injected": 0
+  },
+  "skippedByReason": {},
+  "freedPayloadBytes": 0,
+  "batches": 0
+}
+```
+
+## Prune — apply (verbatim)
+
+`2026-07-28T14:44:44Z` → `14:44:48Z`, 39 batches at batch size 500.
+
+```json
+{
+  "ok": true,
+  "applied": true,
+  "personId": "aaron",
+  "totalCount": 19268,
+  "countsByClass": {
+    "conversational": 18938,
+    "tool_activity": 0,
+    "synthetic_injected": 330
+  },
+  "unhygienicCount": 330,
+  "unhygienicPayloadBytes": 4104307,
+  "unattributedCount": 0,
+  "prunedCount": 330,
+  "prunedByClass": {
+    "tool_activity": 0,
+    "synthetic_injected": 330
+  },
+  "skippedByReason": {
+    "retained_conversational": 18938
+  },
+  "freedPayloadBytes": 4104307,
+  "batches": 39,
+  "backupPath": "/Users/aaronwhaley/.memory/aaron.db.pre-v4",
+  "backupBytes": 5031448576
+}
+```
+
+Identical to the rehearsal's apply receipt in every field except `backupPath` / `backupBytes`, which
+name the real backup rather than the clone's.
+
+## Before / after counts (live)
+
+| metric | before | after rebuild | after prune | rehearsal predicted | matches |
+|---|---:|---:|---:|---:|---|
+| canonical events | 292,407 | 292,407 | 292,407 | 292,407 | yes |
+| turns | 584,814 | 584,814 | 584,814 | 584,814 | yes |
+| summaries — **active** | 49,253 | 49,314 | **49,314** | 49,314 | yes |
+| summaries — **superseded** | 89,120 | 89,059 | **89,059** | 89,059 | yes |
+| summaries — total rows | 138,373 | 138,373 | 138,373 | 138,373 | yes |
+| **anchors** | 19,268 | 19,268 | **18,938** | 18,938 | yes |
+| summary vectors | 0 | 0 | 0 | 0 | yes |
+| boxes / traces / proposals | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | yes |
+| injections | 30 | 30 | 30 | 30 | yes |
+| file size (bytes) | 5,031,448,576 | 5,031,448,576 | 5,031,448,576 | 5,031,448,576 | yes |
+| `pragma user_version` | 3 | 3 | 3 | 3 | yes |
+| checkpoint `processorVersion` | `…+hygiene-rules/v3` | `…+hygiene-rules/v4` | `…+hygiene-rules/v4` | `…+hygiene-rules/v4` | yes |
+| checkpoint `generation` | 3 | 4 | 4 | 4 | yes |
+| checkpoint `sliceCount` | 3,510 | 4,680 | 4,680 | 4,680 | yes |
+| checkpoint `immediateStage` | complete | complete | complete | complete | yes |
+
+Anchor classification census on the live corpus after the prune:
+
+```json
+{
+  "totalCount": 18938,
+  "countsByClass": { "conversational": 18938, "tool_activity": 0, "synthetic_injected": 0 },
+  "unhygienicCount": 0,
+  "unhygienicPayloadBytes": 0,
+  "unattributedCount": 0,
+  "byRule": {}
+}
+```
+
+Arithmetic: 19,268 − 330 = 18,938 ✓ · active +61 + superseded −61 = total 0 ✓ · sliceCount
+3,510 + 1,170 = 4,680 ✓. The receipt-to-rows reconciliation is the same upsert-on-deterministic-id
+story recorded for the clone above; it is not restated.
+
+## Anchor verdict on the live corpus (id level, not count level)
+
+| set | count |
+|---|---:|
+| anchors before the run | 19,268 |
+| anchors after the rebuild | 19,268 — id set **identical** to the pre-run set (`diff`: no difference) |
+| anchors after the prune | **18,938** |
+| anchors deleted by the prune (id-level diff) | **330** |
+| **deleted set ≡ the store's own pre-apply eligible set** | **true** |
+| **deleted set ≡ the set deleted on the clone** | **true — identical, id for id** |
+| **the 20 silent-sentinel anchors present after apply** | **20 / 20** |
+| the 20 ∩ deleted set | **0** |
+| **11-18's 26,643-id deleted set ∩ live anchors after the run — RESURRECTED** | **0** |
+| pre-run anchors dropped by the rebuild | 0 |
+| brand-new anchors never seen before | 0 |
+
+Every one of the 20 anchors listed by id at the top of this document was checked individually against
+the post-prune anchor id dump. All 20 are present. None was deleted.
+
+## Divergences from the rehearsal
+
+**None of any magnitude, except wall-clock noise.**
+
+| figure | rehearsal | live | divergence |
+|---|---|---|---|
+| rebuild receipt | (above) | (above) | **byte-identical** |
+| apply receipt | 330 pruned, 39 batches | 330 pruned, 39 batches | identical except `backupPath`/`backupBytes` |
+| deleted anchor id set | 330 ids | 330 ids | **set-equal, id for id** |
+| every count in the table above | — | — | exact match |
+| rebuild elapsed | 9 m 41 s | 9 m 40 s | −1 s (−0.2 %), machine noise |
+| prune apply elapsed | ~6 s | ~4 s | ~2 s, machine noise |
+
+This is the outcome Plan 11-25 did not get: there, the rehearsal ran at a different commit than the
+live run and diverged by 1,330 anchors. Here the rehearsal and the live run executed the same code
+against the same state and produced the same result, which is what a rehearsal is supposed to do.
+
+## Live corpus and backups after Task 3
+
+`~/.memory/aaron.db` — mtime advanced, as expected for a database that was written; inode unchanged,
+so it is the same file and no backup was swapped in:
+
+| when | inode | size | mtime (local, EDT) | mtime (UTC) |
+|---|---:|---:|---|---|
+| before Task 3 | 171672602 | 5,031,448,576 | 2026-07-27T21:55:36 | 2026-07-28T01:55:36Z |
+| after Task 3 | 171672602 | 5,031,448,576 | 2026-07-28T10:44:48 | 2026-07-28T14:44:48Z |
+
+All **four** backups present afterwards, at distinct inodes, none deleted, moved, or overwritten —
+`pre-v4` (181531855), `pre-rebuild-v3` (181199709), `pre-anchor-prune` (180214168), `pre-phase11`
+(179000198), each at the size and mtime tabulated in Task 2. `~/.memory/aaron.db-wal` is 0 bytes
+after the run, so the database is fully checkpointed and the file on disk is the complete state.
+ADR 0051's restore-from-backup path is intact.
+
+**File size did not shrink.** 5,031,448,576 bytes before and after. `freedPayloadBytes` (4,104,307)
+is logical payload freed inside existing pages; no `VACUUM` was run and none is implied.
+
+## Recall probe — the `post-v4` column
+
+Recorded in full in `11-RECALL-PROBE-V2.md` under "`post-v4`". Summary of the three predicates,
+reported separately and labelled, per `11-REMEDIATION-DECISION.md`'s addendum:
+
+| predicate | items | queries |
+|---|---:|---:|
+| **tool-call** (`containsToolCallText`) | **0 / 33** | **0 / 12** |
+| **product-unhygienic** (`derivationClass === "synthetic_injected"`) | **0 / 33** | **0 / 12** |
+| *probe-suspicious (advisory)* (`markersFound.length > 0`) | *2 / 33* | *1 / 12* (Q2) |
+
+The `<task-notification>` anchor `anchor_personal_turn_event_1a2df6be…_decision` that held rank 0 for
+Q1 and Q3 in `final-v2` **is gone**: it is one of the 330 (present in the deleted id list, absent
+from the live anchor table), and it appears nowhere in the `post-v4` packets.
+
+`11-RECALL-QUERIES.md` and `11-recall-probe.ts` are **byte-unchanged** — `git diff --exit-code` clean
+on both, checked before and after the run.
+
+## Verification
+
+- `npx vitest run` — **110 test files passed, 1 skipped; 1,024 tests passed, 4 skipped, 0 failed**,
+  20.55 s. The known `tests/mcp/mutation-tools.test.ts` / `tests/mcp/stdio-server.test.ts`
+  parallel-load timeout flake did not reproduce.
+- `npm run typecheck` — clean, no output beyond the `tsc --noEmit` invocation line.
+- No source file was modified by this plan; the corpus changed, the code did not.
+
+## GAP-11-F
+
+Out of scope and untouched, per the owner's decision to decline rotation as stale. The rebuild
+re-derived summaries from the untouched canonical events and faithfully reproduced the Mission
+Control credential into the new summary text, exactly as `11-REBUILD.md` warned. It appeared once in
+`probe-v2/post-v4.json` and was replaced with `[REDACTED]` before staging (the file still parses as
+JSON). The underlying corpus is unremediated; only the committed artifact is redacted.
+
+## No SC7 claim
+
+This plan produced receipts and a measurement, not an acceptance. Whether the corpus now meets SC7 is
+Plan 11-14's question and the owner's call. Nothing here should be read as a sign-off.
