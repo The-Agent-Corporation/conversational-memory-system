@@ -327,7 +327,7 @@ Plans:
   6. Measured against the live corpus, summary count and total summary text volume both fall materially, and no summary derived purely from a collapsed tool-call run survives as an independently recallable memory.
   7. Recall quality does not regress: a fixed set of known conversational queries returns the same or better summaries after hygiene than before.
 
-**Plans:** 21/26 plans executed
+**Plans:** 22/26 plans executed
 
 Plans:
 **Wave 1**
@@ -414,7 +414,7 @@ Plans:
 
 **Wave 22** *(blocked on Wave 21)*
 
-- [ ] 11-24-PLAN.md — Code fix scoped by the finding: regression test from the real offender span, then the minimal change. No-op if the finding shows no code defect.
+- [x] 11-24-PLAN.md — Code fix scoped by the finding: regression test from the real offender span, then the minimal change. No-op if the finding shows no code defect.
 
 **Wave 23** *(blocked on Wave 22)*
 

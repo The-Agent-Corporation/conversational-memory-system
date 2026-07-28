@@ -6,13 +6,13 @@ current_phase: 11
 current_plan: 22
 status: executing
 stopped_at: "Plan 11-22 complete -- GAP-11-E root cause: three distinct causes (H-0 by-design, H-i rule-matching defect, H-iii stale derivation). rebuild-derivations fixes H-iii only. No product code changed, no database written. Next: Plan 11-23 (owner decision)."
-last_updated: "2026-07-27T23:53:32.754Z"
-last_activity: 2026-07-27
+last_updated: "2026-07-28T00:15:30.207Z"
+last_activity: 2026-07-28
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 90
-  completed_plans: 85
+  completed_plans: 86
   percent: 53
 ---
 
@@ -55,7 +55,7 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-27T23:53:32.732Z
+**Last session:** 2026-07-28T00:15:24.856Z
 **Stopped at:** Plan 11-22 complete -- GAP-11-E root cause: three distinct causes (H-0 by-design, H-i rule-matching defect, H-iii stale derivation). rebuild-derivations fixes H-iii only. No product code changed, no database written. Next: Plan 11-23 (owner decision).
 **Resume file:** None
 
@@ -82,6 +82,7 @@ progress:
 | Phase 11 P19 | 35min | 3 tasks | 6 files |
 | Phase 11 P20 | ~40min | 2 tasks | 5 files |
 | Phase 11 P22 | 35min | 3 tasks | 5 files |
+| Phase 11 P24 | 65min | 2 tasks | 9 files |
 
 ## Decisions
 
@@ -133,10 +134,14 @@ progress:
 - [Phase 11]: Census-first, rule-second: added task-notification and local-command-caveat rules (1,182 events reclassified), backed by a counted census of the live 292,407-event corpus; [phase:X] orchestration prompts (~1,676 events) deferred to Plan 11-23 as needs-owner
 - [Phase 11]: GAP-11-E has three distinct root causes, not one -- H-0 (5 offenders, by-design isolated tool call, ROADMAP SC1-compliant, not a defect), H-i (2 offenders, anchored SYNTHETIC_RULES cannot see scaffolding embedded mid-event, a rebuild reproduces this), H-iii (4 offenders, computed under hygiene-rules/v1, never reprocessed since Plan 11-20 shipped v2's task-notification/local-command-caveat rules, a rebuild fixes this). rebuild-derivations is necessary but not sufficient.
 - [Phase 11]: origin/createdAt on Summary are not usable staleness discriminators -- ContractionRunner.summaryForSpan hardcodes origin: historical_bootstrap on every summary regardless of seam, and createdAt is the underlying conversation's timestamp (span.completedAt), not a write timestamp. Only the shared daemon_contraction_checkpoint's processorVersion reliably distinguishes pre- from post-hygiene-v2 summaries.
+- [Phase 11]: GAP-11-E H-i fixed: SYNTHETIC_RULES matching widened to line-start-anchored (matchesEmbedded), not unanchored substring, avoiding the false-positive risk flagged for Q2's silent-sentinel offender.
+- [Phase 11]: GAP-11-E H-0 fixed by reversing ROADMAP SC1 (owner override 2026-07-27): an isolated tool call now collapses via collapseText like any run. SC1/SC3 amended in place, ADR 0048 addendum added, 11-CONTEXT.md decision marked superseded.
+- [Phase 11]: GAP-11-E H-iii confirmed ready with no code change: PROCESSOR_VERSION already embeds HYGIENE_RULE_VERSION (now hygiene-rules/v3), so the next rebuild-derivations run applies all three GAP-11-E fixes together.
+- [Phase 11]: Corpus-wide H-0 blast radius measured read-only via cp -c clone: 15,996 isolated tool-call events (vs. 5 traced by the 12-query probe). Old 135,366->55,930/228.9MB->77.6MB sim targets retired; republished as 110,308/74.0MB (raw) and 49,253/64.6MB (RECOMMENDED) under hygiene-rules/v3.
 
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 22 of 26 complete (Phase 11 plan numbering, GAP-11-E full close: 11-19..11-26 planned 2026-07-27)
+Plan: 24 of 26 complete (Phase 11 plan numbering, GAP-11-E full close: 11-19..11-26 planned 2026-07-27)
 Status: Ready to execute
-Last activity: 2026-07-27
+Last activity: 2026-07-28
