@@ -2,14 +2,50 @@ import { resolve } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   parseDaemonCommandArgs,
   runDaemonCommand,
   signalFreshDaemonOwner,
   type DaemonCommandDependencies
 } from "../../src/daemon/daemon-command.js";
+import type { EmbedderHealth } from "../../src/embeddings/embedder-resolver.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { DifferingIdentityEmbedder } from "../embeddings/fixtures.js";
+
+/**
+ * Plan 12-03 Task 2: the daemon's embedder wiring is only observable through the REAL
+ * `createDefaultDependencies` path (every other test here injects fake dependencies), so the
+ * resolver module is mocked rather than the dependency object. Nothing else in this file touches
+ * `embedder-resolver`, so the mock is inert for the rest of the suite.
+ */
+const embedderMock = vi.hoisted(() => ({
+  calls: [] as string[],
+  health: {
+    enabled: false,
+    provider: "deterministic",
+    model: "keyword-hash-v1",
+    revision: "",
+    healthy: true,
+    reason: null
+  } as EmbedderHealth
+}));
+
+vi.mock("../../src/embeddings/embedder-resolver.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/embeddings/embedder-resolver.js")>();
+  return {
+    ...actual,
+    probeEmbedderHealth: async () => {
+      embedderMock.calls.push("probe");
+      return embedderMock.health;
+    },
+    resolveEmbedder: async () => {
+      embedderMock.calls.push("resolve");
+      const { DifferingIdentityEmbedder: Fake } = await import("../embeddings/fixtures.js");
+      return new Fake();
+    }
+  };
+});
 
 const cleanup: string[] = [];
 
@@ -200,6 +236,81 @@ describe("daemon lifecycle commands", () => {
       error: { code: "lease_conflict", message: "Memory daemon is already running." }
     });
     expect(JSON.stringify(result)).not.toMatch(/SECRET|transcript body/);
+  });
+});
+
+describe("daemon summary-embedder wiring (REQ-043, ADR 0052)", () => {
+  const runOnceAgainstTempDatabase = async (name: string) => {
+    embedderMock.calls.length = 0;
+    const directory = await mkdtemp(join(tmpdir(), `daemon-embedder-${name}-`));
+    cleanup.push(directory);
+    const stderr: string[] = [];
+    const write = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderr.push(String(chunk));
+      return true;
+    });
+    try {
+      const result = await runDaemonCommand({
+        subcommand: "once",
+        databasePath: join(directory, "memory.sqlite")
+      });
+      return { result, stderr };
+    } finally {
+      write.mockRestore();
+    }
+  };
+
+  it("resolves no embedder when embeddings are disabled, so the daemon writes zero vectors", async () => {
+    embedderMock.health = {
+      enabled: false, provider: "deterministic", model: "keyword-hash-v1", revision: "", healthy: true, reason: null
+    };
+
+    const { result } = await runOnceAgainstTempDatabase("disabled");
+
+    expect(result).toMatchObject({ ok: true, subcommand: "once" });
+    // The hash embedder must never write vectors from here: a mixed-provider store is hard-errored
+    // by design (D-05), so "no embedder at all" is the only safe non-ONNX behavior (T-12-16).
+    expect(embedderMock.calls).toEqual(["probe"]);
+  });
+
+  it("surfaces the reason once and keeps running when an enabled embedder is unhealthy", async () => {
+    embedderMock.health = {
+      enabled: true,
+      provider: "onnx-transformers",
+      model: "Xenova/bge-small-en-v1.5",
+      revision: "ea104dac",
+      healthy: false,
+      reason: "vendored model file missing"
+    };
+
+    const { result, stderr } = await runOnceAgainstTempDatabase("unhealthy");
+
+    expect(result).toMatchObject({ ok: true, subcommand: "once" });
+    // Probed, never resolved: `resolveEmbedder` would have thrown (D-05) and stopped the daemon
+    // forming memory at all. Degrading to "no new vectors, reason surfaced" is the A4 reading.
+    expect(embedderMock.calls).toEqual(["probe"]);
+    const reasons = stderr.filter((line) => line.includes("embedder_unhealthy"));
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toContain("vendored model file missing");
+  });
+
+  it("probes before resolving, and resolves exactly once per daemon process", async () => {
+    embedderMock.health = {
+      enabled: true,
+      provider: "fake-differing",
+      model: "fake-repo@r1",
+      revision: "r1",
+      healthy: true,
+      reason: null
+    };
+
+    const { result } = await runOnceAgainstTempDatabase("healthy");
+
+    expect(result).toMatchObject({ ok: true, subcommand: "once" });
+    // Order matters: the non-throwing probe gates the throwing resolver. One resolve, because an
+    // ONNX session costs 72-121 ms and a per-tick resolve would pay it every tick (T-12-17).
+    expect(embedderMock.calls).toEqual(["probe", "resolve"]);
+    expect(new DifferingIdentityEmbedder().model).toBe("fake-repo@r1");
   });
 });
 

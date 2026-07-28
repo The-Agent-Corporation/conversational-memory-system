@@ -7,6 +7,8 @@ import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { z } from "zod";
 import { readDaemonStatusSnapshot, type DaemonStatusSnapshot } from "../bootstrap/status-command.js";
+import type { Embedder } from "../embeddings/embedder.js";
+import { probeEmbedderHealth, resolveEmbedder } from "../embeddings/embedder-resolver.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import { ApprovedSourceRunner } from "./approved-source-runner.js";
@@ -284,6 +286,42 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
         off: (signal, listener) => process.off(signal, listener)
       };
       const notification = new MacOSNotificationAdapter({ commandRunner });
+
+      // REQ-043 / ADR 0052 — ONE embedder per PROCESS, never one per tick.
+      //
+      // `createLoop` is synchronous and `new DaemonLoop({...})` below takes every dependency
+      // synchronously, while an embedder can only be resolved asynchronously (72-121 ms of ONNX
+      // session construction, T-12-17). So the embedder cannot be a conditionally-spread
+      // dependency the way `syncReplication` is: it is resolved into this closure variable by the
+      // memoized initializer, awaited at the top of both `run` and `runOnce` below, and read by
+      // the per-slice `contractionRunner` closure at call time — by which point it has settled.
+      //
+      // Plan 12-04 wires a second dependency that reads this same variable. Do not rename it.
+      let summaryEmbedder: Embedder | undefined;
+      let embedderInitialization: Promise<void> | undefined;
+      const initializeEmbedder = async (): Promise<void> => {
+        embedderInitialization ??= (async () => {
+          // Probe FIRST (D-06): unlike the resolver, the probe never throws. A corrupt model file
+          // therefore degrades the daemon to "no new vectors, reason surfaced" instead of stopping
+          // memory formation. Nothing silently falls back — when the embedder is unhealthy or
+          // disabled, ZERO vectors are written by anything, which is the only safe non-ONNX
+          // behavior given that a mixed-provider store is hard-errored by design (D-05, T-12-16).
+          const health = await probeEmbedderHealth(databasePath);
+          if (!health.enabled) return;
+          if (!health.healthy) {
+            process.stderr.write(`${JSON.stringify({
+              event: "embedder_unhealthy",
+              provider: health.provider,
+              model: health.model,
+              reason: health.reason
+            })}\n`);
+            return;
+          }
+          summaryEmbedder = await resolveEmbedder(databasePath);
+        })();
+        await embedderInitialization;
+      };
+
       const loop = new DaemonLoop({
         store,
         scheduler,
@@ -310,7 +348,7 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
         },
         contractionRunner: {
           drainSlice: (personId, jobId, captured) =>
-            new ContractionRunner(store, { clock, authority: captured }).drainSlice(personId, jobId)
+            new ContractionRunner(store, { clock, authority: captured, summaryEmbedder }).drainSlice(personId, jobId)
         },
         proposalScheduler: {
           runDue: (personId, captured) =>
@@ -322,8 +360,18 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
         })()
       }, { databaseId: "memory-db", ownerToken, pid: process.pid });
       return {
-        run: async (signal) => { try { return await loop.run(signal); } finally { store.close(); } },
-        runOnce: async () => { try { return await loop.runOnce(); } finally { store.close(); } }
+        run: async (signal) => {
+          try {
+            await initializeEmbedder();
+            return await loop.run(signal);
+          } finally { store.close(); }
+        },
+        runOnce: async () => {
+          try {
+            await initializeEmbedder();
+            return await loop.runOnce();
+          } finally { store.close(); }
+        }
       };
     },
     launchAgent,
