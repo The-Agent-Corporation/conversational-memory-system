@@ -324,3 +324,67 @@ marks every existing contraction checkpoint stale via `PROCESSOR_VERSION`, so H-
 apply in the same full rebuild H-iii already required; the next `memory rebuild-derivations`
 invocation against the live corpus closes all three causes at once. No rebuild was run against the
 live database as part of this plan — that remains the explicit owner-gated Plan 11-25.
+
+## Addendum 2026-07-28 — GAP-11-H: `[SILENT]` is a trailing sentinel, not a block (Plan 11-28)
+
+The v3 addendum above widened every literal-prefix rule from an anchored `startsWith` to
+line-anchored `matchesEmbedded`. That is correct for a scaffolding **block** — a
+`<task-notification>` or `<system-reminder>` occupying its own lines is harness text wherever in an
+event it appears. It is wrong for `[SILENT]`, which is a **response sentinel** meaning "emit
+nothing": agents write it on a trailing line *after* explaining their reasoning, so v3 condemned
+the reasoning along with the sentinel.
+
+This is the opposite failure direction from GAP-11-D/E/G. Those let scaffolding into derivations;
+this one **deleted genuine memory** — "Confirmed — the McCay email was already processed fully…",
+"All 12 Roscoe verification tasks are currently `awaiting_owner` — waiting on Aaron's decision",
+"PID 89914 is not alive. Per decision rule A, respond silently." Under `hygiene-rules/v1`'s
+anchored matching these classified `conversational`, correctly. It surfaced not from a probe but
+while characterizing the 350 anchors that classify `synthetic_injected` under v3 to answer whether
+the owner should prune them; 20 of the 350 were this false-positive class, which is why the owner's
+decision (2026-07-28) was **fix the rule and prune 330, not 350**. See `11-GAP-11-H.md`.
+
+### The narrowed predicate
+
+`silent-sentinel` — and *only* that rule — now tests `isSentinelOnly` rather than
+`matchesEmbedded`: the rule fires when the event **is** the sentinel, i.e. removing every
+marker-led line leaves no substantive residue. `matchesEmbedded` itself is unchanged; the other ten
+rules that use it are correct as v3 left them, and widening this fix past one rule entry would
+re-open GAP-11-E (T-11-95). The `roles: ["assistant"]` gate is unchanged.
+
+Lines are dropped when they *start with* the marker rather than when they *equal* it. Both variants
+were measured against the whole live corpus and disagree on **0 of 292,407 events**, so the looser
+one costs nothing there, while keeping a single-line `[SILENT] no response needed` classified
+synthetic (a line opening with the sentinel is wholly a sentinel emission) and keeping the
+`SYNTHETIC_MARKERS` drift guard — `rule.test(marker + "x")` — honest for this rule.
+
+### Counted blast radius (live corpus, read-only, 2026-07-28)
+
+Of the 2,907 assistant-role events carrying a `[SILENT]` line:
+
+| shape | count | after the fix |
+|---|---:|---|
+| pure sentinel — residue empty once sentinel lines are removed | **2,784** | stays `synthetic_injected` |
+| trailing sentinel after real prose | **123** | becomes `conversational` |
+| begins with the marker yet carries residue | **0** | the ambiguous shape does not occur |
+
+The absence of the third shape is what makes the fix clean: there is no case where a bare-sentinel
+prefix is followed by substance, so "residue is empty" separates the two populations exactly. Both
+numbers were re-measured after the change by driving the real `classifyEvent` over the live
+database opened read-only: 2,784 retained, 123 flipped, 0 claimed by any other rule.
+
+### Version bump
+
+`HYGIENE_RULE_VERSION` moved from `hygiene-rules/v3` to `hygiene-rules/v4` (REQ-054) — the third
+bump in this phase, and correct: the rule set changes `classifyEvent` output for 123 events. The v3
+rebuild excluded those 123 events' text from summaries, so restoring them to the derived corpus
+requires another rebuild; the bump marks every contraction checkpoint stale via `PROCESSOR_VERSION`
+so that rebuild fires without `--force`. No rebuild, prune, or any other write was performed by
+Plan 11-28 — the corpus rebuild and the 330-anchor prune are Plan 11-29.
+
+### Why the v3 review missed it
+
+Plan 11-24 asked whether line-anchored matching would catch *more* scaffolding (it does) and
+verified its two known offenders — prose discussing a marker inside a markdown table cell — stayed
+conversational. It never asked whether any marker in the table is a **trailing sentinel** rather
+than a **leading block**. That is a property of a marker's semantics, not of the matching strategy.
+The rule table treats all 13 markers as one kind of thing; they are not.
