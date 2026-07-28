@@ -427,7 +427,7 @@ Plans:
 
 **Wave 25** *(blocked on Wave 24 — re-waved from 13, then 16; SC7 judgement needs 11-26's corrected evidence)*
 
-- [ ] 11-14-PLAN.md — Owner SC7 semantic sign-off, `11-SC7-SIGNOFF.md`, GAP-11-A closure.
+- [x] 11-14-PLAN.md — Owner SC7 semantic sign-off, `11-SC7-SIGNOFF.md`, GAP-11-A closure. **SC7 PASS 2026-07-28** — tool-call 9/12 → 0/12 queries, product-unhygienic 0/12, judged `before-v2` vs `post-v4` on the byte-unchanged harness. 9 of 12 top memories went from raw tool-call JSON to prose, 2 identical, Q6 changed to an equally clean but less on-topic memory and was recorded as a Phase 12 semantic-recall input rather than a hygiene defect.
 
 ### Phase 12: Daemon Incremental Embedding
 
