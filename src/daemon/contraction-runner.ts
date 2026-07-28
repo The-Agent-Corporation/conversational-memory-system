@@ -475,7 +475,7 @@ export class ContractionRunner {
     if (failed > 0) {
       // Counts, provider, and model ONLY (V7/T-12-15). Never a summary id alongside its text, never
       // the text itself, never an error message that quotes the input — the same discipline as
-      // `backfill-embeddings-command.ts:114-122`.
+      // `backfill-embeddings-command.ts:125-133`.
       process.stderr.write(`${JSON.stringify({
         event: "summary_embed_incomplete",
         attempted,
