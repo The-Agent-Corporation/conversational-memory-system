@@ -15,10 +15,12 @@ import {
 // parses JSON. Neither can become a SYNTHETIC_MARKERS entry (T-11-60).
 const NON_LITERAL_RULE_IDS = ["city-harness-preamble", "structured-json-emission"];
 
-// hygiene-rules/v3 (GAP-11-E, Plan 11-24): H-i's embedded-marker matching change and H-0's SC1
-// reversal both change classifyEvent/derivationContents output for some inputs, so the rule
-// version bumps again (REQ-054) — see 11-REMEDIATION-DECISION.md and ADR 0048's SC1 addendum.
-const EXPECTED_HYGIENE_RULE_VERSION = "hygiene-rules/v3";
+// hygiene-rules/v4 (GAP-11-H, Plan 11-28): the `silent-sentinel` rule narrowed from "a [SILENT]
+// line appears anywhere" to "the event's substantive residue is empty once sentinel lines are
+// removed", which changes classifyEvent output for 123 live-corpus events, so the rule version
+// bumps again (REQ-054) — see 11-GAP-11-H.md and ADR 0048's GAP-11-H addendum.
+// (v3, Plan 11-24: H-i's embedded-marker matching change plus H-0's SC1 reversal.)
+const EXPECTED_HYGIENE_RULE_VERSION = "hygiene-rules/v4";
 
 const conv = (content: string, overrides: Partial<ClassifiableEvent> = {}): ClassifiableEvent => ({
   content,
@@ -165,6 +167,88 @@ describe("classifyEvent", () => {
     });
   });
 
+  // GAP-11-H (.planning/phases/11-derivation-input-hygiene/11-GAP-11-H.md, Plan 11-28):
+  // `[SILENT]` is a RESPONSE SENTINEL ("emit nothing"), not a scaffolding BLOCK. Agents write it on
+  // a trailing line AFTER explaining their reasoning, so v3's line-anchored `matchesEmbedded` — right
+  // for `<task-notification>` / `<system-reminder>` blocks — condemned the real reasoning that
+  // preceded the sentinel. Both sides of the distinction are pinned here: the event that IS a
+  // sentinel stays scaffolding; the event that merely ENDS with one is content.
+  //
+  // Counted read-only on the live 292,407-event corpus (2026-07-28): 2,784 pure-sentinel events stay
+  // synthetic, 123 trailing-after-prose events become conversational, 0 events begin with the marker
+  // yet carry residue — the ambiguous shape does not occur, which is what makes "residue is empty"
+  // separate the two populations exactly.
+  describe("classify — silent-sentinel is a trailing sentinel, not a block (GAP-11-H, Plan 11-28)", () => {
+    it("classify — an event that IS the bare sentinel stays synthetic_injected", () => {
+      const result = classifyEvent(conv("[SILENT]", { role: "assistant" }));
+      expect(result.derivationClass).toBe("synthetic_injected");
+      expect(result.ruleId).toBe("silent-sentinel");
+    });
+
+    it("classify — sentinel lines and nothing else (blank-line padded) stay synthetic_injected", () => {
+      const result = classifyEvent(conv("\n[SILENT]\n\n[SILENT]\n  ", { role: "assistant" }));
+      expect(result.derivationClass).toBe("synthetic_injected");
+      expect(result.ruleId).toBe("silent-sentinel");
+    });
+
+    it("classify — GAP-11-H's real corpus shape: reasoning followed by a trailing sentinel is conversational", () => {
+      // Verbatim shape of event_ae2065736d33216b9ef07966620ec5c9ca9a377a28cee7a43d50130864cdf3f3,
+      // one of the 123. Under hygiene-rules/v1 this classified conversational; v3 regressed it.
+      const result = classifyEvent(
+        conv(
+          "Nothing actionable. All Roscoe verification tasks are either:\n" +
+            "- `awaiting_owner` (Hermes) — 12 tasks, excluded per rules\n" +
+            "- `assigned` to Aaron — excluded\n" +
+            "- `backlog` — not in candidate status list\n\n" +
+            "No task to claim this run.\n\n" +
+            "[SILENT]",
+          { role: "assistant" }
+        )
+      );
+      expect(result.derivationClass).toBe("conversational");
+      expect(result.ruleId).toBeNull();
+    });
+
+    it("classify — GAP-11-H's second corpus shape (`PID 89914 is not alive…`) is conversational", () => {
+      const result = classifyEvent(
+        conv(
+          "PID 89914 is not alive. Per decision rule A, respond silently so Hermes can handle\n" +
+            "the completion report separately.\n\n" +
+            "[SILENT]",
+          { role: "assistant" }
+        )
+      );
+      expect(result.derivationClass).toBe("conversational");
+    });
+
+    it("classify — a fenced sentinel inside real reasoning is conversational (fence lines are residue)", () => {
+      // event_c59705515c602289f75e96489f08ce7d17d1750e1ee3f5ebfda29e102f7c3bfd shape.
+      const result = classifyEvent(
+        conv("No eligible task exists this run.\n\n```\n[SILENT]\n```\n\n[SILENT]", { role: "assistant" })
+      );
+      expect(result.derivationClass).toBe("conversational");
+    });
+
+    it("classify — the sentinel quoted mid-sentence remains conversational (unchanged from v3)", () => {
+      const result = classifyEvent(
+        conv("~40/79 spans were silent `[SILENT]` cron noise, which is worth remembering.", {
+          role: "assistant"
+        })
+      );
+      expect(result.derivationClass).toBe("conversational");
+    });
+
+    it("classify — the narrowing is one rule wide: a trailing <system-reminder> line still condemns its event", () => {
+      // T-11-95: the fix must not leak into the other ten matchesEmbedded rules, which are correct —
+      // a block marker on its own trailing line is still scaffolding wherever it appears (GAP-11-E).
+      const result = classifyEvent(
+        conv("Here is the real answer to your question.\n\n<system-reminder>Do not forget X</system-reminder>")
+      );
+      expect(result.derivationClass).toBe("synthetic_injected");
+      expect(result.ruleId).toBe("system-reminder-only");
+    });
+  });
+
   describe("classify — determinism", () => {
     it("classify — is a pure function: identical input yields identical output across repeated calls", () => {
       const fixtures: ClassifiableEvent[] = [
@@ -187,7 +271,7 @@ describe("classifyEvent", () => {
       expect(result.ruleVersion).toBe(HYGIENE_RULE_VERSION);
     });
 
-    it("classify — HYGIENE_RULE_VERSION is hygiene-rules/v3 (Plan 11-24 bump)", () => {
+    it("classify — HYGIENE_RULE_VERSION is hygiene-rules/v4 (Plan 11-28 bump, GAP-11-H)", () => {
       expect(HYGIENE_RULE_VERSION).toBe(EXPECTED_HYGIENE_RULE_VERSION);
     });
   });
