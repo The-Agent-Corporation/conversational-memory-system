@@ -423,7 +423,7 @@ Plans:
 **Wave 24** *(blocked on Wave 23)*
 
 - [x] 11-27-PLAN.md — GAP-11-G closure: gate the rebuild path's anchor minting and make the forward gate eventKind-aware; re-measure resurrection on a clone (result: 0).
-- [ ] 11-26-PLAN.md — Final frozen-probe run against the remediated corpus, real tally recorded, GAP-11-E disposition.
+- [x] 11-26-PLAN.md — Final frozen-probe run against the remediated corpus, real tally recorded, GAP-11-E disposition. (`final-v2`: tool-call 0/12, product-unhygienic 2/12 from one pre-existing anchor, probe-suspicious 3/12 advisory; GAP-11-E closed. No SC7 verdict — that is 11-14.)
 
 **Wave 25** *(blocked on Wave 24 — re-waved from 13, then 16; SC7 judgement needs 11-26's corrected evidence)*
 

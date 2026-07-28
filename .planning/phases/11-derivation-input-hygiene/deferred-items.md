@@ -49,3 +49,29 @@ _The other entry raised during execution is resolved below._
   main checkout is the authoritative result. Executors should judge their own work by targeted suites
   while running in a worktree.
 - **Action required:** none. No `src/mcp/` investigation is needed before the next phase.
+
+---
+
+## REQ-052's text still encodes the pre-reversal SC1 carve-out (found by Plan 11-26, NOT fixed)
+
+`.planning/REQUIREMENTS.md:86` still reads, verbatim:
+
+> **REQ-052 — Tool-activity collapse:** … **An isolated tool call shall retain normal summarization.** …
+
+That clause is the SC1 carve-out the owner **reversed** on 2026-07-27 (`11-REMEDIATION-DECISION.md`
+Decision 1, "Revise SC1 so an isolated tool call is collapsed rather than kept verbatim"). Plan 11-24
+amended ROADMAP SC1 in place with the original text preserved, added the ADR 0048 addendum, and marked
+the `11-CONTEXT.md` entry superseded — but `REQUIREMENTS.md` was not amended, so the requirement now
+contradicts both the roadmap criterion it maps to and the shipped `hygiene-rules/v3` behaviour
+(measured: 0/33 packet items carry `[Tool call: ` text at `final-v2`).
+
+REQ-052/053/054 are already marked `Complete` in the traceability table (`REQUIREMENTS.md:113-115`), so
+this is a stale-text problem, not a status problem.
+
+**Why Plan 11-26 did not fix it:** out of scope — `REQUIREMENTS.md` is not in 11-26's `files_modified`,
+and silently rewording a requirement during a measurement plan is exactly the instrument-tampering
+shape this phase's threat register (T-11-93) exists to prevent. Amending a requirement to match shipped
+behaviour is a decision, not a cleanup.
+
+**Suggested owner:** Plan 11-14, alongside the SC7 sign-off, applying the same amend-in-place-with-
+original-text-preserved convention Plan 11-24 used for ROADMAP SC1.
