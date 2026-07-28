@@ -114,7 +114,7 @@ A fresh installation is immediately useful when it can discover approved histori
 | REQ-053 | Phase 11 — Derivation Input Hygiene | Complete |
 | REQ-054 | Phase 11 — Derivation Input Hygiene | Complete |
 | REQ-043 | Phase 12 — Daemon Incremental Embedding | Pending |
-| REQ-045 | Phase 12 — Daemon Incremental Embedding | Pending |
+| REQ-045 | Phase 12 — Daemon Incremental Embedding | In progress (12-01: provider/model/version recorded in one canonical composed identity) |
 | REQ-046 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
 | REQ-047 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |
 | REQ-048 | Phase 13 — Forward-Only Vector Trace Discovery | Pending |

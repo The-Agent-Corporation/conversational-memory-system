@@ -2,26 +2,26 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
-current_phase: 11
-current_plan: 31
+current_phase: 12
+current_plan: 1
 status: executing
-stopped_at: "PHASE 11 COMPLETE. All 31 plans executed; SC7 signed off PASS 2026-07-28. Final state: canonical 292,407 / active summaries 49,314 / anchors 18,938 / unhygienic anchors 0 / checkpoint continuous-contraction/v1+hygiene-rules/v4 gen 4. Suite 1,038 passed / 4 skipped, typecheck clean. Git history rewritten to remove the GAP-11-F credential -- 57 SHAs changed (544 commits preserved, 0 dropped), 110 doc citations remapped, Task 1 backup-evidence SHAs deliberately left pre-rewrite and marked, nothing pushed. Credential absent from all 544 commits by two independent mechanisms; HEAD tree byte-identical; 19/19 changed blobs proved to differ only by the redaction. GAP-11-F's 16-commit exposure figure was confirmed correct, not reduced. Restore point at ~/cms-pre-rewrite-backup/ (contains the pre-rewrite history, so it still holds the credential by design). Next: milestone v1.1 Phase 12 (semantic recall), with Q6 relevance and Q12 false-positive recorded as inputs."
-previous_stopped_at: "Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean."
-last_updated: "2026-07-28T18:30:00.000Z"
+stopped_at: "PHASE 12 WAVE 1 COMPLETE (plan 12-01). GAP-12-A closed: one exported composeModelIdentity(repo, revision) is now the only expression that builds a vector-key model identity; TransformerEmbedder assigns it in the constructor body (field initializers would compose against an undefined revision) and stamps the same string, pipeline() keeps the bare repo id. Empty/whitespace revision composes to the bare string, so keyword-hash-v1 and every deterministic row already persisted keep their exact key. Backfill convergence now measured under BOTH a two-identity fake (DifferingIdentityEmbedder, exported from tests/embeddings/fixtures.ts for 12-03/12-04 to reuse) and the REAL TransformerEmbedder against the vendored fixture model, which is present so that case ran rather than skipping: missing set empties, rerun processes 0, embedCalls does not move. Pre-fix RED captured verbatim in 12-01-SUMMARY.md - after a complete run over 3 summaries all 3 were still missing. Backfill listSummaries is now state-filtered to RETRIEVABLE_MEMORY_STATES. Third instance of the same bug found and fixed as a Rule 1 deviation: memory status queried with the sidecar bare model - that is edit 1 of 2 in Plan 12-02 Task 2, already applied and tested; 12-02 still owns the denominator edit. Second instance in memory-retriever.ts:585 VERIFIED fixed by construction and deliberately NOT edited. Suite 1,057 passed / 4 skipped, typecheck clean, golden 16/1 skipped, no @${ composition anywhere in src/ outside embedder-identity.ts. No live database opened; all four ~/.memory backups intact. Next: wave 2, plan 12-02 (GAP-12-B)."
+previous_stopped_at: "PHASE 11 COMPLETE. All 31 plans executed; SC7 signed off PASS 2026-07-28. Final state: canonical 292,407 / active summaries 49,314 / anchors 18,938 / unhygienic anchors 0 / checkpoint continuous-contraction/v1+hygiene-rules/v4 gen 4. Suite 1,038 passed / 4 skipped, typecheck clean. Git history rewritten to remove the GAP-11-F credential -- 57 SHAs changed (544 commits preserved, 0 dropped), 110 doc citations remapped, Task 1 backup-evidence SHAs deliberately left pre-rewrite and marked, nothing pushed. Credential absent from all 544 commits by two independent mechanisms; HEAD tree byte-identical; 19/19 changed blobs proved to differ only by the redaction. GAP-11-F's 16-commit exposure figure was confirmed correct, not reduced. Restore point at ~/cms-pre-rewrite-backup/ (contains the pre-rewrite history, so it still holds the credential by design). Next: milestone v1.1 Phase 12 (semantic recall), with Q6 relevance and Q12 false-positive recorded as inputs."
+last_updated: "2026-07-28T23:00:00.000Z"
 last_activity: 2026-07-28
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 96
-  completed_plans: 92
-  percent: 53
+  completed_plans: 93
+  percent: 54
 ---
 
 # Project State
 
-**Current phase:** 11
-**Current plan:** 31
-**Status:** Phase 11 complete
+**Current phase:** 12
+**Current plan:** 1
+**Status:** Phase 12 executing (wave 1 complete)
 **Last updated:** 2026-07-28
 
 ## Completed
@@ -32,6 +32,8 @@ progress:
 - v1.1 ROADMAP.md written: Phases 8-14 derived from REQ-041..051, dependency-ordered per research SUMMARY.md/ARCHITECTURE.md build order.
 
 ## Active Work
+
+- **Phase 12 wave 1 complete 2026-07-28 (Plan 12-01).** GAP-12-A closed. `src/embeddings/embedder-identity.ts` holds the single `composeModelIdentity(repo, revision)`; `TransformerEmbedder` advertises exactly what it stamps; the backfill converges under a two-identity embedder and under the real ONNX embedder (fixture model present, so that case ran). `tests/embeddings/fixtures.ts` exports `DifferingIdentityEmbedder` — Plans 12-03 and 12-04 MUST import it rather than write a coinciding-identity fake. `memory status` was fixed in the same pass (Rule 1): that is **edit 1 of 2 in Plan 12-02 Task 2** — 12-02 still owns the embeddable-denominator edit. `memory-retriever.ts:585`'s second instance is fixed by construction and was deliberately NOT edited. See `.planning/phases/12-daemon-incremental-embedding/12-01-SUMMARY.md`.
 
 - Phases 8-10 complete (vector storage, embedder, backfill). Backfill machinery is built but has NOT been run against the live corpus (`~/.memory/aaron.db` is still at schema version 1, no vector table).
 - **Phase 11 — Derivation Input Hygiene inserted 2026-07-26.** Corpus audit found 64% of canonical events are tool calls, 38% of summaries contain verbatim `[Tool call:` argument text, and ~49% of "user" turns are harness-injected scaffolding — roughly 7% of the corpus is human-authored. Former Phases 11-14 renumbered to 12-15; REQ-052/053/054 added. See `.planning/phases/11-derivation-input-hygiene/11-SCOPE-INSERT.md`.

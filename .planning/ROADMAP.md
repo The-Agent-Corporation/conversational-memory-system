@@ -445,7 +445,7 @@ Plans:
 
 Plans:
 
-- [ ] 12-01-PLAN.md — Close GAP-12-A: one canonical embedder identity, used for both the missing-set query and every written vector row. (wave 1)
+- [x] 12-01-PLAN.md — Close GAP-12-A: one canonical embedder identity, used for both the missing-set query and every written vector row. (wave 1) **COMPLETE 2026-07-28** — `composeModelIdentity` is the single composition point; `TransformerEmbedder` advertises what it stamps; convergence measured under a two-identity fake AND the real ONNX embedder (missing set empties, rerun processes 0). `memory status` fixed in the same pass (edit 1 of 2 in 12-02 Task 2). `memory-retriever.ts:585`'s unreported second instance verified fixed by construction, file unedited.
 - [ ] 12-02-PLAN.md — Close GAP-12-B: state-predicate the missing-set query in BOTH stores plus a schema v4 covering index, add `listSummariesByIds` and a `limit`, and make `memory status` query the real identity with a real denominator. (wave 2)
 - [ ] 12-03-PLAN.md — The seam: post-commit embed stage in `ContractionRunner`, one process-lifetime embedder in the daemon, the SC3 never-sync negative test, and ADR 0052. (wave 3)
 - [ ] 12-04-PLAN.md — Bounded missing-set repair pass for the crash-between-commit-and-embed hole, wired as a failure-swallowing daemon dependency. (wave 4)
