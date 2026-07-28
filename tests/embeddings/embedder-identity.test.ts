@@ -1,5 +1,12 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { composeModelIdentity } from "../../src/embeddings/embedder-identity.js";
+import { DeterministicEmbedder } from "../../src/embeddings/embedder.js";
+import { TransformerEmbedder } from "../../src/embeddings/transformer-embedder.js";
+
+const MODEL_PATH = process.env.MEMORY_MODEL_PATH ?? "tests/fixtures/models";
+const MODEL_PRESENT = existsSync(join(MODEL_PATH, "Xenova/bge-small-en-v1.5/onnx/model.onnx"));
 
 /**
  * GAP-12-A regression: the vector-key model identity must be composed in exactly
@@ -58,4 +65,53 @@ describe("composeModelIdentity", () => {
     expect(composeModelIdentity("repo", undefined as unknown as string)).toBe("repo");
     expect(composeModelIdentity("repo", null as unknown as string)).toBe("repo");
   });
+});
+
+/**
+ * GAP-12-A itself: an embedder must advertise byte-identically what it stamps.
+ * The class-level assertions need no model files; the emitted-vector assertion is
+ * skipped (never failed) when the vendored fixture model is absent, mirroring
+ * `transformer-embedder.golden.test.ts`.
+ */
+describe("embedder advertised identity === emitted identity", () => {
+  it("TransformerEmbedder advertises the composed repo@revision identity", () => {
+    const embedder = new TransformerEmbedder({ localModelPath: MODEL_PATH, revision: "ea104dae" });
+    expect(embedder.model).toBe(composeModelIdentity("Xenova/bge-small-en-v1.5", "ea104dae"));
+    expect(embedder.model).toBe("Xenova/bge-small-en-v1.5@ea104dae");
+  });
+
+  it("TransformerEmbedder with an empty revision advertises the bare repo id", () => {
+    const embedder = new TransformerEmbedder({ localModelPath: MODEL_PATH, revision: "" });
+    expect(embedder.model).toBe("Xenova/bge-small-en-v1.5");
+  });
+
+  it("never advertises the literal string \"undefined\" as a revision (T-12-02)", () => {
+    // A `readonly model = composeModelIdentity(this.repo, this.revision)` field
+    // initializer would run before the constructor body and compose against an
+    // undefined revision, burning "…@undefined" into every persisted vector key.
+    const embedder = new TransformerEmbedder({ localModelPath: MODEL_PATH, revision: "r1" });
+    expect(embedder.model).not.toContain("undefined");
+  });
+
+  it("DeterministicEmbedder's key is unchanged by the composition rule", () => {
+    const embedder = new DeterministicEmbedder();
+    expect(embedder.model).toBe("keyword-hash-v1");
+    expect(composeModelIdentity(embedder.model, "")).toBe("keyword-hash-v1");
+  });
+
+  it.runIf(MODEL_PRESENT)(
+    "TransformerEmbedder stamps exactly the identity it advertises",
+    async () => {
+      const embedder = new TransformerEmbedder({ localModelPath: MODEL_PATH, revision: "main" });
+      await embedder.init();
+
+      const passage = await embedder.embed("identity check passage");
+      expect(passage.model).toBe(embedder.model);
+      expect(passage.provider).toBe(embedder.provider);
+
+      const query = await embedder.embedQuery("identity check query");
+      expect(query.model).toBe(embedder.model);
+    },
+    120_000
+  );
 });

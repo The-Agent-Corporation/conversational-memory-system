@@ -1,5 +1,6 @@
 import { pipeline, env, type FeatureExtractionPipeline } from "@huggingface/transformers";
 import type { AsymmetricEmbedder } from "./embedder.js";
+import { composeModelIdentity } from "./embedder-identity.js";
 import type { Embedding } from "../domain/types.js";
 
 /**
@@ -30,8 +31,18 @@ export interface TransformerEmbedderOptions {
  */
 export class TransformerEmbedder implements AsymmetricEmbedder {
   readonly provider = "onnx-transformers";
-  readonly model = "Xenova/bge-small-en-v1.5";
+  /**
+   * The vector-key identity: `repo@revision`, byte-identical to the `model` this
+   * embedder stamps on every `Embedding` it emits (GAP-12-A). Assigned in the
+   * constructor body, NOT as a field initializer — initializers run before the
+   * constructor body, so composing there would key every persisted vector as
+   * `"…@undefined"` (T-12-02).
+   */
+  readonly model: string;
   readonly dimensions = 384;
+
+  /** The bare HF repo id. Only `pipeline()` uses this — a composed id would not resolve on disk. */
+  private readonly repo = "Xenova/bge-small-en-v1.5";
 
   private pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
   private readonly revision: string;
@@ -39,6 +50,7 @@ export class TransformerEmbedder implements AsymmetricEmbedder {
 
   constructor(private readonly options: TransformerEmbedderOptions) {
     this.revision = options.revision;
+    this.model = composeModelIdentity(this.repo, this.revision);
     this.createdAtFn = options.createdAt ?? (() => new Date().toISOString());
   }
 
@@ -51,7 +63,9 @@ export class TransformerEmbedder implements AsymmetricEmbedder {
     // the promise) surfaces load failures at startup, inside init(), rather
     // than lazily on the first embed() call (Pitfall 3 / D-05's "refuse to
     // run" intent). Never call pipeline() anywhere else in this class.
-    this.pipelinePromise = pipeline("feature-extraction", this.model, {
+    // `this.repo` (bare), never `this.model` (composed) — a `repo@revision`
+    // string would not resolve against the vendored on-disk layout (T-12-01).
+    this.pipelinePromise = pipeline("feature-extraction", this.repo, {
       revision: this.revision,
       dtype: "fp32",
       device: "cpu",
@@ -100,7 +114,7 @@ export class TransformerEmbedder implements AsymmetricEmbedder {
 
     return {
       provider: this.provider,
-      model: `${this.model}@${this.revision}`,
+      model: this.model,
       dimensions: this.dimensions,
       vector: Array.from(output.data as Float32Array),
       createdAt: this.createdAtFn()
