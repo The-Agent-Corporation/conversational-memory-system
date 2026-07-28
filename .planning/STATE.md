@@ -3,16 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 30
+current_plan: 31
 status: executing
-stopped_at: "Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean."
-last_updated: "2026-07-28T15:05:00.000Z"
+stopped_at: "Plan 11-30 complete -- GAP-11-F's DETECTION half is closed. Found three distinct predicate failures in `secret-redactor.ts`: (a) the lead-in word `login` was absent from the keyword set, (b) the keyword rule's value grammar captures one non-whitespace run so it could not express a `user / pass` pair even with `login` added, and (c) the optional-quote class cannot skip a backslash, so every secret inside backslash-escaped JSON tool-call content was invisible to it -- (c) is 10x the corpus volume of the class that actually escaped. Shipped four rules, each measured on the live corpus first: escaped-quote keyword pair (300 new catches, 0 FP, keyword set unwidened), credential lead-in + user/pass (the GAP-11-F class, 0 FP across 292,407 events), narrowed spaced key phrase (9 catches, 0 FP), URI userinfo (51 catches, 0 FP). REJECTED two on measured precision with their numbers: the ungated user/pass variant at 50% FP, and a bare 64-hex rule that would redact ~1,080 content digests and object IDs against 8 real key rows; both rejections pinned by passing control tests. Corpus-scale regression check: 449,718 rows, 321 changed (0.071%), 406 spans added, 0 existing redactions LOST. Propagation decision RECORDED in ADR 0045 (not implemented, per plan): derivation does NOT re-scan -- of 143 contaminated summaries the verbatim rendering survives into exactly ONE, the summarizer paraphrased the rest, so a re-scan would have caught ~0.7% of the fan-out. Corpus opened readOnly throughout; all four backups untouched; no live secret in any tracked file; all fixtures synthetic. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,038 passed / 4 skipped, typecheck clean."
+previous_stopped_at: "Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean."
+last_updated: "2026-07-28T18:30:00.000Z"
 last_activity: 2026-07-28
 progress:
   total_phases: 15
   completed_phases: 8
-  total_plans: 95
-  completed_plans: 91
+  total_plans: 96
+  completed_plans: 92
   percent: 53
 ---
 
@@ -65,14 +66,16 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-28T15:05:00.000Z
-**Stopped at:** Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean.
+**Last session:** 2026-07-28T18:30:00.000Z
+**Stopped at:** Plan 11-30 complete — GAP-11-F's detection half is closed. `src/imports/secret-redactor.ts` gained four rules, each measured on the live corpus for both true and false positives before shipping; two further candidates were rejected on measured precision and pinned by control tests. Corpus-scale check: 449,718 rows, 321 changed, 406 spans added, 0 existing redactions lost. The propagation question is recorded in ADR 0045 (decision only, no re-scan implemented): derivation does not re-scan, because the summariser paraphrases and a re-scan would have caught 1 of 143 contaminated summaries. Audit at `.planning/phases/11-derivation-input-hygiene/11-REDACTOR-AUDIT.md`. Corpus read-only throughout, all four backups untouched, no live secret in any tracked file. Remaining Phase 11 work: Plan 11-31 (git history rewrite, after SC7 sign-off) and Plan 11-14 (owner SC7 verdict). Suite 1,038 passed / 4 skipped, typecheck clean.
+**Previously stopped at:** Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean.
 **Resume file:** None
 
 ## Performance Metrics
 
 | Phase | Plan | Duration | Notes |
 |-------|------|----------|-------|
+| Phase 11 P30 | ~2h | 3 tasks | 5 files (1 source) |
 | Phase 11 P29 | 45min | 3 tasks | 4 files (0 source) |
 | Phase 05 P05 | 15min | 3 tasks | 12 files |
 | Phase 05 P06 | 10min | 2 tasks | 4 files |
@@ -98,6 +101,9 @@ progress:
 
 ## Decisions
 
+- [Phase 11]: Redaction stays AUTHORITATIVE at import; derivation does NOT re-scan for secrets (ADR 0045 addendum, 2026-07-28) — the deciding evidence is empirical, not architectural: of GAP-11-F's 143 contaminated summaries the verbatim escaped rendering survives into exactly ONE, because the summarizer paraphrases rather than copies, so a derivation re-scan with import-shaped rules would have caught ~0.7% of the fan-out it appears to promise, on a far hotter path, at the cost of giving redaction two owners that can silently drift
+- [Phase 11]: A candidate redaction rule ships only with measured true- AND false-positive counts on the real corpus — an over-broad rule at an authoritative boundary has no downstream check either, so it shreds legitimate memory with the same finality that a missing rule leaks; a bare 64-hex rule was REJECTED on this basis (~1,080 content digests and object IDs against 8 real key rows) and its control case is pinned as a passing test
+- [Phase 11]: The escaped-quote redaction rule reuses the SHIPPED keyword set unwidened — its false-positive profile is then identical to a rule already trusted in production since ADR 0045, which is why it could ship on 300 new catches without a separate precision argument
 - [Phase 11]: Anchors get no MemoryState lifecycle — gated forward by `drivesTopicLabel`, pruned backward by `commitUnhygienicAnchorPrune` (ADR 0051) — anchors have zero inbound references anywhere in `src/domain`, so unlike summaries there is no reference-protection class to preserve, and a lifecycle would durably retain the exact tool-call text REQ-053 exists to exclude
 - [Phase 11]: The anchor prune's dry-run must classify with the SAME enriched inputs as apply, not content-only — a preview that under-reports the blast radius of the destructive operation it previews is a defect in an operator tool regardless of the delta's size (measured 25,792 vs 26,643); pinned by a parity assertion so the paths cannot drift
 - [Phase 11]: A fresh backup taken from the CURRENT state precedes any live prune, not the older pre-phase11 backup — the latter predates the summary rebuild, and ADR 0051 records that no `rebuild-anchors` command exists, so a pruned anchor is not regenerable and the backup is the only recovery path
@@ -165,6 +171,6 @@ progress:
 ## Current Position
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
-Plan: 11-26 complete. **Plan 11-14 (owner SC7 sign-off) is the only remaining Phase 11 work.**
+Plan: 11-30 complete (GAP-11-F detection half closed). Remaining Phase 11 work: **Plan 11-31** (git history rewrite, runs after SC7 sign-off) and **Plan 11-14** (owner SC7 sign-off).
 Status: Awaiting Plan 11-14 — the SC7 verdict is the owner's call and no agent has made or may make it.
 Last activity: 2026-07-28
