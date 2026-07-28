@@ -5,7 +5,7 @@ milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
 current_plan: 31
 status: executing
-stopped_at: "PHASE 11 COMPLETE. All 31 plans executed; SC7 signed off PASS 2026-07-28. Final state: canonical 292,407 / active summaries 49,314 / anchors 18,938 / unhygienic anchors 0 / checkpoint continuous-contraction/v1+hygiene-rules/v4 gen 4. Suite 1,038 passed / 4 skipped, typecheck clean. Git history rewritten to remove the GAP-11-F credential -- 58 SHAs changed, 110 doc citations remapped, nothing pushed. Restore point at ~/cms-pre-rewrite-backup/ (contains the pre-rewrite history, so it still holds the credential by design). Next: milestone v1.1 Phase 12 (semantic recall), with Q6 relevance and Q12 false-positive recorded as inputs."
+stopped_at: "PHASE 11 COMPLETE. All 31 plans executed; SC7 signed off PASS 2026-07-28. Final state: canonical 292,407 / active summaries 49,314 / anchors 18,938 / unhygienic anchors 0 / checkpoint continuous-contraction/v1+hygiene-rules/v4 gen 4. Suite 1,038 passed / 4 skipped, typecheck clean. Git history rewritten to remove the GAP-11-F credential -- 57 SHAs changed (544 commits preserved, 0 dropped), 110 doc citations remapped, Task 1 backup-evidence SHAs deliberately left pre-rewrite and marked, nothing pushed. Credential absent from all 544 commits by two independent mechanisms; HEAD tree byte-identical; 19/19 changed blobs proved to differ only by the redaction. GAP-11-F's 16-commit exposure figure was confirmed correct, not reduced. Restore point at ~/cms-pre-rewrite-backup/ (contains the pre-rewrite history, so it still holds the credential by design). Next: milestone v1.1 Phase 12 (semantic recall), with Q6 relevance and Q12 false-positive recorded as inputs."
 previous_stopped_at: "Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean."
 last_updated: "2026-07-28T18:30:00.000Z"
 last_activity: 2026-07-28
@@ -20,9 +20,9 @@ progress:
 # Project State
 
 **Current phase:** 11
-**Current plan:** 30
-**Status:** Ready to execute
-**Last updated:** 2026-07-27
+**Current plan:** 31
+**Status:** Phase 11 complete
+**Last updated:** 2026-07-28
 
 ## Completed
 
