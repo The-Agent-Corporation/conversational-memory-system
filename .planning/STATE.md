@@ -3,23 +3,23 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Vector-Native Traces + Semantic Recall
 current_phase: 11
-current_plan: 29
+current_plan: 30
 status: executing
-stopped_at: "Plan 11-28 complete -- GAP-11-H CLOSED. `silent-sentinel` narrowed from `matchesEmbedded` to `isSentinelOnly`: a trailing `[SILENT]` line no longer discards the reasoning that precedes it. Census re-derived independently read-only BEFORE the change and re-measured with the real `classifyEvent` AFTER it -- 2,784 pure sentinels stay synthetic, exactly 123 of 292,407 flip to conversational, 0 claimed by any other rule. `HYGIENE_RULE_VERSION` -> `hygiene-rules/v4` (REQ-054), third bump this phase, which marks every contraction checkpoint stale so Plan 11-29's rebuild fires without `--force`. `matchesEmbedded` and the other ten rules untouched (T-11-95). NO rebuild, NO prune, NO write to `~/.memory/aaron.db` -- that is Plan 11-29. Suite 1,024 passed / 4 skipped, typecheck clean."
-last_updated: "2026-07-28T14:15:40.377Z"
+stopped_at: "Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean."
+last_updated: "2026-07-28T15:05:00.000Z"
 last_activity: 2026-07-28
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 95
-  completed_plans: 90
+  completed_plans: 91
   percent: 53
 ---
 
 # Project State
 
 **Current phase:** 11
-**Current plan:** 29
+**Current plan:** 30
 **Status:** Ready to execute
 **Last updated:** 2026-07-27
 
@@ -65,14 +65,15 @@ progress:
 
 ## Session
 
-**Last session:** 2026-07-28T14:15:40.370Z
-**Stopped at:** Plan 11-28 complete -- GAP-11-H CLOSED. `silent-sentinel` narrowed from `matchesEmbedded` to `isSentinelOnly`: a trailing `[SILENT]` line no longer discards the reasoning that precedes it. Census re-derived independently read-only BEFORE the change and re-measured with the real `classifyEvent` AFTER it -- 2,784 pure sentinels stay synthetic, exactly 123 of 292,407 flip to conversational, 0 claimed by any other rule. `HYGIENE_RULE_VERSION` -> `hygiene-rules/v4` (REQ-054), third bump this phase, which marks every contraction checkpoint stale so Plan 11-29's rebuild fires without `--force`. `matchesEmbedded` and the other ten rules untouched (T-11-95). NO rebuild, NO prune, NO write to `~/.memory/aaron.db` -- that is Plan 11-29. Suite 1,024 passed / 4 skipped, typecheck clean.
+**Last session:** 2026-07-28T15:05:00.000Z
+**Stopped at:** Plan 11-29 complete -- the live corpus is at `hygiene-rules/v4` and 330 scaffolding anchors are gone. Rebuild ran WITHOUT `--force` (the v4 bump marked the checkpoint stale), 9m40s, receipt byte-identical to the clone rehearsal. Prune deleted exactly 330 (329 `task-notification` + 1 `harness-system`), the deleted id set set-equal to the rehearsal's id for id; all 20 silent-sentinel anchors verified PRESENT by id on the live corpus and 0 of them in the deleted set; resurrection against Plan 11-18's 26,643-id set measured 0. Corpus now: active summaries 49,314, superseded 89,059, anchors 18,938, unhygienic anchors 0, checkpoint `continuous-contraction/v1+hygiene-rules/v4` gen 4 sliceCount 4,680. Fourth backup at `~/.memory/aaron.db.pre-v4` (inode 181531855); all four backups intact. `post-v4` probe column: tool-call 0/33 items 0/12 queries, product-unhygienic 0/33 0/12, probe-suspicious 2/33 1/12 (advisory, inspected, 0 of 6 marker occurrences at a line start). Frozen query set and harness byte-unchanged. GAP-11-F credential redacted from the probe artifact before staging. NO SC7 claim -- that is Plan 11-14 and the owner's call. Suite 1,024 passed / 4 skipped, typecheck clean.
 **Resume file:** None
 
 ## Performance Metrics
 
 | Phase | Plan | Duration | Notes |
 |-------|------|----------|-------|
+| Phase 11 P29 | 45min | 3 tasks | 4 files (0 source) |
 | Phase 05 P05 | 15min | 3 tasks | 12 files |
 | Phase 05 P06 | 10min | 2 tasks | 4 files |
 | Phase 05 P07 | 7min | 2 tasks | 3 files |
@@ -103,6 +104,9 @@ progress:
 - [Phase 11]: A marker's SEMANTICS decide its matching strategy, not the rule table's uniformity — `[SILENT]` is a trailing RESPONSE SENTINEL, so `silent-sentinel` fires only when the event IS the sentinel (`isSentinelOnly`), while the other ten literal-prefix rules keep `matchesEmbedded` because a scaffolding BLOCK is harness text wherever it sits (GAP-11-H; widening the fix past one rule would re-open GAP-11-E)
 - [Phase 11]: `isSentinelOnly` drops lines that START with the marker rather than lines EQUAL to it — the two predicates were measured over all 292,407 live events and disagree on 0, so the looser one costs nothing on-corpus while keeping the already-pinned `[SILENT] no response needed` fixture synthetic and the T-11-60 `SYNTHETIC_MARKERS` drift guard honest
 - [Phase 11]: `HYGIENE_RULE_VERSION` -> `hygiene-rules/v4` (REQ-054) — the third bump in one phase is correct, not something to avoid: the rule set changes `classifyEvent` output for 123 events, and the bump is what marks every contraction checkpoint stale so Plan 11-29's rebuild fires without `--force`
+- [Phase 11]: The 330-anchor prune passed the FULL 19,268-anchor candidate set and let `commitUnhygienicAnchorPrune` recompute eligibility inside its own transaction -- `anchorIds` is a request, never an authorization (T-11-100), so the 330 is the store's own classification rather than a list an executor supplied
+- [Phase 11]: The 20 silent-sentinel anchors were enumerated BY ID before any write, so "the 20 survived" is checkable against a written set rather than a count -- and both the clone and the live run were verified against that list, not against a delta
+- [Phase 11]: The v4 rebuild's 61 net new active summaries reached NONE of the 12 probe packets; every packet-visible improvement came from the anchor prune. The case for restoring the 123 events rests on GAP-11-H's argument that it stops the system deleting genuine memory, not on probe evidence, and is recorded that way rather than credited to the probe delta
 - [Phase 11]: Residual summary-sourced tool-call text is tracked as GAP-11-E rather than absorbed into Phase 11's SC7 sign-off as a caveat — Phase 11 delivered the anchor path; the summary path is a distinct defect with its own root-cause question
 
 - [v1.1 Roadmap]: REQ-050 (embedding deletion propagation) is delivered entirely in Phase 14 — Phase 8 only designs the tombstoning-capable schema/query surface as infrastructure; the actual `commitSourceDeletion` wiring and correctness gate lands in Phase 14, per requirement-to-phase 1:1 mapping.
