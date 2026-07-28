@@ -83,3 +83,51 @@ embedding has a populated baseline to extend.
   Long-running work (a 49k-summary backfill qualifies) must be backgrounded to a log file and POLLED.
 - Only one agent may hold write access to the worktree at a time, and no agent may use `git add -A`/`.` —
   a broad stage during Phase 11 swept another agent's in-flight edits into an unrelated commit.
+
+---
+
+## Addendum 2026-07-28 — corrections and a third locked decision, after research
+
+Research (`12-RESEARCH.md`) found two blocking defects, both reproduced by running real code and both
+independently verified in source by the orchestrator. They change this document.
+
+### Correction to the measured state above
+
+The "49,314 summaries" figure recorded as the backfill scope is the **retrievable** count.
+`listSummaryIdsMissingVector` has no state predicate, so as written the backfill would process all
+**138,373** rows (49,314 `compacted` + 89,059 `superseded`). See `12-GAP-12-B.md`. The corrected figures:
+
+| | rows | est. time @ 24.2 ms |
+|---|---:|---|
+| as the query is written today | 138,373 | ≈56 min |
+| **after the state-predicate fix (the plan)** | **49,314** | **≈20 min** |
+
+### Locked decision 3 — add a state predicate; do NOT prune superseded rows
+
+**Owner decision 2026-07-28.** Fix `listSummaryIdsMissingVector` so superseded summaries are never
+backfill candidates. Do **not** run `memory prune-superseded`.
+
+Rationale, as put to the owner: this corrects the product defect on any corpus rather than only on this
+one, preserves ADR 0050's supersede-not-delete auditability, and avoids an irreversible operation that
+would not shrink the file without a `VACUUM` anyway. It also keeps the owner's earlier "superseded prune
+unneeded" decision intact — that decision was sound; it simply predated the knowledge that those rows
+would be embedded.
+
+Implementation notes the planner must carry:
+- **`MemoryStore` behavior must match in BOTH stores.** CLAUDE.md is explicit: `sqlite-store.ts` and
+  `in-memory-store.ts` both implement the interface in full, and any change means editing both. A state
+  predicate added to only one is a parity break of exactly the kind Phase 8 spent a gap-closure plan on.
+- Which states count as backfill-eligible must be stated explicitly and tested, not left implicit. Note
+  `findNearestSummaries` already filters superseded (`sqlite-store.ts:1712-1725`) — align with it rather
+  than inventing a second definition of "retrievable".
+
+### Locked decision 4 — GAP-12-A is fixed BEFORE any backfill runs
+
+The model-identity mismatch (`12-GAP-12-A.md`) makes the missing set never shrink. Running the backfill
+first would produce a run that cannot resume, cannot be verified complete, and reports
+`missingVectors == totalSummaries` forever. Fix the identity first, pin it with a regression test that
+exercises an embedder whose class `model` differs from its emitted `model`, then backfill.
+
+Decide deliberately whether the canonical identity includes `@revision`. REQ-045 requires recording
+provider/model/**version** so stale-model vectors are detectable, which argues that it should — a
+revision-less key cannot distinguish a stale model from a current one, and SC4 depends on that distinction.
