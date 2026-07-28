@@ -7,11 +7,11 @@ import type { MemoryStore } from "../storage/memory-store.js";
 import { DeterministicSummarizer, type Summarizer } from "../summarization/summarizer.js";
 import {
   HYGIENE_RULE_VERSION,
-  classifyEvent,
   derivationContents,
   drivesTopicLabel,
   openToolRunStart,
-  toolNameOf
+  toolNameOf,
+  type ClassifiableEvent
 } from "../topic/derivation-hygiene.js";
 import { TopicMonitor, type CompletedTopicSpan, type RollingTopicState } from "../topic/topic-monitor.js";
 import {
@@ -245,11 +245,13 @@ export class ContractionRunner {
         window.derivationEnd
       ));
       // Anchors follow derivation content exactly (REQ-053): an event produces anchors only when it
-      // contributed its OWN text to the summary — conversational events and ISOLATED single tool
-      // calls. Synthetic events and members of a collapsed run (>=2) never produce anchors. Gating on
-      // `[windowStart, derivationEnd)` — the exact same range summaryForSpan derives text from — means
-      // a withheld open run's anchors are deferred along with its text: they are emitted only once the
-      // run closes and its own-text survival is known (isolated single vs. run of >=2), on whichever
+      // contributed its OWN text to the summary — i.e. only conversational events. Synthetic events
+      // never produce anchors, and neither does ANY tool_activity event: after Plan 11-24 reversed
+      // SC1, every tool run — including an isolated single call — collapses to `collapseText(...)`
+      // and no member contributes its own text (GAP-11-G; this comment previously still described
+      // the pre-reversal carve-out, which is how that defect survived review). Gating on
+      // `[windowStart, derivationEnd)` — the exact same range summaryForSpan derives text from —
+      // means a withheld open run's events are considered only once the run closes, on whichever
       // future slice recomputes this span's (bounded, run-length-sized) window. `anchorsForTurn`
       // itself is unchanged; only its call site is gated.
       for (const relativeIndex of survivingDerivationIndices(allEvents.slice(window.windowStart, window.derivationEnd))) {
@@ -459,31 +461,24 @@ function buildEventIndex(events: CanonicalEvent[]): ReadonlyMap<string, number> 
 }
 
 /**
- * Indices (relative to `events`) whose OWN text survives into derivation: conversational events and
- * ISOLATED single tool calls. Synthetic events and members of a collapsed run of >=2 are excluded —
- * mirrors `derivationContents`'/`openToolRunStart`'s shared synthetic-drop + run-detection walk, but
- * exposes per-member membership instead of collapsed entries (needed to gate anchor generation on
- * REQ-053, since a run's collapsed entry is keyed at the run's start index but does not carry any
- * single member's own text).
+ * Indices (relative to `events`) whose OWN text survives into derivation, and therefore the only
+ * indices that may produce anchors (REQ-053). Post-Plan-11-24 that set is exactly the
+ * `conversational` events: synthetic events are dropped, and EVERY tool_activity event — including
+ * an isolated single one — collapses into a run entry that carries no individual member's own text.
+ *
+ * GAP-11-G: this used to re-implement `computeSegments`' run walk with
+ * `if (currentRun.length === 1) survivors.add(...)`, the PRE-reversal SC1 carve-out. Plan 11-24
+ * reversed that carve-out in `derivationContents` but not in this separate copy, so the rebuild path
+ * kept minting anchors from raw isolated tool-call text — 1,330 of them measured on the Plan 11-25
+ * rehearsal clone (11-REBUILD.md). The copy is now gone: this delegates to the same
+ * `drivesTopicLabel` predicate every other call site uses, so no second copy of the rule remains to
+ * drift out of agreement with `derivationContents`.
  */
-function survivingDerivationIndices(events: readonly { content: string; eventKind?: string | null; role?: string | null }[]): Set<number> {
+function survivingDerivationIndices(events: readonly ClassifiableEvent[]): Set<number> {
   const survivors = new Set<number>();
-  let currentRun: number[] = [];
-  const flushRun = (): void => {
-    if (currentRun.length === 1) survivors.add(currentRun[0]!);
-    currentRun = [];
-  };
   events.forEach((event, index) => {
-    const { derivationClass } = classifyEvent(event);
-    if (derivationClass === "synthetic_injected") return;
-    if (derivationClass === "tool_activity") {
-      currentRun.push(index);
-      return;
-    }
-    flushRun();
-    survivors.add(index);
+    if (drivesTopicLabel(event)) survivors.add(index);
   });
-  flushRun();
   return survivors;
 }
 

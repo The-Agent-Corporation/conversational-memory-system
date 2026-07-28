@@ -6,7 +6,7 @@ import type { ContractionJob, WriteAuthority } from "../../src/daemon/types.js";
 import type { CanonicalEvent, MemorySource, Person } from "../../src/domain/canonical.js";
 import type { SourceGrant } from "../../src/domain/source-lifecycle.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
-import { HYGIENE_RULE_VERSION } from "../../src/topic/derivation-hygiene.js";
+import { HYGIENE_RULE_VERSION, TOOL_CALL_PREFIX } from "../../src/topic/derivation-hygiene.js";
 import { FIXED_NOW, FakeDaemonClock, FaultBoundaryInjector } from "./fixtures.js";
 
 const PERSON_ID = "person_contraction";
@@ -594,7 +594,10 @@ describe("ContractionRunner", () => {
     }
   });
 
-  it("keeps anchors for an isolated single tool call", async () => {
+  // GAP-11-G: this test used to assert `true` — the pre-reversal SC1 carve-out that kept an isolated
+  // tool call's anchor. Plan 11-24 reversed SC1 in `derivationContents`; Plan 11-27 reverses its
+  // anchor-side twin, so an isolated tool call now contributes no own text and therefore no anchor.
+  it("excludes an isolated single tool call from anchors", async () => {
     const store = await seededStore();
     await seedEvents(store, [
       event("hygiene-anchor-iso-1", 1, "Switch to Papa strategy review.", 0),
@@ -606,7 +609,50 @@ describe("ContractionRunner", () => {
     await drain(runner, job);
 
     const anchors = await store.listAnchors();
-    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-iso-2")).toBe(true);
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-iso-2")).toBe(false);
+  });
+
+  it("GAP-11-G: an isolated tool call mints no anchor on the rebuild path, conversational anchors unchanged", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("gap11g-1", 1, "Switch to Tango deadline review.", 0),
+      embeddedToolEvent("gap11g-tool", 2, "Bash", 1),
+      event("gap11g-3", 3, "Tango deadline review follow-up.", 2, "assistant")
+    ]);
+    const job = await enqueue(store, "job-gap11g", "gap11g-1", "gap11g-3");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    expect(anchors.some((anchor) => anchor.canonicalEventId === "gap11g-tool")).toBe(false);
+    expect(anchors.some((anchor) => anchor.content.includes(TOOL_CALL_PREFIX))).toBe(false);
+    // Conversational control: byte-identical anchor content, unchanged by the gate tightening.
+    expect(
+      anchors
+        .map((anchor) => ({ canonicalEventId: anchor.canonicalEventId, anchorType: anchor.anchorType, content: anchor.content }))
+        .sort((a, b) => (a.canonicalEventId ?? "").localeCompare(b.canonicalEventId ?? ""))
+    ).toEqual([
+      { canonicalEventId: "gap11g-1", anchorType: "deadline", content: "Switch to Tango deadline review." },
+      { canonicalEventId: "gap11g-3", anchorType: "deadline", content: "Tango deadline review follow-up." }
+    ]);
+  });
+
+  it("GAP-11-G: a run of >= 2 embedded-prefix tool calls still mints no anchors", async () => {
+    const store = await seededStore();
+    await seedEvents(store, [
+      event("gap11g-run-1", 1, "Switch to Uniform deadline review.", 0),
+      embeddedToolEvent("gap11g-run-tool-1", 2, "Bash", 1),
+      embeddedToolEvent("gap11g-run-tool-2", 3, "Read", 2),
+      event("gap11g-run-4", 4, "Uniform deadline review follow-up.", 3, "assistant")
+    ]);
+    const job = await enqueue(store, "job-gap11g-run", "gap11g-run-1", "gap11g-run-4");
+    const runner = new ContractionRunner(store, { clock: new FakeDaemonClock(), authority: foregroundContractionAuthority() });
+    await drain(runner, job);
+
+    const anchors = await store.listAnchors();
+    for (const id of ["gap11g-run-tool-1", "gap11g-run-tool-2"]) {
+      expect(anchors.some((anchor) => anchor.canonicalEventId === id)).toBe(false);
+    }
   });
 
   it("keeps conversational anchor behavior unchanged", async () => {
@@ -652,7 +698,10 @@ describe("ContractionRunner", () => {
         .sort((a, b) => a.canonicalEventId.localeCompare(b.canonicalEventId) || a.anchorType.localeCompare(b.anchorType));
 
     expect(normalize(await boundedStore.listAnchors())).toEqual(normalize(await unboundedStore.listAnchors()));
-    expect((await boundedStore.listAnchors()).some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3-tool-1")).toBe(true);
+    // GAP-11-G: previously `true` (the isolated call's anchor was emitted once the run closed).
+    // Post-11-27 an isolated tool call never contributes own text, so the deferred decision resolves
+    // to "no anchor" at every slice size — the slice-size-independence property is what this pins.
+    expect((await boundedStore.listAnchors()).some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3-tool-1")).toBe(false);
   });
 
   it("withheld boundary: a length-1 open tail that becomes a run of 2 never gets an anchor", async () => {
@@ -863,6 +912,20 @@ function toolEvent(
     ...event(id, nativeSequence, `[Tool call: ${toolName}] ${JSON.stringify({ arg: argSuffix })}`, minuteOffset, "assistant"),
     eventKind: "tool_call"
   };
+}
+
+/**
+ * GAP-11-G fixture: the exact shape the Plan 11-25 rehearsal found in all 1,330 resurrected anchors —
+ * a `tool_call`-kind event whose content CONTAINS `[Tool call: ` without starting with it. The store's
+ * prune classifies it `tool_activity` on `eventKind`; a content-prefix-only gate does not see it.
+ * See .planning/phases/11-derivation-input-hygiene/11-REBUILD.md.
+ */
+function embeddedToolEvent(id: string, nativeSequence: number, toolName: string, minuteOffset: number): CanonicalEvent {
+  const content = `Checking the build first.\n[Tool call: ${toolName}] ${JSON.stringify({
+    command: "npm test",
+    note: "we decided this because of the deadline risk"
+  })}`;
+  return { ...event(id, nativeSequence, content, minuteOffset, "assistant"), eventKind: "tool_call" };
 }
 
 /** A synthetic/harness-injected event using the `[SYSTEM: ...]` rule from derivation-hygiene.ts. */
