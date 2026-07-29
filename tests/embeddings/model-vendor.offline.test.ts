@@ -5,6 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@huggingface/transformers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   BGE_SMALL_EN_V1_5_MANIFEST,
@@ -191,6 +192,23 @@ describe.skipIf(!FIXTURE_PRESENT)("model-vendor offline vendoring (GAP-12-C, REQ
       const repoParent = join(dir, "Xenova");
       const leftovers = (await exists(repoParent)) ? await readdir(repoParent) : [];
       expect(leftovers).toEqual([]);
+    }
+  );
+
+  it(
+    "leaves no staging or load-proof scratch behind, and restores env.cacheDir",
+    { timeout: VENDOR_TIMEOUT_MS },
+    async () => {
+      server = await startFixtureServer();
+      const cacheDirBefore = env.cacheDir;
+
+      await vendorModel(dir, { baseUrl: server.baseUrl });
+
+      // The load proof repoints env.cacheDir at an empty dir so a stale
+      // transformers cache cannot satisfy it (GAP-12-C's own mechanism); it
+      // must put the original back.
+      expect(env.cacheDir).toBe(cacheDirBefore);
+      expect(await readdir(dir)).toEqual(["Xenova"]);
     }
   );
 

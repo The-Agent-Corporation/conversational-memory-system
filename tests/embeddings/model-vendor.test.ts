@@ -2,7 +2,11 @@ import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BGE_SMALL_EN_V1_5_MANIFEST, vendorModel } from "../../src/embeddings/model-vendor.js";
+import {
+  BGE_SMALL_EN_V1_5_MANIFEST,
+  vendorModel,
+  verifyManifest
+} from "../../src/embeddings/model-vendor.js";
 
 const QUANTIZED_VARIANT_FILES = [
   "onnx/model_fp16.onnx",
@@ -32,6 +36,12 @@ const NETWORK_TEST_TIMEOUT_MS = 300_000;
  * offline-deterministic (REQ-040/REQ-044), so the whole suite is gated
  * behind MEMORY_RUN_NETWORK_TESTS=1 (used by the one-time vendoring flow
  * and available for manual re-verification).
+ *
+ * These are the only cases that exercise the real Hub, and they are kept for
+ * that reason. They are no longer the ONLY coverage of the vendoring path:
+ * `model-vendor.offline.test.ts` runs the same fetch/flatten/verify logic
+ * against a loopback server in every `npm test`, because these being skipped
+ * by default is what let GAP-12-C ship.
  */
 describe.runIf(RUN_NETWORK_TESTS)("model-vendor (REQ-044, network-gated)", () => {
   let dir: string;
@@ -66,6 +76,9 @@ describe.runIf(RUN_NETWORK_TESTS)("model-vendor (REQ-044, network-gated)", () =>
     await vendorModel(dir);
     const tampered = join(dir, BGE_SMALL_EN_V1_5_MANIFEST.repo, "tokenizer_config.json");
     await writeFile(tampered, '{"tampered": true}', "utf8");
-    await expect(vendorModel(dir)).rejects.toThrow(/sha256|integrity|mismatch/i);
+    // Re-running `vendorModel` would re-fetch and overwrite the tampered file,
+    // so the tamper detection is asserted through the reader the caller and the
+    // vendor both go through.
+    await expect(verifyManifest(dir)).rejects.toThrow(/sha256|integrity|mismatch/i);
   });
 });

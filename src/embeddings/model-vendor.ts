@@ -1,6 +1,11 @@
-import { env, pipeline } from "@huggingface/transformers";
+import { env } from "@huggingface/transformers";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline as streamPipeline } from "node:stream/promises";
+import { TransformerEmbedder } from "./transformer-embedder.js";
 
 /**
  * D-01/D-02/D-04 pinned model manifest and one-time explicit vendoring flow
@@ -39,29 +44,155 @@ export const BGE_SMALL_EN_V1_5_MANIFEST = {
 
 const PLACEHOLDER_SHA256 = "PIN";
 
+/** Hugging Face Hub origin. Overridable only so tests can serve the pinned files over loopback. */
+export const DEFAULT_MODEL_BASE_URL = "https://huggingface.co";
+
+export interface VendorModelOptions {
+  /**
+   * Origin to fetch the pinned files from. Defaults to the Hub; the offline
+   * regression suite points it at a loopback server serving the same bytes.
+   */
+  baseUrl?: string;
+  /**
+   * Post-vendor load proof (defaults to on). Separate from the hash check on
+   * purpose: `pipeline()` used to conflate "the files are here" with "the model
+   * loads", and that coupling is what produced GAP-12-C's layout mismatch.
+   */
+  verifyLoad?: boolean;
+}
+
 /**
  * The sole code path in this codebase permitted to fetch the model from the
- * network (D-04/T-09-02). Flips `env.allowRemoteModels` on only for the
- * duration of the `pipeline()` fetch below, restores it to `false` in a
- * `finally` block even on error, then verifies every fp32 file's sha256
- * against the pinned manifest before returning.
+ * network (D-04/T-09-02).
+ *
+ * GAP-12-C: this used to download through `pipeline()`, which writes into
+ * transformers.js's own `env.cacheDir` in a **revision-nested** layout, while
+ * `verifyManifest` reads the **flat** `${localModelPath}/${repo}/${relPath}` —
+ * nothing wrote what it read — and `pipeline("feature-extraction", …)` never
+ * requested `special_tokens_map.json` at all. Both defects are gone because
+ * this now fetches each of the manifest's five files directly from
+ * `{baseUrl}/{repo}/resolve/{revision}/{file}` straight into the flat layout.
+ * The revision is pinned in the URL rather than delegated to library cache
+ * semantics, which is the indirection that produced the defect.
+ *
+ * `env.allowRemoteModels` disposition (D-04/T-09-02): the direct fetch no
+ * longer routes through transformers.js, so the flag is irrelevant to the
+ * download itself — it is deliberately **never** switched on, and is asserted
+ * `false` here so the documented invariant ("transformers.js never loads from
+ * the network in this process") still holds for the post-vendor load proof and
+ * for anything that runs after this call.
+ *
+ * Writes are atomic (T-12-30): every file is staged into a temp directory and
+ * hash-verified there, and the staged set is moved into place only once all
+ * five match. A failed or partial vendor therefore leaves nothing a later
+ * `verifyManifest` could pass on.
  */
-export async function vendorModel(localModelPath: string): Promise<void> {
-  env.allowRemoteModels = true;
-  env.localModelPath = localModelPath;
+export async function vendorModel(
+  localModelPath: string,
+  options: VendorModelOptions = {}
+): Promise<void> {
+  // Never true. See the disposition note above.
+  env.allowRemoteModels = false;
+
+  const baseUrl = (options.baseUrl ?? DEFAULT_MODEL_BASE_URL).replace(/\/+$/, "");
+  const { repo, revision, files } = BGE_SMALL_EN_V1_5_MANIFEST;
+
+  await mkdir(localModelPath, { recursive: true });
+  // Staged inside the target root so the final move is a same-filesystem rename.
+  const stagingRoot = await mkdtemp(join(localModelPath, ".vendor-"));
+
   try {
-    // Triggers download + local cache write via transformers.js's own
-    // resolution/cache logic. Only the fp32 dtype is requested (D-02) —
-    // quantized variants are never fetched by this call.
-    await pipeline("feature-extraction", BGE_SMALL_EN_V1_5_MANIFEST.repo, {
-      revision: BGE_SMALL_EN_V1_5_MANIFEST.revision,
-      dtype: "fp32"
-    });
+    for (const [relPath, expected] of Object.entries(files)) {
+      const url = `${baseUrl}/${repo}/resolve/${revision}/${relPath}`;
+      await downloadPinnedFile(url, join(stagingRoot, repo, relPath), relPath, expected);
+    }
+
+    // Verify the staged set through the same reader the caller will use, before
+    // anything is moved into the real path.
+    await verifyManifest(stagingRoot);
+
+    const destination = join(localModelPath, repo);
+    await mkdir(dirname(destination), { recursive: true });
+    await rm(destination, { recursive: true, force: true });
+    await rename(join(stagingRoot, repo), destination);
   } finally {
-    env.allowRemoteModels = false;
+    await rm(stagingRoot, { recursive: true, force: true });
   }
 
   await verifyManifest(localModelPath);
+
+  if (options.verifyLoad !== false) {
+    await proveModelLoads(localModelPath, revision);
+  }
+}
+
+/**
+ * "The files are right" and "the model loads" proven separately (GAP-12-C).
+ *
+ * `env.cacheDir` is repointed at an empty directory for the duration: it
+ * otherwise defaults to `node_modules/@huggingface/transformers/.cache`, and a
+ * stale copy left there by any earlier run satisfies `pipeline()` **without
+ * reading `localModelPath` at all** — measured 2026-07-29: with the stale cache
+ * present, loading a model root that does not exist succeeds; with the cache
+ * empty, the same call throws `file was not found locally`. That is the very
+ * cache-hit mechanism that let GAP-12-C ship, so a load proof served from it
+ * would prove nothing about what was just vendored.
+ */
+async function proveModelLoads(localModelPath: string, revision: string): Promise<void> {
+  const previousCacheDir = env.cacheDir;
+  const isolatedCacheDir = await mkdtemp(join(localModelPath, ".loadproof-cache-"));
+  try {
+    env.cacheDir = isolatedCacheDir;
+    const embedder = new TransformerEmbedder({ localModelPath, revision });
+    await embedder.init();
+  } finally {
+    env.cacheDir = previousCacheDir;
+    await rm(isolatedCacheDir, { recursive: true, force: true });
+  }
+}
+
+async function downloadPinnedFile(
+  url: string,
+  destinationPath: string,
+  relPath: string,
+  expected: { sha256: string; bytes?: number }
+): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `Model file download failed for ${relPath}: HTTP ${response.status} ${response.statusText} (${url})`
+    );
+  }
+
+  await mkdir(dirname(destinationPath), { recursive: true });
+
+  const hash = createHash("sha256");
+  let byteLength = 0;
+  // Streamed, never buffered — `onnx/model.onnx` is 133 MB.
+  await streamPipeline(
+    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+    async function* (chunks: AsyncIterable<Buffer>) {
+      for await (const chunk of chunks) {
+        hash.update(chunk);
+        byteLength += chunk.length;
+        yield chunk;
+      }
+    },
+    createWriteStream(destinationPath)
+  );
+
+  if (expected.bytes !== undefined && byteLength !== expected.bytes) {
+    throw new Error(
+      `Model file integrity check failed for ${relPath}: expected ${expected.bytes} bytes, got ${byteLength}`
+    );
+  }
+
+  const actualHash = hash.digest("hex");
+  if (actualHash !== expected.sha256) {
+    throw new Error(
+      `Model file integrity check failed for ${relPath}: expected ${expected.sha256}, got ${actualHash}`
+    );
+  }
 }
 
 export async function verifyManifest(localModelPath: string): Promise<void> {
