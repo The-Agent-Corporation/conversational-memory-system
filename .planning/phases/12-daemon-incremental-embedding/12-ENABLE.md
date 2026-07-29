@@ -155,3 +155,213 @@ Recorded per the checkpoint's requirement; the checkpoint is not re-opened. The 
 - Locked decision 1 already authorizes ONNX as the target; this is authorization for the fetch itself.
 
 ---
+
+## Task 3 — first open, schema v4, and a vendor that does not work
+
+### The first non-read-only open, and the migration
+
+`memory daemon status --db ~/.memory/aaron.db --person aaron`. Arg surface confirmed against
+`parseDaemonCommandArgs` (`daemon-command.ts:74-97`) before running — `--db` and `--person` only, after
+the subcommand — rather than trusted from the docs.
+
+| | value |
+|---|---|
+| `pragma user_version` before (read-only probe) | **3** |
+| `pragma user_version` after | **4** |
+| first-open wall clock | **6,102 ms** |
+| re-open #1 / #2 (idempotence) | **639 ms** / **486 ms** |
+| implied migration cost | **≈5.5 s** |
+
+Exit 0. Output:
+
+```json
+{ "ok": true, "subcommand": "status",
+  "status": { "state": "stopped", "ownerToken": null, "pid": null, "acquiredAt": null,
+              "heartbeatAt": null, "expiresAt": null, "stopRequestedAt": null,
+              "lastSuccessfulScanAt": null, "degradedSources": [],
+              "queues": { "contractions": 0, "proposals": 1 },
+              "service": { "capable": true, "loaded": false, "pid": null } } }
+```
+
+State `stopped`, no owner token, no pid, service not loaded — the daemon is confirmed stopped from
+inside the database as well as from the OS.
+
+**Divergence worth recording: 5.5 s, not the 1.16 s Plan 12-02 measured.** Same DDL, same row count.
+12-02's figure came from a clone measured in isolation; this is a cold first touch of a 5.0 GB file whose
+pages are not in the page cache, on a volume at 78% capacity. The migration is a one-time cost and it
+succeeded, so this is a note rather than a fault — but 12-02's 1.16 s should be read as a floor, not an
+estimate. Re-opens settle at ~490-640 ms, of which most is `tsx` startup.
+
+Migration ledger and indexes after:
+
+```json
+{ "user_version": 4,
+  "summary_indexes": [ "sqlite_autoindex_summaries_1", "idx_summaries_person_state",
+                       "idx_summaries_state_id" ],
+  "migrations": [ { "version": 1, "description": "baseline: tables created by SqliteStore.migrate() base block are version 1" },
+                  { "version": 2, "description": "REQ-041: add summary_vectors table for local vector-native summary embeddings" },
+                  { "version": 3, "description": "GAP-11-A: index summaries by person and state for filtered retrieval" },
+                  { "version": 4, "description": "REQ-043: covering index for the state-predicated missing-vector query" } ] }
+```
+
+### The gate that matters: the missing-set query on live data
+
+Same read-only probe as the pre-migration baseline, same file, same hardware, same composed identity —
+only `idx_summaries_state_id` differs:
+
+| | rows | run 1 | run 2 | run 3 |
+|---|---:|---:|---:|---:|
+| **before** (`user_version` 3, no covering index) | 49,314 | 3,388.8 ms | 462.0 ms | 461.0 ms |
+| **after** (`user_version` 4) | 49,314 | **26.1 ms** | **26.0 ms** | **24.6 ms** |
+
+**~25 ms, against a 29-45 ms expectation and a 4,000 ms failure mode.** The index took. Plan 12-04's
+repair pass will run a 25 ms query every 15 minutes, not a 4-second scan. An 18× improvement on the warm
+figure and 130× on the cold one.
+
+And the count is **49,314** on both sides of the migration — 138,373 rows in `summaries`, 89,059
+superseded rows correctly excluded by Plan 12-02's state predicate, on the live corpus. Not 138,373.
+This is GAP-12-B closed on real data (`12-GAP-12-B.md`), and it was already true at `user_version` 3,
+which isolates the two changes cleanly: the **predicate** fixes the count, the **index** fixes the cost.
+
+### Row-count invariance
+
+| | before | after |
+|---|---:|---:|
+| `summaries` | 138,373 | 138,373 |
+| ├ `compacted` | 49,314 | 49,314 |
+| └ `superseded` | 89,059 | 89,059 |
+| `summary_vectors` | 0 | 0 |
+| `daemon_lease` | 0 | 0 |
+
+Nothing was written to any row. The file's mtime, size, and `-wal`/`-shm` changed as the plan anticipated
+(F4) — the v4 index, `pragma journal_mode = WAL`, and the recorded stop request all touch the file.
+
+### The graceful stop
+
+`memory daemon stop --db ~/.memory/aaron.db` → `{ "ok": true, "subcommand": "stop",
+"service": { "capable": true, "loaded": false, "pid": null } }`. Idempotent, as expected against an
+already-absent process. **The daemon remains stopped and no backfill was run.**
+
+---
+
+## STOP — `memory embeddings --action enable` is broken, and it is not a transient failure
+
+```
+$ memory embeddings --db ~/.memory/aaron.db --action enable
+ENOENT: no such file or directory, open '/Users/aaronwhaley/.memory/aaron.db.models/Xenova/bge-small-en-v1.5/onnx/model.onnx'
+```
+
+Backgrounded to a log and polled; it exited within ~10 s.
+
+### T-12-25 holds — the failure mode is safe
+
+Verified explicitly rather than assumed, which is the property the plan asked for:
+
+```
+$ ls -l ~/.memory/aaron.db.embeddings.json
+ls: ... No such file or directory
+
+$ memory embeddings --db ~/.memory/aaron.db --action show
+{ "ok": true, "action": "show",
+  "config": { "enabled": false, "provider": "onnx-transformers",
+              "model": "Xenova/bge-small-en-v1.5", "revision": "", "modelPath": "" } }
+
+$ find ~/.memory/aaron.db.models -type f
+(directory does not exist)
+```
+
+**No sidecar, `enabled: false`, and not one partial file.** `runEmbeddingsCommand` awaits `vendorModel`
+before it builds `nextConfig` (`embeddings-command.ts:65-73`), so the throw skipped
+`writeEmbeddingsConfig` entirely. `resolveEmbedder` keeps returning the hash embedder. The sidecar was
+**not** hand-edited. The live corpus is exactly where it was, plus schema v4.
+
+### Two defects in `vendorModel`, both deterministic
+
+**D1 — the download never lands where verification reads.** `vendorModel`
+(`model-vendor.ts:49-65`) sets `env.localModelPath = localModelPath` and then calls `pipeline()`. But in
+transformers.js `localModelPath` is the path *local models are read from*; remote downloads are written to
+`env.cacheDir`, which is untouched and therefore still the default
+`node_modules/@huggingface/transformers/.cache`. `verifyManifest` then reads
+`${localModelPath}/${repo}/${relPath}` — a path nothing ever writes. Proof, from the actual cache:
+
+```
+node_modules/@huggingface/transformers/.cache/Xenova/bge-small-en-v1.5/config.json
+node_modules/@huggingface/transformers/.cache/Xenova/bge-small-en-v1.5/ea104dac…/config.json
+node_modules/@huggingface/transformers/.cache/Xenova/bge-small-en-v1.5/ea104dac…/tokenizer.json
+node_modules/@huggingface/transformers/.cache/Xenova/bge-small-en-v1.5/ea104dac…/tokenizer_config.json
+node_modules/@huggingface/transformers/.cache/Xenova/bge-small-en-v1.5/ea104dac…/onnx/model.onnx
+```
+
+Note the layout is **revision-nested** (`<repo>/<revision>/<file>`), not the flat `<repo>/<file>` layout
+that both `verifyManifest` and `TransformerEmbedder`'s `env.localModelPath` read. Setting `cacheDir` to
+the target alone therefore does not fix it either — the layouts differ.
+
+**D2 — the manifest demands a file the fetch never requests.** Four of the manifest's five files are in
+the cache and all four hash **exactly** to the pinned values:
+
+| file | cached sha256 | manifest | match |
+|---|---|---|---|
+| `onnx/model.onnx` | `828e1496…40cf35` | `828e1496…40cf35` | ✅ |
+| `tokenizer.json` | `d241a60d…9e5c66` | `d241a60d…9e5c66` | ✅ |
+| `tokenizer_config.json` | `9261e7d7…172ab3` | `9261e7d7…172ab3` | ✅ |
+| `config.json` | `fa73f90b…a56350` | `fa73f90b…a56350` | ✅ |
+| `special_tokens_map.json` | **absent from the cache entirely** | `b6d346be…37ee3` | ❌ |
+
+`pipeline("feature-extraction", …)` does not request `special_tokens_map.json` for this model. So even
+after D1 is fixed, `verifyManifest` fails on file five. **Both defects must be fixed together**; fixing
+only the path converts one ENOENT into another.
+
+The manifest itself is not wrong — the gitignored fixture at `tests/fixtures/models/Xenova/bge-small-en-v1.5`
+holds all five files in the flat layout and every one matches its pinned hash, `special_tokens_map.json`
+included (125 bytes, `b6d346be…37ee3`). That fixture was assembled by hand from the cache during the
+Phase 9 plan-05 capture, which is why the manifest is correct while the code that is supposed to
+reproduce it is not.
+
+### Why this was never caught
+
+`tests/embeddings/model-vendor.test.ts:36` is `describe.runIf(RUN_NETWORK_TESTS)`, gated on
+`MEMORY_RUN_NETWORK_TESTS=1`. Its first case is literally *"writes the pinned fp32 file set under
+localModelPath"* — the exact assertion that fails here. **These are the 4 skipped tests in the
+1,106-passed / 4-skipped suite.** The golden tests pass because they read the hand-assembled fixture, not
+because vendoring works.
+
+### No network transfer happened today
+
+Every cached file is dated **2026-07-21 16:18 EDT / 20:18 UTC** — the Phase 9 capture. Nothing was
+written today. The run was served entirely from the transformers cache, so the network fetch the owner
+authorized has *not* in fact been exercised, and its behavior on a cold cache remains unproven.
+
+### Why this is a STOP rather than a Rule 1 auto-fix
+
+The plan and the briefing both pre-authorize this stop ("If the vendor fails, STOP and report; do not
+retry blindly"). Retrying is pointless — the failure is deterministic, not transient. And the fix is not
+mechanical: it changes the only network path in the codebase and the mechanism behind T-12-24's integrity
+guarantee, and there are at least three defensible designs:
+
+1. **Fetch the five pinned files directly** over HTTPS from
+   `https://huggingface.co/{repo}/resolve/{revision}/{file}`, write them straight into the flat layout,
+   then verify. Most auditable — exactly five pinned URLs, exactly the manifest's files, no dependence on
+   library cache semantics — and it fixes D1 and D2 in one move. Loses the incidental "`pipeline()` proved
+   it loads" property, which a post-vendor `probeEmbedderHealth` covers better anyway.
+2. **Keep `pipeline()`, then materialize** the four files it fetched from `cacheDir` into the flat layout
+   and fetch `special_tokens_map.json` separately. Preserves the load proof; keeps a dependency on an
+   undocumented cache layout that a transformers.js upgrade can change silently.
+3. **Drop `special_tokens_map.json` from the manifest.** Fixes D2 by weakening the guarantee. Not
+   recommended — the file is part of the tokenizer contract and the fixture proves it is fetchable.
+
+**Recommendation: option 1**, plus flipping the network-gated vendor test into something that runs — even
+a cold-cache CI-optional job — since a test that never executes is what let this ship. Whichever is
+chosen, the fix belongs in its own plan with its own tests, not in a hand-edit here.
+
+### State left behind, for whoever picks this up
+
+- Live corpus at **`user_version` 4** with `idx_summaries_state_id` built. Not reverted: the migration is
+  additive, verified, and is exactly what the next attempt needs. All row counts unchanged.
+- **Hash embedder still active.** No sidecar, no `~/.memory/aaron.db.models` directory.
+- Daemon stopped, `daemon_lease` empty, no LaunchAgent installed. **No backfill run.**
+- All five backups intact at the inodes tabulated above.
+- Disk free unchanged at **408 Gi** (nothing was downloaded).
+- Rollback was **not** exercised and is not needed — nothing to roll back beyond the intended migration.
+
+Tasks 1 and 2 are complete and their measurements stand. Task 3 is complete through the migration and the
+missing-set gate; it stops at the vendor.
