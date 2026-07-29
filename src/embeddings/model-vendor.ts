@@ -64,7 +64,7 @@ export async function vendorModel(localModelPath: string): Promise<void> {
   await verifyManifest(localModelPath);
 }
 
-async function verifyManifest(localModelPath: string): Promise<void> {
+export async function verifyManifest(localModelPath: string): Promise<void> {
   for (const [relPath, expected] of Object.entries(BGE_SMALL_EN_V1_5_MANIFEST.files)) {
     if ((expected.sha256 as string) === PLACEHOLDER_SHA256) {
       throw new Error(
