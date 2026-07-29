@@ -441,7 +441,7 @@ Plans:
   3. Embeddings never appear in any sync payload or outbox operation — a freshly paired device recomputes its own vectors locally from replicated canonical events rather than receiving them from a peer.
   4. Each device's vectors record embedder provider/model/version, so a device running a stale model relative to its peers is detectable.
 
-**Plans**: 7 plans in 7 waves
+**Plans**: 8 plans (12-08 added 2026-07-29 as a gap-closure plan for GAP-12-C)
 
 Plans:
 
@@ -452,6 +452,7 @@ Plans:
 - [ ] 12-05-PLAN.md — Stop the daemon, fresh `pre-phase12` backup, `memory embeddings enable` (the only network path), and the live pre-backfill measurement. (wave 5, owner-gated)
 - [ ] 12-06-PLAN.md — Full-scale rehearsal on clones: measured backfill cost, resume, idempotence. (wave 6)
 - [ ] 12-07-PLAN.md — Live backfill of 49,314 summaries, completeness verification, daemon restart with the incremental stage. (wave 7, owner-gated)
+- [x] 12-08-PLAN.md — Close GAP-12-C: make `vendorModel` produce the flat layout it verifies, fetch all five pinned files, and cover the path with a test that actually runs. (wave 6, gap closure) **COMPLETE 2026-07-29** — the vendor now fetches five explicitly pinned URLs at the pinned revision, streams and sha256/byte-verifies each, and stages-then-moves atomically so a failed vendor leaves nothing a later run could verify (T-12-30); `special_tokens_map.json` is fetched at last and no `pipeline()` call remains. `BGE_SMALL_EN_V1_5_MANIFEST` byte-unchanged. `tests/embeddings/model-vendor.offline.test.ts` runs six loopback-served cases in a plain `npm test` with **no network-flag gate** — the skipped-by-default assertion is what let this ship — while the real-Hub cases are kept. A Rule 1 deviation isolated `env.cacheDir` for the post-vendor load proof, which the stale transformers cache could otherwise satisfy on its own. Suite 1,112 passed / 4 skipped.
 
 ### Phase 13: Forward-Only Vector Trace Discovery
 
