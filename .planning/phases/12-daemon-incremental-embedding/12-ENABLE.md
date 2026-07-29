@@ -365,3 +365,221 @@ chosen, the fix belongs in its own plan with its own tests, not in a hand-edit h
 
 Tasks 1 and 2 are complete and their measurements stand. Task 3 is complete through the migration and the
 missing-set gate; it stops at the vendor.
+
+---
+
+# Task 3, re-run — 2026-07-29, after GAP-12-C was closed by Plan 12-08
+
+The vendor defect diagnosed above was fixed by Plan 12-08 (commits `619bfa6` test, `986dc19` fix,
+`aa99309` ADR 0052, `2ced03b` summary), taking the recommended option 1: fetch the five pinned files
+directly from `{baseUrl}/{repo}/resolve/{revision}/{file}` into the flat layout `verifyManifest` reads,
+stage-and-verify before moving into place, and prove the load separately with an isolated `cacheDir`.
+
+Everything above this line stands as the record of why this re-run exists. **Tasks 1 and 2 were not
+redone** — only re-confirmed cheaply, below.
+
+## Preconditions re-confirmed (not re-derived)
+
+Daemon: no process, no LaunchAgent job, `daemon_lease` **0 rows**. Nothing to stop.
+
+All five backups intact, inodes unchanged from the table above:
+
+| file | inode | size (bytes) |
+|---|---:|---:|
+| `aaron.db.pre-phase12` | **182055297** | **5,031,448,576** |
+| `aaron.db.pre-v4` | 181531855 | 5,031,448,576 |
+| `aaron.db.pre-rebuild-v3` | 181199709 | 5,031,448,576 |
+| `aaron.db.pre-anchor-prune` | 180214168 | 5,031,448,576 |
+| `aaron.db.pre-phase11` | 179000198 | 4,962,574,336 |
+
+Read-only probes of both files before anything ran:
+
+```json
+LIVE   { "user_version": 4, "summaries": 138373,
+         "state_counts": [ {"compacted": 49314}, {"superseded": 89059} ],
+         "summary_vectors": 0, "daemon_lease_rows": 0,
+         "summary_indexes": [ "sqlite_autoindex_summaries_1", "idx_summaries_person_state",
+                              "idx_summaries_state_id" ] }
+
+BACKUP { "user_version": 3, "summaries": 138373,
+         "state_counts": [ {"compacted": 49314}, {"superseded": 89059} ],
+         "summary_vectors": 0, "daemon_lease_rows": 0,
+         "summary_indexes": [ "sqlite_autoindex_summaries_1", "idx_summaries_person_state" ] }
+```
+
+Live is at `user_version` **4** with `idx_summaries_state_id` built — the deliberately-unreverted state
+the earlier attempt left, and exactly what this attempt needs. `pre-phase12` is still the pristine
+`user_version` 3 restore point. Live `aaron.db` mtime 2026-07-29 10:07:55 EDT / 14:07:55 UTC (the earlier
+attempt's migration), `-wal` **0 bytes**, `-shm` 32,768. `MEMORY_MODEL_PATH` **unset** (T-12-29), no
+`~/.memory/aaron.db.models`, no `${db}.embeddings.json`. Disk free **401 Gi** (1.8 Ti, 78% used).
+
+Owner authorization from 2026-07-29 ("keep going") applies to this run and was **unspent** — the earlier
+attempt transferred nothing. The checkpoint is not re-opened.
+
+## The vendor fetch — the first genuine cold-path exercise
+
+Arg surface re-confirmed against `parseArgs` (`embeddings-command.ts:78-103`): `--db`, `--action`,
+optional `--model-path`. Backgrounded to `enable.log` and polled every 10 s, not left unattended.
+
+```
+$ memory embeddings --db ~/.memory/aaron.db --action enable
+```
+
+| | value |
+|---|---|
+| start | 2026-07-29 **15:22:20 EDT** / **19:22:20 UTC** |
+| end | 2026-07-29 **15:22:35 EDT** / **19:22:35 UTC** |
+| **wall clock (`/usr/bin/time -p real`)** | **15.06 s** (user 1.87 / sys 1.04) |
+| exit code | **0** |
+| bytes written to disk | **133,806,060** (127.6 MiB across 5 files) |
+| machine-wide rx delta (`netstat -ib`, en7) | **151,192,089 bytes** — an upper bound, includes unrelated traffic |
+| effective throughput | ≈ **10 MB/s** over the ~13 s of transfer inside that 15.06 s |
+| disk free before → after | 401 Gi → 401 Gi (unchanged at `df -h` resolution; 128 MiB is below it) |
+
+The 15.06 s covers the whole command: `tsx` startup, five HTTPS fetches, streaming sha256 of all five,
+`verifyManifest` on the staged set, the atomic rename, `verifyManifest` again on the destination, and the
+`proveModelLoads` ONNX load proof. **This is a real measurement of a path that had never executed** — the
+previous run was a pure transformers-cache hit. For 12-06/12-07 planning: budget ~15-20 s for a cold
+vendor on a comparable link, not minutes.
+
+Receipt:
+
+```json
+{ "ok": true, "action": "enable",
+  "config": { "enabled": true, "provider": "onnx-transformers",
+              "model": "Xenova/bge-small-en-v1.5",
+              "revision": "ea104dacec62c0de699686887e3f920caeb4f3e3",
+              "modelPath": "/Users/aaronwhaley/.memory/aaron.db.models" } }
+```
+
+### T-12-24 / T-12-25 — five files, flat layout, every hash matching the pinned manifest
+
+```
+$ find ~/.memory/aaron.db.models -type f
+```
+
+| file | bytes | sha256 (measured) | manifest | mtime LOCAL |
+|---|---:|---|---|---|
+| `onnx/model.onnx` | **133,093,490** | `828e1496…40cf35` | ✅ match | 2026-07-29 15:22:34 EDT |
+| `tokenizer.json` | 711,396 | `d241a60d…9e5c66` | ✅ match | 15:22:34 EDT |
+| `tokenizer_config.json` | 366 | `9261e7d7…172ab3` | ✅ match | 15:22:34 EDT |
+| **`special_tokens_map.json`** | **125** | `b6d346be…37ee3` | ✅ match | 15:22:34 EDT |
+| `config.json` | 683 | `fa73f90b…a56350` | ✅ match | 15:22:35 EDT |
+
+All five present at the **flat** `${modelPath}/Xenova/bge-small-en-v1.5/…` layout, `onnx/model.onnx` at
+exactly the manifest's pinned 133,093,490 bytes. `special_tokens_map.json` — the file the old
+`pipeline()` path never requested at all (GAP-12-C defect D2) — is now fetched and matches. Every mtime is
+**2026-07-29 15:22**, i.e. today, not the 2026-07-21 Phase 9 capture: this was a genuine transfer, which
+is what makes it the first real proof of the vendor path. No leftover `.vendor-*` staging or
+`.loadproof-cache-*` directories — the `finally` blocks cleaned up.
+
+### The sidecar, verbatim
+
+```json
+$ cat ~/.memory/aaron.db.embeddings.json          # 215 bytes, 2026-07-29 15:22 EDT
+{
+  "enabled": true,
+  "provider": "onnx-transformers",
+  "model": "Xenova/bge-small-en-v1.5",
+  "revision": "ea104dacec62c0de699686887e3f920caeb4f3e3",
+  "modelPath": "/Users/aaronwhaley/.memory/aaron.db.models"
+}
+```
+
+`memory embeddings --action show` returns the same five fields identically. All confirmed: `enabled: true`,
+`provider: "onnx-transformers"`, `model: "Xenova/bge-small-en-v1.5"`, `revision:
+"ea104dacec62c0de699686887e3f920caeb4f3e3"`, `modelPath: "/Users/aaronwhaley/.memory/aaron.db.models"`.
+Not hand-edited; written by `writeEmbeddingsConfig` only after `vendorModel` resolved.
+
+## `memory status` — all five assertions on live data
+
+`memory status --db ~/.memory/aaron.db --person aaron`, both required flags. Blocks verbatim:
+
+```json
+"embedder": {
+  "enabled": true,
+  "provider": "onnx-transformers",
+  "model": "Xenova/bge-small-en-v1.5",
+  "revision": "ea104dacec62c0de699686887e3f920caeb4f3e3",
+  "healthy": true,
+  "reason": null
+},
+"embeddingBackfill": {
+  "provider": "onnx-transformers",
+  "model": "Xenova/bge-small-en-v1.5@ea104dacec62c0de699686887e3f920caeb4f3e3",
+  "totalSummaries": 49314,
+  "missingVectors": 49314,
+  "completedFraction": 0
+}
+```
+
+| assertion | result |
+|---|---|
+| `embedder.healthy === true`, enabled, `onnx-transformers`, pinned revision | ✅ — an independent ONNX load, on top of `proveModelLoads` inside the vendor |
+| `embeddingBackfill.model` is the **composed** identity, not the bare repo id | ✅ `Xenova/bge-small-en-v1.5@ea104dac…` — Plan 12-01 proven on live data |
+| `embeddingBackfill.model` **contains** `ea104dacec62c0de699686887e3f920caeb4f3e3` (F1 / REQ-045 / SC4) | ✅ substring present |
+| `missingVectors === 49314` | ✅ **49,314**, not 138,373 |
+| `totalSummaries === 49314` | ✅ **49,314** — GAP-12-B's denominator fix, proven live |
+
+`schemaVersion: 4`, `schemaMigrationAppliedAt: 2026-07-29T14:07:54.563Z` (the earlier attempt's
+migration), `dbFileSizeBytes: 5,031,481,344`, `daemon.state: "stopped"` with null lease.
+
+## The missing-set query, with the ONNX identity now active
+
+Read-only probe replicating `sqlite-store.ts:1702-1720` verbatim against the composed ONNX identity —
+the first time this has been measured with the identity that will actually drive the backfill:
+
+| query | rows | ms |
+|---|---:|---:|
+| unfiltered (no state predicate — the pre-12-02 shape, for contrast) | 138,373 | 245 |
+| **shipped `listSummaryIdsMissingVector`** (state predicate + covering index) | **49,314** | **22** |
+
+**22 ms**, against a 25-100 ms expectation and a 4,000 ms failure mode. `explain query plan` confirms the
+v4 index is what does it:
+
+```
+SEARCH summaries USING COVERING INDEX idx_summaries_state_id (<expr>=?)
+  CORRELATED SCALAR SUBQUERY 1
+    SEARCH sv USING COVERING INDEX sqlite_autoindex_summary_vectors_1 (summary_id=? AND provider=? AND model=?)
+USE TEMP B-TREE FOR ORDER BY
+```
+
+49,314 rows — the state predicate applies with the ONNX identity live, exactly as it did under the hash
+default. Plan 12-04's repair pass will run a 22 ms query every 15 minutes.
+
+## Row-count invariance — nothing was written
+
+| | before this re-run | after |
+|---|---:|---:|
+| `summaries` | 138,373 | 138,373 |
+| ├ `compacted` | 49,314 | 49,314 |
+| └ `superseded` | 89,059 | 89,059 |
+| `summary_vectors` | **0** | **0** |
+| `daemon_lease` | 0 | 0 |
+| `user_version` | 4 | 4 |
+| indexes on `summaries` | 3, incl. `idx_summaries_state_id` | unchanged |
+
+The vendor writes only to `~/.memory/aaron.db.models/` and the sidecar; it does not touch the database.
+`memory status` opens it non-read-only, so mtime/`-wal`/`-shm` move — row counts do not (F4).
+
+## Final state
+
+- ONNX `bge-small-en-v1.5` **live on the real corpus**, hash-verified against the pinned manifest,
+  probe healthy, at revision `ea104dacec62c0de699686887e3f920caeb4f3e3`.
+- **Zero vectors** under that identity — the backfill is Plan 12-07's separate owner gate and was **not**
+  run.
+- Daemon **stopped**, `daemon_lease` empty, no LaunchAgent. Not started, and it stays stopped through 12-07.
+- All five backups intact at the inodes tabulated above. Nothing deleted, moved, or overwritten.
+- Rollback not needed and not exercised. If it becomes necessary: stop → MOVE `aaron.db` (with `-wal`/
+  `-shm`) aside → `cp -c` `pre-phase12` back → confirm `summary_vectors: 0` and `user_version 3` → delete
+  the sidecar.
+
+## The one surprise, and it is not this plan's
+
+`memory status` took **50 s** wall clock and self-reported `performance.queryLatencyMs: 49047`. That
+figure is **not** the missing-set query (22 ms). `queryLatencyMs` spans the whole `Promise.all` at
+`status-command.ts:179-195`, which fully materializes `listCanonicalEvents` (292,407 rows),
+`listSummaries` (138,373) and `listSyncOutboxOperations` (301,132 pending) into arrays just to count them.
+Pre-existing, unrelated to anything in Phase 12, and out of scope here — logged as **D-12-3** in
+`12-DEFERRED.md` rather than fixed. It matters to 12-07 only in that a progress display should not poll
+`memory status` in a loop.

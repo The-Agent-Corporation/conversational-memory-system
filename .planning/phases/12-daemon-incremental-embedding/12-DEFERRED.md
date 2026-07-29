@@ -28,6 +28,28 @@ only being discoverable in an ADR. **This repo has no beads database** (`bd crea
 found"), and initializing one is not a Phase 12 decision. Raised to the owner instead; recorded here and
 in ADR 0052 decision 6 in the meantime.
 
+## D-12-3 — `memory status` costs 50 s on the live corpus, and it is not the vector query
+
+**Raised:** 2026-07-29 by the Plan 12-05 executor, measured on the live corpus
+**Disposition for Phase 12:** out of scope — pre-existing, unrelated to any Phase 12 change
+**Target:** unassigned
+
+`memory status --db ~/.memory/aaron.db --person aaron` takes **50 s** wall clock and self-reports
+`performance.queryLatencyMs: 49047`. That figure is **not** `listSummaryIdsMissingVector`, which measures
+**22 ms** on the same corpus with the v4 covering index.
+
+**Root cause:** `queryLatencyMs` (`status-command.ts:178-218`) spans the entire `Promise.all` at lines
+179-195, which fully materializes `listCanonicalEvents` (292,407 rows), `listSummaries` (138,373) and
+`listSyncOutboxOperations` (301,132 pending) into JS arrays purely to take their `.length`. Count queries
+would answer the same questions in milliseconds.
+
+**Why not fixed here:** it is a `MemoryStore` interface question (count-only methods on both
+`SqliteStore` and `InMemoryStore`), pre-dates Phase 12, and is outside Plan 12-05's scope boundary.
+
+**Why it matters to 12-07:** a backfill progress display must not poll `memory status` in a loop — each
+poll costs ~50 s and reads the whole corpus. Query `listSummaryIdsMissingVector` (or a count of
+`summary_vectors`) directly instead.
+
 ## D-12-2 — `gsd-sdk` invocation path
 
 `npx gsd-sdk` 404s in this repo; the working binary is `/Users/aaronwhaley/.local/bin/gsd-sdk`. Found by
