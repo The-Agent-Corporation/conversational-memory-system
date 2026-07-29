@@ -232,3 +232,86 @@ produced some other way (a hand-edited sidecar, a partial migration) would not b
 | GAP-12-A (one canonical embedder identity) | Decision 6; fixed by Plan 12-01 |
 | GAP-12-B (the missing set means "embeddable and unembedded") | Decision 8's interaction; fixed by Plan 12-02 |
 | D-12-1 (stale-vector detection needs a write marker) | Decision 7; deferred in `12-DEFERRED.md` |
+
+---
+
+## Addendum, 2026-07-29 — GAP-12-C: the vendor path, and what a skipped test costs
+
+`memory embeddings --action enable` — the only CLI path in this product that reaches the network —
+could not succeed in shipped code. Two deterministic defects in `src/embeddings/model-vendor.ts`,
+found by the Plan 12-05 executor running the real command against the live corpus:
+
+1. **The write path and the read path were different places.** `vendorModel` set
+   `env.localModelPath` and downloaded through `pipeline()`. In transformers.js `localModelPath` is
+   where local models are *read from*; remote downloads land in `env.cacheDir`, in a
+   **revision-nested** `<repo>/<revision>/<file>` layout. `verifyManifest` reads a **flat**
+   `${localModelPath}/${repo}/${relPath}`. Nothing ever wrote what it read. Repointing `cacheDir` at
+   the target would not have fixed it — the layouts differ.
+2. **One manifest file was never fetched.** `BGE_SMALL_EN_V1_5_MANIFEST` pins five files;
+   `pipeline("feature-extraction", …)` requests four. `special_tokens_map.json` was absent from the
+   cache entirely. Fixing only defect 1 would have converted one `ENOENT` into another.
+
+The manifest was never in question: the gitignored fixture at
+`tests/fixtures/models/Xenova/bge-small-en-v1.5` holds all five files and every one hashes to its
+pinned value. The manifest is right; the code meant to reproduce it was not. It is unedited.
+
+### The fix
+
+`vendorModel` now fetches each of the five pinned files directly from
+`{baseUrl}/{repo}/resolve/{revision}/{file}` and writes them straight into the flat layout
+`verifyManifest` already expected. Consequences worth recording:
+
+- **The revision is pinned in the URL**, not delegated to library cache semantics. That indirection
+  is what produced the defect, and five explicit URLs are the most auditable shape for the one path
+  in the product that reaches the network.
+- **Writes are atomic** (T-12-30). Every file is streamed into a staging directory and hash- and
+  byte-length-verified there; the staged set is moved into place only once all five verify. A failed
+  or partial vendor leaves nothing a later `verifyManifest` could pass on — which matters because
+  `embeddings-command.ts` flips `enabled: true` purely on `vendorModel` resolving.
+- **`env.allowRemoteModels` disposition.** The direct fetch no longer routes through transformers.js,
+  so the flag is irrelevant to the download itself. It is not deleted: it is deliberately never
+  switched on, and is asserted `false`, so D-04/T-09-02's invariant — transformers.js never loads
+  from the network in this process — still holds for the load proof and for everything after it.
+- **Load is proven separately from integrity.** `pipeline()` proved loadability only as a side effect
+  of fetching, and that coupling is exactly what produced the layout mismatch. A post-vendor
+  `TransformerEmbedder.init()` now proves it explicitly, against an isolated `env.cacheDir` — because
+  measured on 2026-07-29, with the stale `node_modules/@huggingface/transformers/.cache` present,
+  loading a model root **that does not exist** succeeds, and with the cache empty the same call
+  throws `file was not found locally`. A load proof served from that cache would prove nothing about
+  what was just vendored. This is the same cache-hit mechanism that let the defect ship: the 12-05
+  run downloaded nothing at all, every cached file still dated 2026-07-21.
+
+### The part worth keeping: a default-skipped test is worse than a missing one
+
+`tests/embeddings/model-vendor.test.ts` had, as its **first case**, *"writes the pinned fp32 file set
+under localModelPath"* — precisely the assertion that failed. It sat behind
+`describe.runIf(MEMORY_RUN_NETWORK_TESTS)`. Those were the **4 skipped tests** in an otherwise-green
+1,106-passed suite. A missing test leaves a visible hole; a skipped one reports a number that implies
+the path is covered.
+
+This was the third time in two phases that the test which would have caught a defect did not run.
+The shared mechanism is not "bad tests" — each of the three is a *correct* assertion that never
+evaluated against the code under change:
+
+| gap | the coverage that existed | why it did not catch the defect |
+|---|---|---|
+| GAP-11-G | two passing tests | they actively pinned the **pre-reversal** rule — green while encoding the defect |
+| GAP-12-A | backfill fixtures | every one hardcoded the ONE embedder whose class name and emitted `model` coincide |
+| GAP-12-C | the exact failing assertion | **skipped by default** behind a network flag |
+
+**The rule.** When a code path can only be tested behind a flag, either give it an offline seam that
+runs unconditionally, or treat the flag as a known coverage hole and record it as one. It is not a
+ban on network-gated tests: the real-Hub cases are retained and are still the only thing exercising
+the actual Hub. They are simply no longer the *only* coverage.
+
+Here the seam is a `baseUrl` injection point on `vendorModel`.
+`tests/embeddings/model-vendor.offline.test.ts` stands up a loopback `node:http` server over the
+vendored fixture — whose bytes hash exactly to the manifest — so the test exercises the real fetch,
+the real flatten, and the real sha256 verification rather than a mock of them. Injecting a URL was
+preferred to mocking `fetch` for that reason. Its only gate is fixture presence, mirroring the golden
+test's idiom, so a fresh clone without the gitignored fixture stays green.
+
+| Requirement | Where |
+|---|---|
+| REQ-044 (explicit, hash-verified vendoring; no implicit network fetch) | `vendorModel`/`verifyManifest` (`src/embeddings/model-vendor.ts`); `tests/embeddings/model-vendor.offline.test.ts` (default suite, loopback); `tests/embeddings/model-vendor.test.ts` (network-gated, real Hub) |
+| GAP-12-C (the vendor produces the layout it verifies, and all five files) | This addendum; Plan 12-08 |
