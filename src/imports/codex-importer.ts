@@ -131,6 +131,14 @@ export class CodexHistoryImporter {
     };
 
     for (const file of await findCodexHistoryFiles(canonicalRoot)) {
+
+      // Per FILE, not just per record: a resumed file reads zero lines, so the record loop
+
+      // below never runs and never yields. 5,334 files of stat + checkpoint work starved the
+
+      // heartbeat for an entire 56 s run, expiring the lease before contraction could start.
+
+      await maybeYield();
       result.filesScanned += 1;
       const checkpointId = this.checkpointId(parsedApproval, file.resourcePath);
       const previous = await this.store.getImportCheckpoint(checkpointId);

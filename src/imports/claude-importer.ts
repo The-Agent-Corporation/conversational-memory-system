@@ -102,6 +102,14 @@ export class ClaudeHistoryImporter {
     const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
 
     for (const file of await findClaudeHistoryFiles(root)) {
+
+      // Per FILE, not just per record: a resumed file reads zero lines, so the record loop
+
+      // below never runs and never yields. 5,334 files of stat + checkpoint work starved the
+
+      // heartbeat for an entire 56 s run, expiring the lease before contraction could start.
+
+      await maybeYield();
       result.filesScanned += 1;
       const checkpointId = importCheckpointId(parsed.personId, parsed.candidateId, file.resourcePath);
       const previous = await this.store.getImportCheckpoint(checkpointId);

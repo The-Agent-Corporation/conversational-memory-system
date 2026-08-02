@@ -94,6 +94,14 @@ export class OpenClawHistoryImporter {
     const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
 
     for (const file of await findOpenClawHistoryFiles(root)) {
+
+      // Per FILE, not just per record: a resumed file reads zero lines, so the record loop
+
+      // below never runs and never yields. 5,334 files of stat + checkpoint work starved the
+
+      // heartbeat for an entire 56 s run, expiring the lease before contraction could start.
+
+      await maybeYield();
       result.filesScanned += 1;
       const agentId = file.resourcePath.split(sep)[1] ?? "unknown";
       const service = new MemoryService(this.store, {
