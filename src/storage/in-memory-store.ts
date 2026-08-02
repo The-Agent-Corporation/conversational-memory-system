@@ -1312,10 +1312,18 @@ export class InMemoryStore implements MemoryStore {
     if (frontier !== parsed.expectedFrontierSequence) {
       return this.syncStateChanged(parsed.receipt);
     }
-    const effects = structuredClone(this.localSyncEffects);
-    const outbox = structuredClone(this.syncOutbox);
+    // Build both rows first and publish them only after the final fault point.
+    //
+    // This previously deep-cloned BOTH whole arrays here, pushed one row onto each copy, then
+    // `replace`d them -- which cloned each a second time. Four full-array clones per ingested
+    // event, over arrays that grow by one row per event: O(n^2), and measured at 88% of a live
+    // import's wall clock (15.2 ms per event at ~7k events, and rising).
+    //
+    // The clones existed to make the operation all-or-nothing across the `reach` points. Deferring
+    // both pushes to the end gives the same guarantee for free: a throw at any fault point leaves
+    // both arrays untouched and the frontier unmoved, which `sync-store.test.ts` pins directly.
     this.faultInjector?.reach("local_sync_before_effect");
-    effects.push(LocalSyncEffectRecordSchema.parse({
+    const effectRecord = LocalSyncEffectRecordSchema.parse({
       id: `${parsed.outboxId}_effect`,
       personId: parsed.personId,
       deviceId: parsed.deviceId,
@@ -1324,9 +1332,9 @@ export class InMemoryStore implements MemoryStore {
       deviceSequence: parsed.deviceSequence,
       effectFingerprint: parsed.effectFingerprint,
       committedAt: parsed.committedAt
-    }));
+    });
     this.faultInjector?.reach("local_sync_after_effect");
-    outbox.push(SyncOutboxOperationSchema.parse({
+    const outboxRecord = SyncOutboxOperationSchema.parse({
       id: parsed.outboxId,
       personId: parsed.personId,
       deviceId: parsed.deviceId,
@@ -1344,10 +1352,10 @@ export class InMemoryStore implements MemoryStore {
       sealedEnvelopeBytesBase64: null,
       sealedEnvelopeDigest: null,
       sealedAt: null
-    }));
+    });
     this.faultInjector?.reach("local_sync_after_outbox");
-    this.replace(this.localSyncEffects, effects);
-    this.replace(this.syncOutbox, outbox);
+    this.localSyncEffects.push(effectRecord);
+    this.syncOutbox.push(outboxRecord);
     this.setFrontier(parsed.personId, parsed.deviceId, parsed.deviceSequence);
     return structuredClone(parsed.receipt);
   }

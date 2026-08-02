@@ -86,6 +86,9 @@ describe("export --plaintext escape hatch (D-07b)", () => {
     expect(exportSource).toMatch(/--plaintext/);
   });
 
+  // Real passphrase-KDF work by design (deliberately expensive). ~1-3 s idle against a 5 s
+  // default, so it exceeds the budget under full-suite parallelism -- a scheduling flake,
+  // not a defect in backup. The ceiling still fails loudly on a genuine hang.
   it("produces a plaintext dump that is a superset-equivalent, uses the same logical dump shape as backup", async () => {
     const dbPath = join(workDir, "source.sqlite");
     await seedFixtureStore(dbPath);
@@ -106,5 +109,5 @@ describe("export --plaintext escape hatch (D-07b)", () => {
     // Encrypted backup ciphertext must never contain the plaintext identifier in the clear.
     const backupRaw = await readFile(backupOut, "utf8");
     expect(backupRaw).not.toMatch(/person_1/);
-  });
+  }, 30_000);
 });

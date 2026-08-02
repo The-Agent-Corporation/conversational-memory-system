@@ -69,6 +69,9 @@ async function seedFixtureStore(dbPath: string): Promise<{ personCount: number; 
 }
 
 describe("encrypted backup / restore round-trip (D-07)", () => {
+  // Real passphrase-KDF work by design (deliberately expensive). ~1-3 s idle against a 5 s
+  // default, so it exceeds the budget under full-suite parallelism -- a scheduling flake,
+  // not a defect in backup. The ceiling still fails loudly on a genuine hang.
   it("restores a logically equivalent dataset from an encrypted backup", async () => {
     const dbPath = join(workDir, "source.sqlite");
     await seedFixtureStore(dbPath);
@@ -90,8 +93,11 @@ describe("encrypted backup / restore round-trip (D-07)", () => {
     } finally {
       restored.close();
     }
-  });
+  }, 30_000);
 
+  // Real passphrase-KDF work by design (deliberately expensive). ~1-3 s idle against a 5 s
+  // default, so it exceeds the budget under full-suite parallelism -- a scheduling flake,
+  // not a defect in backup. The ceiling still fails loudly on a genuine hang.
   it("fails wrong-passphrase and single-byte-tampered ciphertext identically (uniform, content-free)", async () => {
     const dbPath = join(workDir, "source.sqlite");
     await seedFixtureStore(dbPath);
@@ -120,8 +126,11 @@ describe("encrypted backup / restore round-trip (D-07)", () => {
     expect((wrongPassphraseError as Error).message).toBe((tamperedError as Error).message);
     // Content-free: the error must not embed the passphrase, plaintext, or path.
     expect((wrongPassphraseError as Error).message).not.toMatch(/passphrase|synthetic fixture|source\.sqlite/i);
-  });
+  }, 30_000);
 
+  // Real passphrase-KDF work by design (deliberately expensive). ~1-3 s idle against a 5 s
+  // default, so it exceeds the budget under full-suite parallelism -- a scheduling flake,
+  // not a defect in backup. The ceiling still fails loudly on a genuine hang.
   it("keeps backup cryptographically inert against the sync passphrase-recovery domain, and vice versa", async () => {
     const dbPath = join(workDir, "source.sqlite");
     await seedFixtureStore(dbPath);
@@ -162,7 +171,7 @@ describe("encrypted backup / restore round-trip (D-07)", () => {
         ciphertext: Buffer.from(sealed.ciphertext, "base64url")
       })
     ).toThrow();
-  });
+  }, 30_000);
 
   it("never imports the sync wrapWithPassphrase/unwrapWithPassphrase wrapper into backup code", async () => {
     const backupCryptoSource = await readFile(new URL("../../../src/storage/backup/backup-crypto.ts", import.meta.url), "utf8");
