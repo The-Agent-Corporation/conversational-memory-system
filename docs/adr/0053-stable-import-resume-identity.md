@@ -80,9 +80,18 @@ The old behaviour paid the full 10.81 GB on **every** scan, indefinitely.
 
 ## Consequences
 
-- The daemon's source-scan prologue stops being the dominant cost of `memory daemon once`. It ran
-  31 minutes without reaching the embedding repair pass at `daemon.ts:290`; that prologue is what
-  blocked Phase 12's SC1/SC2 from ever being observed.
+- **Corrected 2026-08-02.** This bullet originally claimed the re-read *was* what made
+  `memory daemon once` run 31 minutes without reaching the embedding repair pass at
+  `daemon.ts:290`. That was wrong, and stated before it had been measured. Instrumenting a real
+  import attributed **88% of wall clock to `InMemoryStore.commitLocalSyncOperation`**, which
+  deep-cloned the entire sync outbox and effects arrays on every ingested event; the byte re-reads
+  were a small fraction. Fixed separately; see the commit that removed those clones.
+
+  What this ADR's change *does* deliver stands on its own and is measured: bytes re-read per scan
+  fall **10.81 GB → 2.85 GB**, and on the first real import afterwards **4,617 checkpoints migrated
+  from the legacy `dev:ino` identity to `v2:`**, confirming the self-migration below works on real
+  data. Resume had been disabled corpus-wide and now is not. It simply was not the thing standing
+  between Phase 12 and SC1/SC2.
 - `fileIdentity` must never again incorporate a value that is assigned by the host rather than
   derived from the file. The regression test asserts two full `stat` results differing only in `dev`
   produce the identical identity.
