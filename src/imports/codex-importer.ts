@@ -31,6 +31,12 @@ import {
 const PARSER_VERSION = "codex-rollout/v1";
 
 export interface CodexHistoryImporterOptions {
+  /**
+   * Where prior quarantine records are READ from, when that is not the store being written
+   * to. Set only on the staged-batch path, where writes go to a throwaway staging store but
+   * `replay_requested` state and the original `createdAt` live in the durable one.
+   */
+  quarantineLookupStore?: MemoryStore;
   clock?: () => string;
   sanitizeContent?: (content: string) => string;
 }
@@ -56,6 +62,7 @@ interface ParsedCodexRecord {
 export class CodexHistoryImporter {
   private readonly clock: () => string;
   private readonly sanitizeContent: (content: string) => string;
+  private readonly quarantineLookupStore: MemoryStore | undefined;
 
   constructor(
     private readonly store: MemoryStore,
@@ -63,6 +70,7 @@ export class CodexHistoryImporter {
   ) {
     this.clock = options.clock ?? (() => new Date().toISOString());
     this.sanitizeContent = options.sanitizeContent ?? redactKnownSecrets;
+    this.quarantineLookupStore = options.quarantineLookupStore;
   }
 
   async importApprovedSource(approval: HistorySourceApproval): Promise<CodexImportResult> {
@@ -77,7 +85,8 @@ export class CodexHistoryImporter {
     const clock = options.clock ?? this.clock;
     const importer = new CodexHistoryImporter(staging, {
       clock,
-      sanitizeContent: this.sanitizeContent
+      sanitizeContent: this.sanitizeContent,
+      quarantineLookupStore: this.store
     });
     await seedStagingImportState(this.store, staging, grant);
     await importer.importSource({
@@ -110,7 +119,7 @@ export class CodexHistoryImporter {
       scopeId: parsedApproval.scopeId,
       clock: this.clock
     });
-    const quarantine = new QuarantineService(this.store, this.clock);
+    const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
     const result: CodexImportResult = {
       filesScanned: 0,
       messagesProcessed: 0,
@@ -345,6 +354,15 @@ export async function commitStagedGrantBatch(
     if (bucket) bucket.push(event);
     else eventsByResource.set(resource, [event]);
   }
+  // Quarantines get the same treatment for the same reason. The per-checkpoint
+  // `quarantines.filter(...)` below was the one collection this pre-bucketing missed, leaving it
+  // O(files * quarantines) -- 5,334 files against 174,149 records on the live corpus.
+  const quarantinesByResource = new Map<string, typeof quarantines>();
+  for (const record of quarantines) {
+    const bucket = quarantinesByResource.get(record.resourcePath);
+    if (bucket) bucket.push(record);
+    else quarantinesByResource.set(record.resourcePath, [record]);
+  }
   const turnsByEventId = new Map<string, typeof stagedTurns>();
   for (const turn of stagedTurns) {
     const eventId = String(turn.metadata.canonicalEventId);
@@ -391,7 +409,7 @@ export async function commitStagedGrantBatch(
       sources: sources as MemorySource[],
       canonicalEvents: changed,
       turns: turns as Turn[],
-      quarantineChanges: quarantines.filter((record) => record.resourcePath === checkpoint.resourcePath),
+      quarantineChanges: quarantinesByResource.get(checkpoint.resourcePath) ?? [],
       checkpoint,
       receipt,
       contractionJob: orderKeys.length === 0 ? null : {
@@ -451,6 +469,18 @@ function assertImportAuthority(authority: WriteAuthority, personId: string): voi
   }
 }
 
+/**
+ * Seeds the staging store with the state an import genuinely needs to resume: the source rows and
+ * the import checkpoints.
+ *
+ * It deliberately does NOT seed quarantine records. It used to, so that `QuarantineService.capture`
+ * could find a prior record and preserve its `replay_requested` state and original `createdAt` —
+ * but that meant loading every existing quarantine record for the candidate (174,149 for one source
+ * on the live corpus) and inserting them one at a time through a linear-scan upsert, which is
+ * quadratic and dominated the entire import before a single byte of history was read. The service
+ * now reads prior records straight from the durable store instead, so nothing is staged and the
+ * behaviour is unchanged.
+ */
 export async function seedStagingImportState(
   store: MemoryStore,
   staging: MemoryStore,
@@ -461,9 +491,6 @@ export async function seedStagingImportState(
   }
   for (const checkpoint of (await store.listImportCheckpoints(grant.personId)).filter((item) => item.candidateId === grant.candidateId)) {
     await staging.saveImportCheckpoint(checkpoint);
-  }
-  for (const record of await store.listQuarantineRecords(grant.personId, grant.candidateId)) {
-    await staging.saveQuarantineRecord(record);
   }
 }
 

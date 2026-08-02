@@ -30,6 +30,12 @@ import {
 const PARSER_VERSION = "claude-project-jsonl/v1";
 
 export interface ClaudeHistoryImporterOptions {
+  /**
+   * Where prior quarantine records are READ from, when that is not the store being written
+   * to. Set only on the staged-batch path, where writes go to a throwaway staging store but
+   * `replay_requested` state and the original `createdAt` live in the durable one.
+   */
+  quarantineLookupStore?: MemoryStore;
   clock?: () => string;
   sanitizeContent?: (content: string) => string;
 }
@@ -37,6 +43,7 @@ export interface ClaudeHistoryImporterOptions {
 export class ClaudeHistoryImporter {
   private readonly clock: () => string;
   private readonly sanitizeContent: (content: string) => string;
+  private readonly quarantineLookupStore: MemoryStore | undefined;
 
   constructor(
     private readonly store: MemoryStore,
@@ -44,6 +51,7 @@ export class ClaudeHistoryImporter {
   ) {
     this.clock = options.clock ?? (() => new Date().toISOString());
     this.sanitizeContent = options.sanitizeContent ?? redactKnownSecrets;
+    this.quarantineLookupStore = options.quarantineLookupStore;
   }
 
   async importApprovedSource(approval: ClaudeHistoryApproval): Promise<HistoryImportResult> {
@@ -56,7 +64,7 @@ export class ClaudeHistoryImporter {
   ): Promise<ImportBatchReceipt> {
     const staging = new InMemoryStore();
     const clock = options.clock ?? this.clock;
-    const importer = new ClaudeHistoryImporter(staging, { clock, sanitizeContent: this.sanitizeContent });
+    const importer = new ClaudeHistoryImporter(staging, { clock, sanitizeContent: this.sanitizeContent, quarantineLookupStore: this.store });
     await seedStagingImportState(this.store, staging, grant);
     await importer.importSource({
       candidateId: grant.candidateId,
@@ -89,7 +97,7 @@ export class ClaudeHistoryImporter {
       clock: this.clock
     });
     const result: HistoryImportResult = emptyResult();
-    const quarantine = new QuarantineService(this.store, this.clock);
+    const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
 
     for (const file of await findClaudeHistoryFiles(root)) {
       result.filesScanned += 1;

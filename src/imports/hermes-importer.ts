@@ -38,6 +38,12 @@ interface HermesMessageRow {
 }
 
 export interface HermesHistoryImporterOptions {
+  /**
+   * Where prior quarantine records are READ from, when that is not the store being written
+   * to. Set only on the staged-batch path, where writes go to a throwaway staging store but
+   * `replay_requested` state and the original `createdAt` live in the durable one.
+   */
+  quarantineLookupStore?: MemoryStore;
   clock?: () => string;
   sanitizeContent?: (content: string) => string;
 }
@@ -45,6 +51,7 @@ export interface HermesHistoryImporterOptions {
 export class HermesHistoryImporter {
   private readonly clock: () => string;
   private readonly sanitizeContent: (content: string) => string;
+  private readonly quarantineLookupStore: MemoryStore | undefined;
 
   constructor(
     private readonly store: MemoryStore,
@@ -52,6 +59,7 @@ export class HermesHistoryImporter {
   ) {
     this.clock = options.clock ?? (() => new Date().toISOString());
     this.sanitizeContent = options.sanitizeContent ?? redactKnownSecrets;
+    this.quarantineLookupStore = options.quarantineLookupStore;
   }
 
   async importApprovedSource(approval: HermesHistoryApproval): Promise<HistoryImportResult> {
@@ -64,7 +72,7 @@ export class HermesHistoryImporter {
   ): Promise<ImportBatchReceipt> {
     const staging = new InMemoryStore();
     const clock = options.clock ?? this.clock;
-    const importer = new HermesHistoryImporter(staging, { clock, sanitizeContent: this.sanitizeContent });
+    const importer = new HermesHistoryImporter(staging, { clock, sanitizeContent: this.sanitizeContent, quarantineLookupStore: this.store });
     await seedStagingImportState(this.store, staging, grant);
     await importer.importSource({
       candidateId: grant.candidateId,
@@ -132,7 +140,7 @@ export class HermesHistoryImporter {
         bytesProcessed: 0,
         recordsQuarantined: 0
       };
-      const quarantine = new QuarantineService(this.store, this.clock);
+      const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
       let committedHighWaterMark = highWaterMark;
 
       for (const row of rows) {

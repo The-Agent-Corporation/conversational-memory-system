@@ -11,10 +11,25 @@ const MAX_QUARANTINE_RECORD_BYTES = 8_192;
 export type QuarantineReason = QuarantineRecord["reason"];
 
 export class QuarantineService {
+  /**
+   * `existingStore` is where prior records are READ from; `store` is where new ones are WRITTEN.
+   *
+   * They differ only on the staged-batch import path, where writes must land in the throwaway
+   * staging store but prior state lives in the durable one. Before this split, the batch importers
+   * pre-loaded every existing quarantine record into staging purely so this lookup would find them
+   * — 174,149 records for a single source on the live corpus, inserted one-by-one through a linear
+   * upsert scan. Reading through instead keeps `replay_requested` state and the original
+   * `createdAt` intact without staging a single row.
+   */
+  private readonly existingStore: MemoryStore;
+
   constructor(
     private readonly store: MemoryStore,
-    private readonly clock: () => string = () => new Date().toISOString()
-  ) {}
+    private readonly clock: () => string = () => new Date().toISOString(),
+    existingStore?: MemoryStore
+  ) {
+    this.existingStore = existingStore ?? store;
+  }
 
   async capture(input: {
     personId: string;
@@ -31,7 +46,7 @@ export class QuarantineService {
       input.resourcePath,
       input.recordPosition
     );
-    const existing = await this.store.getQuarantineRecord(id);
+    const existing = await this.existingStore.getQuarantineRecord(id);
     const sanitized = redactKnownSecrets(input.rawRecord);
     const bounded = Buffer.from(sanitized, "utf8").subarray(0, MAX_QUARANTINE_RECORD_BYTES).toString("utf8");
     const record = QuarantineRecordSchema.parse({
@@ -66,7 +81,7 @@ export class QuarantineService {
       input.resourcePath,
       input.recordPosition
     );
-    const existing = await this.store.getQuarantineRecord(id);
+    const existing = await this.existingStore.getQuarantineRecord(id);
     if (!existing || existing.state === "replayed" || existing.state === "discarded") return;
     await this.store.saveQuarantineRecord(QuarantineRecordSchema.parse({
       ...existing,

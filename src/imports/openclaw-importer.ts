@@ -30,6 +30,12 @@ import {
 const PARSER_VERSION = "openclaw-session-jsonl/v1";
 
 export interface OpenClawHistoryImporterOptions {
+  /**
+   * Where prior quarantine records are READ from, when that is not the store being written
+   * to. Set only on the staged-batch path, where writes go to a throwaway staging store but
+   * `replay_requested` state and the original `createdAt` live in the durable one.
+   */
+  quarantineLookupStore?: MemoryStore;
   clock?: () => string;
   sanitizeContent?: (content: string) => string;
 }
@@ -37,6 +43,7 @@ export interface OpenClawHistoryImporterOptions {
 export class OpenClawHistoryImporter {
   private readonly clock: () => string;
   private readonly sanitizeContent: (content: string) => string;
+  private readonly quarantineLookupStore: MemoryStore | undefined;
 
   constructor(
     private readonly store: MemoryStore,
@@ -44,6 +51,7 @@ export class OpenClawHistoryImporter {
   ) {
     this.clock = options.clock ?? (() => new Date().toISOString());
     this.sanitizeContent = options.sanitizeContent ?? redactKnownSecrets;
+    this.quarantineLookupStore = options.quarantineLookupStore;
   }
 
   async importApprovedSource(approval: OpenClawHistoryApproval): Promise<HistoryImportResult> {
@@ -56,7 +64,7 @@ export class OpenClawHistoryImporter {
   ): Promise<ImportBatchReceipt> {
     const staging = new InMemoryStore();
     const clock = options.clock ?? this.clock;
-    const importer = new OpenClawHistoryImporter(staging, { clock, sanitizeContent: this.sanitizeContent });
+    const importer = new OpenClawHistoryImporter(staging, { clock, sanitizeContent: this.sanitizeContent, quarantineLookupStore: this.store });
     await seedStagingImportState(this.store, staging, grant);
     await importer.importSource({
       candidateId: grant.candidateId,
@@ -81,7 +89,7 @@ export class OpenClawHistoryImporter {
       throw new Error("Approved OpenClaw root does not match its discovered candidate");
     }
     const result = emptyResult();
-    const quarantine = new QuarantineService(this.store, this.clock);
+    const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
 
     for (const file of await findOpenClawHistoryFiles(root)) {
       result.filesScanned += 1;

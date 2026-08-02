@@ -75,16 +75,16 @@ export async function planConfiguredHistoryImport(
   const staging = new InMemoryStore();
   await seedStagingImportState(store, staging, grant);
   if (request.source === "codex") {
-    await new CodexHistoryImporter(staging, { clock: () => request.requestedAt })
+    await new CodexHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
       .importApprovedSource(approveCodexHistory(candidate as Awaited<ReturnType<typeof discoverCodexHistory>>, authority.personId, authority.profileName, grant.approvedAt, authority.ingestScopeId));
   } else if (request.source === "claude-code") {
-    await new ClaudeHistoryImporter(staging, { clock: () => request.requestedAt })
+    await new ClaudeHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
       .importApprovedSource(approveClaudeHistory(candidate as Awaited<ReturnType<typeof discoverClaudeHistory>>, authority.personId, authority.profileName, grant.approvedAt, authority.ingestScopeId));
   } else if (request.source === "openclaw") {
-    await new OpenClawHistoryImporter(staging, { clock: () => request.requestedAt })
+    await new OpenClawHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
       .importApprovedSource(approveOpenClawHistory(candidate as Awaited<ReturnType<typeof discoverOpenClawHistory>>, authority.personId, authority.profileName, grant.approvedAt, authority.ingestScopeId));
   } else {
-    await new HermesHistoryImporter(staging, { clock: () => request.requestedAt })
+    await new HermesHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
       .importApprovedSource(approveHermesHistory(candidate as Awaited<ReturnType<typeof discoverHermesHistory>>, authority.personId, authority.profileName, grant.approvedAt, authority.ingestScopeId));
   }
 
