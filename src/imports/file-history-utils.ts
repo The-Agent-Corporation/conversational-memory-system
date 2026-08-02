@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
+import { composeFileIdentity } from "./file-identity.js";
 
 export interface HistoryFile {
   absolutePath: string;
@@ -74,7 +75,7 @@ async function walk(
       resourcePath,
       size: metadata.size,
       modifiedAt: metadata.mtime.toISOString(),
-      fileIdentity: `${metadata.dev}:${metadata.ino}`
+      fileIdentity: composeFileIdentity(metadata)
     });
   }
 }

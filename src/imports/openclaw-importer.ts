@@ -19,6 +19,7 @@ import { openClawCandidateId, findOpenClawHistoryFiles } from "./openclaw-discov
 import { redactKnownSecrets } from "./secret-redactor.js";
 import { createToolCallEvent, extractToolCalls } from "./tool-call-record.js";
 import { QuarantineService, type QuarantineReason } from "./quarantine-service.js";
+import { composeFileIdentity, fileIdentityMatches } from "./file-identity.js";
 import {
   ImportCheckpointSchema,
   OpenClawHistoryApprovalSchema,
@@ -95,9 +96,9 @@ export class OpenClawHistoryImporter {
       const checkpointId = importCheckpointId(parsed.personId, parsed.candidateId, file.resourcePath);
       const previous = await this.store.getImportCheckpoint(checkpointId);
       const metadata = await stat(file.absolutePath);
-      const identity = `${metadata.dev}:${metadata.ino}`;
+      const identity = composeFileIdentity(metadata);
       const canResume = previous !== null &&
-        previous.fileIdentity === identity &&
+        fileIdentityMatches(previous.fileIdentity, metadata) &&
         previous.parserVersion === PARSER_VERSION &&
         metadata.size >= previous.byteOffset;
       const startingOffset = canResume ? previous.byteOffset : 0;

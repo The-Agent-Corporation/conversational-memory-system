@@ -17,6 +17,7 @@ import {
 import { redactKnownSecrets } from "./secret-redactor.js";
 import { createToolCallEvent, parseSerializedToolCalls, serializedToolCallsAreMalformed } from "./tool-call-record.js";
 import { QuarantineService } from "./quarantine-service.js";
+import { composeFileIdentity, fileIdentityMatches } from "./file-identity.js";
 import {
   HermesHistoryApprovalSchema,
   ImportCheckpointSchema,
@@ -88,7 +89,7 @@ export class HermesHistoryImporter {
       throw new Error("Approved Hermes database does not match its discovered candidate");
     }
     const metadata = await lstat(databasePath);
-    const identity = `${metadata.dev}:${metadata.ino}`;
+    const identity = composeFileIdentity(metadata);
     const resourcePath = hermesResourceName(databasePath);
     const checkpointId = importCheckpointId(parsed.personId, parsed.candidateId, resourcePath);
     const previous = await this.store.getImportCheckpoint(checkpointId);
@@ -97,7 +98,7 @@ export class HermesHistoryImporter {
       const maximum = database.prepare("select coalesce(max(id), 0) as maximum from messages")
         .get() as { maximum: number };
       const canResume = previous !== null &&
-        previous.fileIdentity === identity &&
+        fileIdentityMatches(previous.fileIdentity, metadata) &&
         previous.parserVersion === PARSER_VERSION &&
         Number(previous.rowHighWaterMark ?? previous.recordIndex) <= maximum.maximum;
       const highWaterMark = canResume

@@ -19,6 +19,7 @@ import {
   emitLocalSyncOperation
 } from "../sync/materialization/sync-materializer.js";
 import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
+import { composeFileIdentity, fileIdentityMatches } from "./file-identity.js";
 import {
   HistorySourceApprovalSchema,
   ImportCheckpointSchema,
@@ -123,9 +124,9 @@ export class CodexHistoryImporter {
       const checkpointId = this.checkpointId(parsedApproval, file.resourcePath);
       const previous = await this.store.getImportCheckpoint(checkpointId);
       const currentMetadata = await stat(file.absolutePath);
-      const currentIdentity = `${currentMetadata.dev}:${currentMetadata.ino}`;
+      const currentIdentity = composeFileIdentity(currentMetadata);
       const canResume = previous !== null &&
-        previous.fileIdentity === currentIdentity &&
+        fileIdentityMatches(previous.fileIdentity, currentMetadata) &&
         previous.parserVersion === PARSER_VERSION &&
         currentMetadata.size >= previous.byteOffset;
       const startingOffset = canResume ? previous.byteOffset : 0;

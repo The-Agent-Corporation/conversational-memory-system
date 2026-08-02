@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
+import { composeFileIdentity } from "./file-identity.js";
 import {
   CodexHistoryCandidateSchema,
   HistorySourceApprovalSchema,
@@ -107,7 +108,7 @@ const collectRolloutFiles = async (
       resourcePath: relative(rootPath, entryPath),
       size: metadata.size,
       modifiedAt: metadata.mtime.toISOString(),
-      fileIdentity: `${metadata.dev}:${metadata.ino}`
+      fileIdentity: composeFileIdentity(metadata)
     });
   }
 };

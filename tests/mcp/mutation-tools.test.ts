@@ -145,7 +145,11 @@ describe("MCP mutation application contract", () => {
         }
       }
     }
-  });
+    // 25 injected boundaries, each a real SQLite transaction against its own temp database. ~430 ms
+    // alone, but it shares a worker pool with the 19 s retrieval benchmark, and under that
+    // contention it intermittently exceeded the 5 s default — a flake in the runner's scheduling,
+    // not in the rollback contract. The generous ceiling still fails loudly on a real hang.
+  }, 30_000);
 
   it("commits identical receipts and final state across in-memory and reopened SQLite adapters", async () => {
     for (const operation of ["history", "proposal", "revocation", "deletion"] as const) {
