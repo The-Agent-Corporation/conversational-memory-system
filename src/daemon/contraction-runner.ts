@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { createEventLoopYielder } from "../imports/cooperative-yield.js";
 import { anchorsForTurn } from "../anchors/anchor-detector.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
-import type { Anchor, Summary, Turn } from "../domain/types.js";
+import { MemoryStateSchema, type Anchor, type Summary, type Turn } from "../domain/types.js";
 import type { Embedder } from "../embeddings/embedder.js";
 import { DerivationInvalidator } from "../service/derivation-invalidator.js";
 import type { DerivationSupersession, PendingToolRun } from "./types.js";
@@ -29,6 +30,13 @@ import {
 // Exported (additive, no behavior change) so `rebuild-derivations-command.ts` can detect a stale
 // checkpoint without duplicating the version string (REQ-054).
 export const PROCESSOR_VERSION = `continuous-contraction/v1+${HYGIENE_RULE_VERSION}`;
+/**
+ * Every memory state EXCEPT `superseded`. Derived from the schema rather than written out so a
+ * newly added state is included by default -- the predicate this replaces was an exclusion
+ * (`state !== "superseded"`), and a hand-listed inclusion would silently start dropping rows.
+ */
+const NON_SUPERSEDED_STATES = MemoryStateSchema.options.filter((state) => state !== "superseded");
+
 export const DEFAULT_CONTRACTION_LIMITS = Object.freeze({ maxEvents: 250, maxMonotonicMs: 2_000 });
 
 /**
@@ -126,9 +134,20 @@ export class ContractionRunner {
     // load them ONCE and inject them here. Reloading + re-scope-asserting all events on every slice
     // was O(slices * events) = O(n^2), which made a 292k-event bootstrap take hours. The daemon,
     // which drains at most a slice per scheduled tick, passes nothing and keeps the fresh-read path.
+    //
+    // Each stage below is a single SYNCHRONOUS `node:sqlite` call that cannot itself be broken up,
+    // so the yields sit BETWEEN them. That is the whole mechanism: the daemon renews its 30 s write
+    // lease from a 10 s `setTimeout` heartbeat, and a slice that never reaches the timer phase lets
+    // the lease lapse and then has its own commit rejected by `assertFreshDaemonAuthority`. Measured
+    // on the live corpus: 66 s inside one slice with zero heartbeats, ending in
+    // "Daemon write authority is missing, stale, or expired". Yielding here caps the longest
+    // unbroken block at the largest single load rather than at their sum.
+    const maybeYield = createEventLoopYielder();
     const allEvents = context.preloadedEvents ?? await this.store.listCanonicalEvents(personId);
+    await maybeYield();
     if (!context.scopesAlreadyAsserted) await this.assertEventScopes(personId, allEvents);
     const eventIndexById = context.eventIndexById ?? buildEventIndex(allEvents);
+    await maybeYield();
     const checkpointId = `contraction_checkpoint_${jobId}`;
     const previous = await this.store.getContractionCheckpoint(checkpointId);
     if (previous && (previous.personId !== personId || previous.jobId !== jobId)) {
@@ -165,6 +184,7 @@ export class ContractionRunner {
     const startIndex = checkpointCanResume
       ? resumeIndex(allEvents, previous, eventIndexById)
       : await this.affectedStartIndex(personId, allEvents, job.earliestAffected, eventIndexById);
+    await maybeYield();
     const rewindOrderKey = checkpointCanResume ? null : orderKey(allEvents[startIndex] ?? null);
     const monitor = new TopicMonitor();
     if (checkpointCanResume && previous.activeTopic) monitor.restore(previous.activeTopic);
@@ -216,6 +236,7 @@ export class ContractionRunner {
         }
       }
       processed.push(event);
+      await maybeYield();
       await this.options.afterEvent?.(event);
       if (this.clock.monotonicNow() - startedAt >= maxMonotonicMs) break;
     }
@@ -301,12 +322,15 @@ export class ContractionRunner {
     // full (correct) invalidation.
     let supersessions: DerivationSupersession[] = [];
     if (!checkpointCanResume) {
-      const oldSummaries = (await this.store.listSummaries()).filter((summary) =>
-        summary.personId === personId && summary.origin === "historical_bootstrap" && summary.state !== "superseded"
-      );
+      // Same store-side filter as `affectedStartIndex`, and the same reason: this is the identical
+      // predicate over the identical table, and it runs on the rewind/first-slice path -- the one a
+      // daemon slice against an already-derived corpus always takes.
+      const oldSummaries = (await this.store.listSummaries({ personId, states: NON_SUPERSEDED_STATES }))
+        .filter((summary) => summary.origin === "historical_bootstrap");
       const affectedOldIds = oldSummaries
         .filter((summary) => summaryIntersectsAtOrAfter(summary, eventIndexById, startIndex))
         .map((summary) => summary.id);
+      await maybeYield();
       supersessions = await new DerivationInvalidator(this.store).invalidateDependencies({
         personId,
         summaryIds: affectedOldIds,
@@ -351,6 +375,9 @@ export class ContractionRunner {
       nextDueAt: now
     };
 
+    // Last chance before the commit: this is the write that `assertFreshDaemonAuthority` rejects if
+    // everything above ran the lease past its TTL.
+    await maybeYield();
     this.options.faults?.reach("before_contraction_commit");
     await this.options.beforeCommit?.();
     await this.store.commitContractionSlice({
@@ -496,9 +523,14 @@ export class ContractionRunner {
     eventIndexById: ReadonlyMap<string, number>
   ): Promise<number> {
     const earliestIndex = Math.max(0, events.findIndex((event) => compareKeys(orderKey(event)!, affected) >= 0));
-    const summaries = (await this.store.listSummaries()).filter((summary) =>
-      summary.personId === personId && summary.origin === "historical_bootstrap" && summary.state !== "superseded"
-    );
+    // Pushed into the store rather than filtered in JS. The unfiltered `listSummaries()` loaded and
+    // Zod-parsed every summary in the corpus -- measured at 13.6 s for 138,373 rows on the live
+    // database -- to answer a question about a subset, inside a slice whose write authority expires
+    // after 30 s. Measured cardinality there: `personId` and `origin` each excluded *nothing* (one
+    // person, all bootstrap-origin), so only the state predicate does real work; it drops 89,059 of
+    // 138,373 rows. `personId` is passed anyway because a second person makes it load-bearing.
+    const summaries = (await this.store.listSummaries({ personId, states: NON_SUPERSEDED_STATES }))
+      .filter((summary) => summary.origin === "historical_bootstrap");
     let boundary = earliestIndex;
     for (const summary of summaries) {
       const indices = (summary.sourceCanonicalEventIds ?? [])

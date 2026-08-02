@@ -723,6 +723,48 @@ describe("ContractionRunner", () => {
     expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3b-tool-1")).toBe(false);
     expect(anchors.some((anchor) => anchor.canonicalEventId === "hygiene-anchor-f3b-tool-2")).toBe(false);
   });
+
+  /**
+   * The regression this exists for: the daemon renews its 30 s write lease from a 10 s `setTimeout`
+   * heartbeat, and `assertFreshDaemonAuthority` rejects the slice's own commit once that lease
+   * lapses. `node:sqlite`'s `DatabaseSync` is synchronous, so every store call inside `drainSlice`
+   * does its work inline, and a slice that never reaches the event loop's TIMER phase starves the
+   * heartbeat completely.
+   *
+   * Measured on the live corpus before the fix: 66 s inside one slice with zero heartbeats, ending
+   * in "Daemon write authority is missing, stale, or expired" -- swallowed by a bare `catch`, so
+   * `memory daemon once` reported `contractionSlices: 0` under an `ok: true` receipt and exit 0.
+   *
+   * The assertion is deliberately about a *timer* rather than about the yielder being called: a fix
+   * that yielded only to microtasks (`await Promise.resolve()`, `queueMicrotask`) would satisfy a
+   * call-count assertion while leaving the heartbeat exactly as starved.
+   */
+  it("lets a pending timer fire during a slice, so the daemon heartbeat is not starved", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore({ clock });
+    const events = Array.from({ length: 40 }, (_, index) =>
+      event(`yield-${index}`, index + 1, `Topic ${index % 4} discussion point ${index}.`, index * 10));
+    const job = await commitStableBatch(store, "yield-slice", events, clock.now());
+    await store.acquireDaemonLease({ databaseId: "memory-db", ownerToken: "token-yield", pid: 110, now: clock.now() });
+
+    let heartbeatFired = false;
+    const heartbeat = setTimeout(() => { heartbeatFired = true; }, 0);
+    try {
+      await new ContractionRunner(store, {
+        clock,
+        authority: daemonAuthority("token-yield"),
+        // The yielder is time-based (50 ms), so a slice over a synthetic 40-event store finishes in
+        // under a millisecond and correctly never yields at all. Burning real wall-clock inside the
+        // loop is what makes this a test of a SLOW slice -- the only kind that starves a heartbeat --
+        // rather than adding a test-only interval seam that would not exercise the production path.
+        afterEvent: () => { const until = Date.now() + 30; while (Date.now() < until) { /* busy */ } }
+      }).drainSlice(PERSON_ID, job.id);
+    } finally {
+      clearTimeout(heartbeat);
+    }
+
+    expect(heartbeatFired).toBe(true);
+  });
 });
 
 describe("ProposalScheduler", () => {
