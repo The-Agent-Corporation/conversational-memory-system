@@ -337,7 +337,14 @@ export async function commitStagedGrantBatch(
   const sources = (await staging.listSources(grant.personId))
     .filter((source) => source.instanceId === grant.candidateId);
   const stagedEvents = await staging.listCanonicalEvents(grant.personId);
-  const existing = new Map((await store.listCanonicalEvents(grant.personId)).map((event) => [event.id, event]));
+  // Only the staged ids can ever be looked up below, so resolve exactly those. Loading every
+  // canonical event the person owns cost 292,407 rows and their Zod parses on the live corpus to
+  // answer a handful of `existing.get(...)` calls, and dominated the import once the quarantine
+  // seed was removed.
+  const existing = new Map(
+    (await store.listCanonicalEventsByIds(grant.personId, stagedEvents.map((event) => event.id)))
+      .map((event) => [event.id, event])
+  );
   const quarantines = await staging.listQuarantineRecords(grant.personId, grant.candidateId);
   const stagedTurns = await collectStagedTurns(staging, stagedEvents);
   const receipts: ImportBatchReceipt[] = [];

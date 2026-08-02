@@ -147,6 +147,17 @@ export interface MemoryStore {
   listSources(personId: string): Promise<MemorySource[]>;
   saveCanonicalEvent(event: CanonicalEvent): Promise<void>;
   listCanonicalEvents(personId: string): Promise<CanonicalEvent[]>;
+  /**
+   * Resolve a bounded id batch for one person. `[]` in, `[]` out, with no query issued.
+   *
+   * Exists so an import can diff its staged events against their durable counterparts without
+   * loading and Zod-parsing every canonical event the person owns — 292,407 rows on the live
+   * corpus, to look up a handful of ids.
+   *
+   * Scoped by `personId` deliberately: this is a diff input, and an id resolving across a person
+   * boundary would let one person's history influence another's import decisions.
+   */
+  listCanonicalEventsByIds(personId: string, ids: readonly string[]): Promise<CanonicalEvent[]>;
   deleteCanonicalEvents(ids: string[]): Promise<void>;
   deleteSources(ids: string[]): Promise<void>;
   saveImportCheckpoint(checkpoint: ImportCheckpoint): Promise<void>;

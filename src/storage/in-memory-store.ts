@@ -706,6 +706,18 @@ export class InMemoryStore implements MemoryStore {
       ));
   }
 
+  async listCanonicalEventsByIds(personId: string, ids: readonly string[]): Promise<CanonicalEvent[]> {
+    if (ids.length === 0) return [];
+    const requested = new Set(ids);
+    return structuredClone(this.canonicalEvents
+      .filter((event) => event.personId === personId && requested.has(event.id))
+      .sort((left, right) =>
+        left.occurredAt.localeCompare(right.occurredAt) ||
+        left.nativeSequence - right.nativeSequence ||
+        left.id.localeCompare(right.id)
+      ));
+  }
+
   async deleteCanonicalEvents(ids: string[]): Promise<void> {
     this.removeByIds(this.canonicalEvents, ids);
   }

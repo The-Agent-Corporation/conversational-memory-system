@@ -96,8 +96,14 @@ export async function planConfiguredHistoryImport(
   const nextCheckpoint = stagedCheckpoints.find((item) => JSON.stringify(existingById.get(item.id) ?? null) !== JSON.stringify(item)) ?? stagedCheckpoints[0];
   if (!nextCheckpoint) throw new Error("Configured source produced no import checkpoint");
 
-  const existingEvents = new Map((await store.listCanonicalEvents(authority.personId)).map((item) => [item.id, item]));
-  const resourceEvents = (await staging.listCanonicalEvents(authority.personId))
+  // Same shape as `commitStagedGrantBatch`: only the staged ids are ever tested against this set,
+  // so resolve exactly those rather than loading the person's entire canonical history.
+  const stagedEvents = await staging.listCanonicalEvents(authority.personId);
+  const existingEvents = new Set(
+    (await store.listCanonicalEventsByIds(authority.personId, stagedEvents.map((item) => item.id)))
+      .map((item) => item.id)
+  );
+  const resourceEvents = stagedEvents
     .filter((event) => sourceResource(event) === nextCheckpoint.resourcePath && !existingEvents.has(event.id))
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.nativeSequence - right.nativeSequence || left.id.localeCompare(right.id));
   const nextSources = (await staging.listSources(authority.personId))

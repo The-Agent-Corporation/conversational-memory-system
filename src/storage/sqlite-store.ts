@@ -960,6 +960,26 @@ export class SqliteStore implements MemoryStore {
     return rows.map((row) => CanonicalEventSchema.parse(JSON.parse(row.payload)));
   }
 
+  async listCanonicalEventsByIds(personId: string, ids: readonly string[]): Promise<CanonicalEvent[]> {
+    if (ids.length === 0) return [];
+    const CHUNK_SIZE = 500;
+    const unique = [...new Set(ids)];
+    const events: CanonicalEvent[] = [];
+    for (let offset = 0; offset < unique.length; offset += CHUNK_SIZE) {
+      const chunk = unique.slice(offset, offset + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.database
+        .prepare(`select payload from canonical_events where person_id = ? and id in (${placeholders})`)
+        .all(personId, ...chunk) as PayloadRow[];
+      for (const row of rows) events.push(CanonicalEventSchema.parse(JSON.parse(row.payload)));
+    }
+    return events.sort((left, right) =>
+      left.occurredAt.localeCompare(right.occurredAt) ||
+      left.nativeSequence - right.nativeSequence ||
+      left.id.localeCompare(right.id)
+    );
+  }
+
   async deleteCanonicalEvents(ids: string[]): Promise<void> {
     this.deleteIds("canonical_events", ids);
   }
