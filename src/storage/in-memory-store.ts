@@ -280,6 +280,8 @@ export class InMemoryStore implements MemoryStore {
       .map((state) => structuredClone(state));
     staged.push(...reconciled.map((state) => structuredClone(state)));
     this.daemonSourceStates.splice(0, this.daemonSourceStates.length, ...staged);
+    // Same-length wholesale replacement is possible here, so the length check cannot catch it.
+    this.invalidateIdIndex(this.daemonSourceStates);
     return structuredClone(reconciled.sort((left, right) => left.id.localeCompare(right.id)));
   }
 
@@ -1738,7 +1740,7 @@ export class InMemoryStore implements MemoryStore {
   }
 
   private stageTurnUpsert(items: Turn[], item: Turn, personId: string): void {
-    const existing = items.find((candidate) => candidate.id === item.id);
+    const existing = this.findById(items, item.id);
     if (existing && (existing.metadata.personId !== personId || existing.threadId !== `person:${personId}`)) {
       throw new Error("Turn ownership mismatch");
     }
@@ -1746,13 +1748,62 @@ export class InMemoryStore implements MemoryStore {
   }
 
   private stageDerivedUpsert<T extends { id: string; personId?: string }>(items: T[], item: T, personId: string): void {
-    const existing = items.find((candidate) => candidate.id === item.id);
+    const existing = this.findById(items, item.id);
     if (existing && existing.personId !== personId) throw new Error("Derivation ownership mismatch");
     this.upsertById(items, structuredClone(item));
   }
 
   private replace<T>(target: T[], replacement: T[]): void {
     target.splice(0, target.length, ...structuredClone(replacement));
+    // MUST invalidate explicitly. Every other mutation in this class changes the array length,
+    // which `idIndexFor` detects on its own — but a wholesale replacement can produce an array of
+    // the SAME length holding entirely different records, and a stale index over that would resolve
+    // an id to another record's slot. These are the transaction commit paths, over the same
+    // collections that take upserts, so this is a live case rather than a defensive one.
+    this.invalidateIdIndex(target);
+  }
+
+  /**
+   * Cached id -> position map per collection, so `upsertById` and the ownership checks do not each
+   * scan the whole array.
+   *
+   * This is not a micro-optimisation. Every `save*` ran an ownership `find` and an upsert
+   * `findIndex` back to back, making a staging import O(n^2) in records staged: seeding 174,149
+   * quarantine records cost ~1.5e10 string comparisons and dominated an entire import before any
+   * history was read (see the quarantine lookup change). The same shape applies to canonical events.
+   *
+   * Keyed by array identity, which is safe because every collection is `private readonly` and is
+   * only ever mutated in place, never reassigned.
+   */
+  private readonly idIndexes = new WeakMap<object[], Map<string, number>>();
+
+  /** Drop a cached index after a mutation that length alone cannot reveal. */
+  private invalidateIdIndex(items: unknown[]): void {
+    this.idIndexes.delete(items as object[]);
+  }
+
+  private idIndexFor<T extends { id: string }>(items: T[]): Map<string, number> {
+    let index = this.idIndexes.get(items as unknown as object[]);
+    // A length mismatch means something pushed or spliced behind our back; rebuilding is O(n) but
+    // happens once per such mutation, not once per lookup.
+    if (!index || index.size !== items.length) {
+      index = new Map<string, number>();
+      for (let position = 0; position < items.length; position += 1) index.set(items[position].id, position);
+      this.idIndexes.set(items as unknown as object[], index);
+    }
+    return index;
+  }
+
+  private findById<T extends { id: string }>(items: T[], id: string): T | undefined {
+    const index = this.idIndexFor(items);
+    const position = index.get(id);
+    if (position === undefined) return undefined;
+    const candidate = items[position];
+    if (candidate?.id === id) return candidate;
+    // The slot no longer holds what the index claimed. Rebuild and fall back to a scan rather than
+    // reporting a miss, which would let a duplicate be inserted.
+    this.invalidateIdIndex(items);
+    return items.find((entry) => entry.id === id);
   }
 
   private sameRecord(left: unknown, right: unknown): boolean {
@@ -1760,14 +1811,31 @@ export class InMemoryStore implements MemoryStore {
   }
 
   private upsertById<T extends { id: string }>(items: T[], item: T): void {
-    const existingIndex = items.findIndex((existing) => existing.id === item.id);
+    const index = this.idIndexFor(items);
+    const existingIndex = index.get(item.id);
 
-    if (existingIndex === -1) {
+    if (existingIndex === undefined) {
       items.push(item);
+      index.set(item.id, items.length - 1);
       return;
     }
 
-    items[existingIndex] = item;
+    if (items[existingIndex]?.id === item.id) {
+      items[existingIndex] = item;
+      return;
+    }
+
+    // Indexed position went stale in a way the length check could not see. Rebuild once and retry,
+    // rather than pushing blindly and creating a duplicate id.
+    this.invalidateIdIndex(items);
+    const rebuilt = this.idIndexFor(items);
+    const position = rebuilt.get(item.id);
+    if (position !== undefined) {
+      items[position] = item;
+      return;
+    }
+    items.push(item);
+    rebuilt.set(item.id, items.length - 1);
   }
 
   private removeByIds<T extends { id: string }>(items: T[], ids: string[]): void {
@@ -1781,7 +1849,7 @@ export class InMemoryStore implements MemoryStore {
     items: T[],
     item: T
   ): void {
-    const existing = items.find((candidate) => candidate.id === item.id);
+    const existing = this.findById(items, item.id);
     if (existing && existing.personId !== item.personId) {
       throw new Error(`Cannot reassign ${item.id} to a different person`);
     }
