@@ -200,6 +200,37 @@ describe("DaemonLoop", () => {
       remainingProposals: expect.any(Number)
     });
     expect(Object.values(result).every((value) => typeof value !== "number" || value >= 0)).toBe(true);
+    expect(result.failures).toEqual([]);
+    expect(await store.getDaemonLease("memory-db")).toBeNull();
+  });
+
+  /**
+   * The receipt used to be indistinguishable between "nothing was due" and "the slice threw and we
+   * moved on": both reported `contractionSlices: 0` under an `ok: true` command result. On the live
+   * corpus that hid an expired-lease write rejection for an entire investigation.
+   *
+   * Absorbing the failure is still the right behaviour -- one bad slice must not abort the run --
+   * so this asserts the run still completes AND that the reason is now in the receipt.
+   */
+  it("reports an absorbed contraction failure instead of returning a silent zero", async () => {
+    const clock = new FakeDaemonClock();
+    const store = new InMemoryStore({ clock });
+    await seedDurableWork(store, "person-a", "candidate-a", "grant-a");
+    const harness = loopHarness(store, clock, "owner-failure", 707, {
+      runContraction: async () => { throw new Error("Daemon write authority is missing, stale, or expired"); }
+    });
+
+    const result = await harness.loop.runOnce();
+
+    expect(result.contractionSlices).toBe(0);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toMatchObject({
+      stage: "contraction",
+      personId: "person-a",
+      message: "Daemon write authority is missing, stale, or expired"
+    });
+    // The run still finished and released, rather than aborting on the failure.
+    expect(result.scannedSources).toBe(1);
     expect(await store.getDaemonLease("memory-db")).toBeNull();
   });
 

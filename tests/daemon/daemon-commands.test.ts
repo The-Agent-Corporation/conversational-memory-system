@@ -200,7 +200,8 @@ describe("daemon lifecycle commands", () => {
         proposalRuns: 0,
         remainingSources: 0,
         remainingContractions: 1,
-        remainingProposals: 0
+        remainingProposals: 0,
+        failures: []
       }
     });
     expect(status).toMatchObject({
@@ -354,7 +355,8 @@ function fakeDependencies(
           proposalRuns: 0,
           remainingSources: 0,
           remainingContractions: 1,
-          remainingProposals: 0
+          remainingProposals: 0,
+          failures: []
         };
       }
     }),

@@ -81,6 +81,25 @@ export interface DaemonRunResult {
   workItems?: number;
 }
 
+/**
+ * One stage failure that `runOnce` absorbed and continued past.
+ *
+ * These exist because a bare `catch {}` made a genuine storage failure indistinguishable from a
+ * clean no-op: a contraction slice that threw produced the same `{ contractionSlices: 0, ok: true }`
+ * receipt as a run with nothing due. On the live corpus that hid an expired-lease write rejection
+ * through an entire investigation -- the receipt said success, exit code 0, every time.
+ *
+ * Absorbing the failure is still correct (one bad source or slice must not abort the run); reporting
+ * nothing about it was not.
+ */
+export interface DaemonOnceFailure {
+  stage: "source_scan" | "contraction" | "proposals";
+  personId: string;
+  /** The scheduler item this failed on -- candidate id for a source, job id for a contraction. */
+  subject: string | null;
+  message: string;
+}
+
 export interface DaemonOnceResult {
   scannedSources: number;
   contractionSlices: number;
@@ -88,6 +107,8 @@ export interface DaemonOnceResult {
   remainingSources: number;
   remainingContractions: number;
   remainingProposals: number;
+  /** Empty on a clean run. Non-empty means work was skipped, whatever the counts say. */
+  failures: DaemonOnceFailure[];
 }
 
 export class DaemonLoop {
@@ -227,8 +248,9 @@ export class DaemonLoop {
     let scannedSources = 0;
     let contractionSlices = 0;
     let proposalRuns = 0;
+    const failures: DaemonOnceFailure[] = [];
     try {
-      if (!await this.reconcileSourcesAndWatches()) return await this.emptyOnceResult();
+      if (!await this.reconcileSourcesAndWatches()) return await this.emptyOnceResult(failures);
       for (const personId of this.people) {
         const states = await this.dependencies.store.listDaemonSourceStates(personId);
         // Once is an explicit bounded synchronization request. Snapshot each approved durable
@@ -247,8 +269,14 @@ export class DaemonLoop {
               urgency: "due"
             }, failure ? { ok: false, category: failure } : { ok: true }))) break;
             if (!failure) scannedSources += 1;
-          } catch {
+          } catch (error) {
             // A failed source remains isolated; its durable retry state is serviced on the next continuous run.
+            failures.push({
+              stage: "source_scan",
+              personId,
+              subject: state.candidateId,
+              message: describeFailure(error)
+            });
             if (!await this.guardSchedulerMutation(() => this.dependencies.scheduler.completeWork({
               kind: "source_scan",
               personId,
@@ -262,7 +290,7 @@ export class DaemonLoop {
 
       if (!await this.guardSchedulerMutation(async () =>
         this.dependencies.scheduler.refreshDueSources(await this.safePowerState()))) {
-        return await this.emptyOnceResult();
+        return await this.emptyOnceResult(failures);
       }
       const limit = Math.max(1, this.options.onceDerivationLimit ?? Math.max(4, this.people.length * 2));
       for (let index = 0; index < limit; index += 1) {
@@ -277,7 +305,13 @@ export class DaemonLoop {
             if (!await this.guardSchedulerMutation(() =>
               this.dependencies.scheduler.completeWork(item, { ok: true, complete }))) break;
             contractionSlices += 1;
-          } catch {
+          } catch (error) {
+            failures.push({
+              stage: "contraction",
+              personId: item.personId,
+              subject: item.jobId,
+              message: describeFailure(error)
+            });
             if (!await this.guardSchedulerMutation(() =>
               this.dependencies.scheduler.completeWork(item, { ok: false, category: "storage_failure" }))) break;
           }
@@ -296,14 +330,15 @@ export class DaemonLoop {
         let result: unknown;
         try {
           result = await this.dependencies.proposalScheduler.runDue(personId, this.captureAuthority());
-        } catch {
+        } catch (error) {
+          failures.push({ stage: "proposals", personId, subject: null, message: describeFailure(error) });
           await this.loseAuthority();
           break;
         }
         if (proposalRan(result)) proposalRuns += 1;
       }
       const remaining = await this.remainingCounts();
-      return { scannedSources, contractionSlices, proposalRuns, ...remaining };
+      return { scannedSources, contractionSlices, proposalRuns, ...remaining, failures };
     } finally {
       await this.shutdown();
     }
@@ -485,9 +520,9 @@ export class DaemonLoop {
     await this.shutdown();
   }
 
-  private async emptyOnceResult(): Promise<DaemonOnceResult> {
+  private async emptyOnceResult(failures: DaemonOnceFailure[] = []): Promise<DaemonOnceResult> {
     const remaining = await this.remainingCounts();
-    return { scannedSources: 0, contractionSlices: 0, proposalRuns: 0, ...remaining };
+    return { scannedSources: 0, contractionSlices: 0, proposalRuns: 0, ...remaining, failures };
   }
 
   private async approvedGrants(): Promise<SourceGrant[]> {
@@ -549,6 +584,17 @@ function isFailedOutcome(value: unknown): DaemonErrorCategory | null {
   if (!value || typeof value !== "object" || !("ok" in value) || value.ok !== false) return null;
   if ("category" in value && typeof value.category === "string") return value.category as DaemonErrorCategory;
   return "unknown";
+}
+
+/**
+ * Errors crossing this boundary are arbitrary -- a rejected write, a Zod parse failure, a thrown
+ * string. Only the message is kept: the receipt is a summary, not a crash report, and a stack would
+ * dominate it.
+ */
+function describeFailure(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  const described = String(error);
+  return described === "[object Object]" ? "Unknown daemon stage failure" : described;
 }
 
 function proposalRan(value: unknown): boolean {
