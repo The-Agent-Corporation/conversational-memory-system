@@ -20,6 +20,7 @@ import {
 } from "../sync/materialization/sync-materializer.js";
 import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
 import { composeFileIdentity, fileIdentityMatches } from "./file-identity.js";
+import { createEventLoopYielder } from "./cooperative-yield.js";
 import {
   HistorySourceApprovalSchema,
   ImportCheckpointSchema,
@@ -119,6 +120,7 @@ export class CodexHistoryImporter {
       scopeId: parsedApproval.scopeId,
       clock: this.clock
     });
+    const maybeYield = createEventLoopYielder();
     const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
     const result: CodexImportResult = {
       filesScanned: 0,
@@ -145,6 +147,8 @@ export class CodexHistoryImporter {
       const fallbackSessionId = this.fallbackSessionId(file.absolutePath);
 
       for await (const line of readCompleteLines(file.absolutePath, startingOffset)) {
+        // Let the daemon's heartbeat timer run; see cooperative-yield.ts.
+        await maybeYield();
         committedOffset = line.nextOffset;
         recordIndex += 1;
         if (line.content.trim().length === 0) {
@@ -380,7 +384,19 @@ export async function commitStagedGrantBatch(
 
   await options.beforeCommit?.();
 
+  // THE starvation point. `node:sqlite`'s `DatabaseSync` is synchronous, so every method on
+  // `SqliteStore` is `async` in signature but does its work inline -- this loop runs one commit per
+  // scanned file (5,334 for claude-code on the live corpus) without ever reaching the event loop's
+  // timer phase. The daemon renews its lease from a `setTimeout` heartbeat, so the lease expired
+  // mid-loop and `assertFreshDaemonAuthority` began rejecting writes, aborting the import after it
+  // had already committed 21,118 events and still reporting exit 0.
+  //
+  // The record loops in the importers read through a file stream, whose real I/O already reaches
+  // the timer phase; this loop is the one that never yielded on its own.
+  const maybeYield = createEventLoopYielder();
+
   for (const checkpoint of checkpoints) {
+    await maybeYield();
     const resourceEvents = eventsByResource.get(checkpoint.resourcePath) ?? [];
     const changed = resourceEvents.filter((event) => materiallyChanged(existing.get(event.id), event))
       .sort(compareCanonical);

@@ -18,6 +18,7 @@ import { redactKnownSecrets } from "./secret-redactor.js";
 import { createToolCallEvent, parseSerializedToolCalls, serializedToolCallsAreMalformed } from "./tool-call-record.js";
 import { QuarantineService } from "./quarantine-service.js";
 import { composeFileIdentity, fileIdentityMatches } from "./file-identity.js";
+import { createEventLoopYielder } from "./cooperative-yield.js";
 import {
   HermesHistoryApprovalSchema,
   ImportCheckpointSchema,
@@ -140,10 +141,13 @@ export class HermesHistoryImporter {
         bytesProcessed: 0,
         recordsQuarantined: 0
       };
+      const maybeYield = createEventLoopYielder();
       const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
       let committedHighWaterMark = highWaterMark;
 
       for (const row of rows) {
+        // Let the daemon's heartbeat timer run; see cooperative-yield.ts.
+        await maybeYield();
         committedHighWaterMark = Math.max(committedHighWaterMark, Number(row.id));
         const role = supportedRole(row.role);
         if (!role || !Number.isFinite(row.timestamp)) {

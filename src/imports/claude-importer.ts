@@ -20,6 +20,7 @@ import { redactKnownSecrets } from "./secret-redactor.js";
 import { createToolCallEvent, extractToolCalls } from "./tool-call-record.js";
 import { QuarantineService, type QuarantineReason } from "./quarantine-service.js";
 import { composeFileIdentity, fileIdentityMatches } from "./file-identity.js";
+import { createEventLoopYielder } from "./cooperative-yield.js";
 import {
   ClaudeHistoryApprovalSchema,
   ImportCheckpointSchema,
@@ -97,6 +98,7 @@ export class ClaudeHistoryImporter {
       clock: this.clock
     });
     const result: HistoryImportResult = emptyResult();
+    const maybeYield = createEventLoopYielder();
     const quarantine = new QuarantineService(this.store, this.clock, this.quarantineLookupStore);
 
     for (const file of await findClaudeHistoryFiles(root)) {
@@ -116,6 +118,8 @@ export class ClaudeHistoryImporter {
       const fallbackSessionId = basename(file.absolutePath, ".jsonl");
 
       for await (const line of readCompleteLines(file.absolutePath, startingOffset)) {
+        // Let the daemon's heartbeat timer run; see cooperative-yield.ts.
+        await maybeYield();
         committedOffset = line.nextOffset;
         recordIndex += 1;
         const parsedLine = this.parseRecord(
