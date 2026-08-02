@@ -1,4 +1,5 @@
 import type { DerivationSupersession } from "../daemon/types.js";
+import { createEventLoopYielder } from "../imports/cooperative-yield.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 
 export interface InvalidateDependenciesInput {
@@ -21,7 +22,23 @@ export class DerivationInvalidator {
     const preserve = new Set(input.preserveIds ?? []);
     const eventIds = new Set(input.canonicalEventIds ?? []);
     const requestedSummaryIds = new Set(input.summaryIds ?? []);
+    // Five unfiltered full-table loads follow, each a single synchronous `node:sqlite` call that
+    // cannot be broken up, so the yields sit BETWEEN them. Their SUM is what matters: this runs
+    // inside a contraction slice, whose commit `assertFreshDaemonAuthority` rejects once the daemon's
+    // 30 s write lease lapses, and the lease is renewed from a `setTimeout` heartbeat that only runs
+    // when the loop reaches the timer phase. Measured on the live corpus: `listSummaries` alone took
+    // 7.7 s over 138,373 rows here, on top of ~29 s already spent earlier in the same slice.
+    //
+    // None of these loads can be narrowed the way the runner's two could. `summariesById` must cover
+    // EVERY summary, superseded included: it is what makes a box/proposal/trace referencing a
+    // vanished summary throw instead of silently passing. Filtering would turn that fail-closed
+    // integrity check into a fail-open one.
+    //
+    // The yielder is time-based, so a small store (every test, every foreground caller) crosses none
+    // of these boundaries and behaves exactly as before.
+    const maybeYield = createEventLoopYielder();
     const summaries = await this.store.listSummaries();
+    await maybeYield();
     const summariesById = new Map(summaries.map((summary) => [summary.id, summary]));
 
     for (const summary of summaries) {
@@ -47,7 +64,9 @@ export class DerivationInvalidator {
 
     for (const id of affectedSummaryIds) add("summary", id);
 
-    for (const anchor of await this.store.listAnchors()) {
+    const anchors = await this.store.listAnchors();
+    await maybeYield();
+    for (const anchor of anchors) {
       if (anchor.personId !== input.personId) continue;
       if (anchor.canonicalEventId && eventIds.has(anchor.canonicalEventId)) add("anchor", anchor.id);
     }
@@ -64,17 +83,23 @@ export class DerivationInvalidator {
       return affected;
     };
 
-    for (const box of await this.store.listBoxes()) {
+    const boxes = await this.store.listBoxes();
+    await maybeYield();
+    for (const box of boxes) {
       if (box.personId !== input.personId) continue;
       if (validateSummaryDependencies(`Box ${box.id}`, box.summaryIds)) add("box", box.id);
     }
-    for (const proposal of await this.store.listProposals()) {
+    const proposals = await this.store.listProposals();
+    await maybeYield();
+    for (const proposal of proposals) {
       if (proposal.personId !== input.personId) continue;
       if (validateSummaryDependencies(`Proposal ${proposal.id}`, proposal.sourceSummaryIds)) {
         add("proposal", proposal.id);
       }
     }
-    for (const trace of await this.store.listTraces()) {
+    const traces = await this.store.listTraces();
+    await maybeYield();
+    for (const trace of traces) {
       if (trace.personId !== input.personId) continue;
       if (validateSummaryDependencies(`Trace ${trace.id}`, trace.summaryIds)) add("trace", trace.id);
     }
