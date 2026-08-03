@@ -22,12 +22,28 @@ export interface LaunchAgentStatus {
 }
 
 type PlistOptions = Pick<LaunchAgentOptions,
-  "databasePath" | "repositoryRoot" | "plistPath" | "stdoutPath" | "stderrPath">;
+  "databasePath" | "repositoryRoot" | "plistPath" | "stdoutPath" | "stderrPath"> & {
+    /** The node binary to run under. Defaults to the interpreter generating the plist. */
+    nodePath?: string;
+  };
 
 export function generateLaunchAgentPlist(options: PlistOptions): string {
   const repositoryRoot = resolve(options.repositoryRoot);
+  // Invoke node DIRECTLY, by absolute path, rather than `node_modules/.bin/tsx`.
+  //
+  // That wrapper is a `#!/usr/bin/env node` script, and launchd does not run jobs with a login
+  // shell: its PATH is the bare system default, with no /opt/homebrew/bin and no nvm shim. A
+  // Homebrew or nvm node is therefore invisible, `env` fails to resolve it, and the job dies with
+  // `env: node: No such file or directory` -- exit 127. `KeepAlive` then respawns it immediately,
+  // so the failure presents as a service that reports `loaded: true` while never running and
+  // silently burning restarts. Observed exactly that on this machine.
+  //
+  // `process.execPath` is the interpreter that ran `memory daemon start`, so the daemon runs under
+  // the same node the CLI did, with no PATH dependency at all.
+  const nodePath = options.nodePath ?? process.execPath;
   const argv = [
-    join(repositoryRoot, "node_modules/.bin/tsx"),
+    nodePath,
+    join(repositoryRoot, "node_modules/tsx/dist/cli.mjs"),
     join(repositoryRoot, "src/daemon/daemon-command.ts"),
     "run",
     "--db",

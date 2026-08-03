@@ -57,12 +57,51 @@ describe("MacOSLaunchAgent", () => {
 
     expect(first).toBe(second);
     expect(first).toContain(`<string>${DEFAULT_LAUNCH_AGENT_LABEL}</string>`);
-    expect(first).toContain("/tmp/repository &lt;memory&gt;/node_modules/.bin/tsx");
+    expect(first).toContain("/tmp/repository &lt;memory&gt;/node_modules/tsx/dist/cli.mjs");
     expect(first).toContain("/tmp/repository &lt;memory&gt;/src/daemon/daemon-command.ts");
     expect(first).toContain("<string>run</string>");
     expect(first).toContain("<string>--db</string>");
     expect(first).toContain("/tmp/memory &amp; private.sqlite");
     expect(first).not.toMatch(/transcript|password|api[_-]?key/i);
+  });
+
+  /**
+   * launchd does not run jobs with a login shell: PATH is the bare system default, with no
+   * /opt/homebrew/bin and no nvm shim. A `#!/usr/bin/env node` wrapper therefore cannot resolve a
+   * Homebrew or nvm node and the job dies with exit 127 -- and because `KeepAlive` is true, it
+   * respawns immediately, so the service reports `loaded: true` while never once running.
+   *
+   * Observed on a real machine: `memory daemon start` returned `{ ok: true, loaded: true }` and the
+   * daemon log filled with `env: node: No such file or directory`.
+   */
+  it("runs node by absolute path so launchd's minimal PATH cannot break it", () => {
+    const plist = generateLaunchAgentPlist({
+      databasePath: "/tmp/memory.sqlite",
+      repositoryRoot: "/tmp/repository",
+      plistPath: "/tmp/com.conversational-memory.daemon.plist",
+      stdoutPath: "/tmp/out.log",
+      stderrPath: "/tmp/err.log",
+      nodePath: "/opt/homebrew/bin/node"
+    });
+
+    // The interpreter is the FIRST argument, so launchd execs it directly rather than resolving a
+    // shebang against its own PATH.
+    const firstArgument = plist.match(/<array>\s*<string>([^<]+)<\/string>/)?.[1];
+    expect(firstArgument).toBe("/opt/homebrew/bin/node");
+    expect(plist).not.toContain("node_modules/.bin/tsx");
+  });
+
+  it("defaults to the interpreter that generated the plist", () => {
+    // So the daemon runs under the same node as the CLI that started it, whatever that is.
+    const plist = generateLaunchAgentPlist({
+      databasePath: "/tmp/memory.sqlite",
+      repositoryRoot: "/tmp/repository",
+      plistPath: "/tmp/com.conversational-memory.daemon.plist",
+      stdoutPath: "/tmp/out.log",
+      stderrPath: "/tmp/err.log"
+    });
+
+    expect(plist.match(/<array>\s*<string>([^<]+)<\/string>/)?.[1]).toBe(process.execPath);
   });
 
   it("writes and bootstraps only on explicit start, while status is read-only", async () => {
