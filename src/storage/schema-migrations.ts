@@ -77,6 +77,34 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
           on summaries (json_extract(payload,'$.state'), id);
       `);
     }
+  },
+  {
+    version: 5,
+    description: "REQ-043: index (sourceId, scopeId) so a contraction slice need not read every payload",
+    apply: (database) => {
+      // `ContractionRunner.assertEventScopes` validates that every canonical event's scope still
+      // matches its source's. It did that by materializing all 292,407 events and looping in JS,
+      // which is a large part of why one slice cost ~22 s on the live corpus while processing 250
+      // events -- and why the daemon's 30 s write lease could lapse inside a single slice.
+      //
+      // The predicate only ever needs the DISTINCT (sourceId, scopeId) pairs, of which the whole
+      // live corpus has 18. Expressed as SQL that is a group-by, but without this index it still
+      // reads `payload` for every row (measured: 15.18 s). With it the group-by is index-covered:
+      // 0.024 s. The invariant is unchanged -- same pairs, same comparison, same failure -- only
+      // the cost of obtaining it.
+      //
+      // Additive DDL, no table rewrite. Build cost on the full 5.0 GB live corpus is 13.49 s, paid
+      // once, and `coalesce(...,'personal')` mirrors the runner's own `event.scopeId ?? "personal"`
+      // default exactly so the index matches the query the store issues.
+      database.exec(`
+        create index if not exists idx_canonical_events_person_scope
+          on canonical_events (
+            person_id,
+            json_extract(payload,'$.sourceId'),
+            coalesce(json_extract(payload,'$.scopeId'),'personal')
+          );
+      `);
+    }
   }
 ];
 

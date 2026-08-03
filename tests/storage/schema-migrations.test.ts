@@ -160,7 +160,7 @@ describe("schema-migrations", () => {
 
   it("applies version 4 (idx_summaries_state_id) when upgrading from version 3", () => {
     const store = new SqliteStore(databasePath);
-    expect(store.getSchemaVersion()).toBe(4);
+    expect(store.getSchemaVersion()).toBe(latestVersion);
     store.close();
 
     // Simulate a database that stopped at version 3, before migration 4 existed.
@@ -221,6 +221,43 @@ describe("schema-migrations", () => {
       version: number;
     }>;
     expect(rows.map((row) => row.version)).toEqual(MIGRATIONS.map((migration) => migration.version));
+
+    raw.close();
+  });
+
+  it("applies version 5 (idx_canonical_events_person_scope) when upgrading from version 4", () => {
+    const store = new SqliteStore(databasePath);
+    expect(store.getSchemaVersion()).toBe(latestVersion);
+    store.close();
+
+    // Simulate a database that stopped at version 4, before migration 5 existed.
+    const raw = new DatabaseSync(databasePath);
+    raw.exec("drop index if exists idx_canonical_events_person_scope");
+    raw.exec("delete from schema_migrations where version > 4");
+    raw.exec("pragma user_version = 4");
+
+    const result = runSchemaMigrations(raw);
+    expect(result.from).toBe(4);
+    expect(result.to).toBe(latestVersion);
+
+    const indexRow = raw
+      .prepare("select name from sqlite_master where type = 'index' and name = 'idx_canonical_events_person_scope'")
+      .get();
+    expect(indexRow).toBeDefined();
+
+    // The whole point of the expression index. The scope-pair query must be answered from it; the
+    // index expression has to match the query's `coalesce(...)` character for character or SQLite
+    // silently falls back to reading `payload` for every event -- 15.18 s on the live corpus.
+    const plan = raw
+      .prepare(
+        `explain query plan
+         select json_extract(payload,'$.sourceId') as sourceId,
+                coalesce(json_extract(payload,'$.scopeId'),'personal') as scopeId
+         from canonical_events where person_id = ?
+         group by sourceId, scopeId`
+      )
+      .all("person_1") as Array<{ detail: string }>;
+    expect(plan.map((row) => row.detail).join("\n")).toContain("idx_canonical_events_person_scope");
 
     raw.close();
   });

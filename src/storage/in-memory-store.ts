@@ -22,7 +22,9 @@ import {
   type MemorySource,
   type Person
 } from "../domain/canonical.js";
+import type { CanonicalOrderKey } from "../daemon/types.js";
 import type {
+  CanonicalEventScopePair,
   FindNearestSummariesQuery,
   MemoryStore,
   ProposalFilter,
@@ -706,6 +708,29 @@ export class InMemoryStore implements MemoryStore {
         left.nativeSequence - right.nativeSequence ||
         left.id.localeCompare(right.id)
       ));
+  }
+
+  async listCanonicalEventKeys(personId: string): Promise<CanonicalOrderKey[]> {
+    // Derived from the same ordering as `listCanonicalEvents` so the two agree position for
+    // position — a slice indexes off this and materializes payloads by id from that, and any
+    // disagreement would silently pair an index with the wrong event.
+    return (await this.listCanonicalEvents(personId)).map((event) => ({
+      id: event.id,
+      occurredAt: event.occurredAt,
+      nativeSequence: event.nativeSequence
+    }));
+  }
+
+  async listCanonicalEventScopePairs(personId: string): Promise<CanonicalEventScopePair[]> {
+    const pairs = new Map<string, CanonicalEventScopePair>();
+    for (const event of this.canonicalEvents) {
+      if (event.personId !== personId) continue;
+      const scopeId = event.scopeId ?? "personal";
+      pairs.set(`${event.sourceId} ${scopeId}`, { sourceId: event.sourceId, scopeId });
+    }
+    return [...pairs.values()].sort((left, right) =>
+      left.sourceId.localeCompare(right.sourceId) || left.scopeId.localeCompare(right.scopeId)
+    );
   }
 
   async listCanonicalEventsByIds(personId: string, ids: readonly string[]): Promise<CanonicalEvent[]> {

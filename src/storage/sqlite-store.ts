@@ -27,6 +27,7 @@ import {
   type Turn
 } from "../domain/types.js";
 import type {
+  CanonicalEventScopePair,
   FindNearestSummariesQuery,
   MemoryStore,
   ProposalFilter,
@@ -958,6 +959,45 @@ export class SqliteStore implements MemoryStore {
       .all(personId) as PayloadRow[];
 
     return rows.map((row) => CanonicalEventSchema.parse(JSON.parse(row.payload)));
+  }
+
+  async listCanonicalEventKeys(personId: string): Promise<CanonicalOrderKey[]> {
+    // Selects ONLY the three indexed columns, in the index's own order, so SQLite answers this from
+    // `idx_canonical_events_person_order` alone ("SEARCH ... USING COVERING INDEX") and never visits
+    // the table. Adding `payload` here would silently reintroduce 292,407 row lookups and undo the
+    // whole point: 1.23 s becomes 19.7 s.
+    const rows = this.database
+      .prepare(
+        `select id, occurred_at as occurredAt, native_sequence as nativeSequence
+         from canonical_events
+         where person_id = ?
+         order by occurred_at asc, native_sequence asc, id asc`
+      )
+      .all(personId) as { id: string; occurredAt: string; nativeSequence: number }[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      occurredAt: row.occurredAt,
+      nativeSequence: row.nativeSequence
+    }));
+  }
+
+  async listCanonicalEventScopePairs(personId: string): Promise<CanonicalEventScopePair[]> {
+    // `coalesce(...,'personal')` must match migration 5's index expression CHARACTER FOR CHARACTER
+    // or SQLite will not use the index and this silently degrades to a 15 s full payload scan.
+    const rows = this.database
+      .prepare(
+        `select json_extract(payload,'$.sourceId') as sourceId,
+                coalesce(json_extract(payload,'$.scopeId'),'personal') as scopeId
+         from canonical_events
+         where person_id = ?
+         group by sourceId, scopeId`
+      )
+      .all(personId) as { sourceId: string | null; scopeId: string }[];
+
+    return rows
+      .filter((row): row is { sourceId: string; scopeId: string } => typeof row.sourceId === "string")
+      .map((row) => ({ sourceId: row.sourceId, scopeId: row.scopeId }));
   }
 
   async listCanonicalEventsByIds(personId: string, ids: readonly string[]): Promise<CanonicalEvent[]> {

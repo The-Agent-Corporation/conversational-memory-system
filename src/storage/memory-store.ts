@@ -22,6 +22,7 @@ import type {
   CommitImportBatchInput,
   CommitProposalRunInput,
   CommitSourceStateOutcomeInput,
+  CanonicalOrderKey,
   ContractionCheckpoint,
   ContractionJob,
   DaemonLease,
@@ -49,6 +50,13 @@ import type {
   SyncCommitReceipt,
   SyncOutboxOperation
 } from "./sync-contracts.js";
+
+/** One distinct (sourceId, scopeId) pair present in a person's canonical events. */
+export interface CanonicalEventScopePair {
+  sourceId: string;
+  /** Already defaulted to `"personal"` when the event carries no scope. */
+  scopeId: string;
+}
 
 export interface ProposalFilter {
   state?: ProposalState;
@@ -158,6 +166,32 @@ export interface MemoryStore {
    * boundary would let one person's history influence another's import decisions.
    */
   listCanonicalEventsByIds(personId: string, ids: readonly string[]): Promise<CanonicalEvent[]>;
+  /**
+   * The ordered canonical spine for one person: every event's identity and position, and nothing
+   * else. Same order as `listCanonicalEvents`.
+   *
+   * Exists because a contraction slice needs to know where every event sits — to build its
+   * id→index map, resolve a resume point, and decide whether the pass is complete — while reading
+   * the CONTENT of only the ~250 events it actually processes. `listCanonicalEvents` conflated the
+   * two, so each slice paid a full-corpus payload read: measured at 19.7 s of a ~22 s slice on the
+   * live corpus, against 1.23 s for this call, which is served entirely from
+   * `idx_canonical_events_person_order` without touching the table.
+   *
+   * Pair it with `listCanonicalEventsByIds` to materialize the window.
+   */
+  listCanonicalEventKeys(personId: string): Promise<CanonicalOrderKey[]>;
+  /**
+   * The DISTINCT (sourceId, scopeId) pairs present in one person's canonical events.
+   *
+   * The scope-ownership invariant a contraction slice asserts is a statement about these pairs, not
+   * about individual events — the live corpus has 292,407 events and 18 pairs. Answering it from
+   * the pairs preserves the invariant exactly while reading no payloads (0.024 s against 15.18 s,
+   * via `idx_canonical_events_person_scope`).
+   *
+   * `scopeId` is already defaulted to `"personal"` for events that carry none, matching
+   * `event.scopeId ?? "personal"` at the call site.
+   */
+  listCanonicalEventScopePairs(personId: string): Promise<CanonicalEventScopePair[]>;
   deleteCanonicalEvents(ids: string[]): Promise<void>;
   deleteSources(ids: string[]): Promise<void>;
   saveImportCheckpoint(checkpoint: ImportCheckpoint): Promise<void>;
