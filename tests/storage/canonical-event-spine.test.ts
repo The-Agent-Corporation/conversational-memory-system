@@ -174,6 +174,32 @@ describe("SqliteStore spine query plans", () => {
     expect(plan.map((row) => row.detail).join(" ")).toMatch(/COVERING INDEX idx_canonical_events_person_order/);
   });
 
+  /**
+   * Regression guard for a 388x self-inflicted one. `listCanonicalEventsByIds` reads a bounded id
+   * batch and must resolve it through the PRIMARY KEY. Migration 5 added a second
+   * person_id-leading index, and SQLite immediately preferred it for
+   * `where person_id = ? and id in (...)` -- scanning all 292,407 of the person's index entries to
+   * find a few hundred ids, 10.086 s against 0.026 s on the live corpus.
+   *
+   * That silently broke two separate optimizations at once: the contraction window this work exists
+   * for, and the import-diff path that stopped loading every canonical event. Neither would have
+   * failed a test; both would just have been slow again.
+   */
+  it("resolves an id batch through the primary key, not a person_id-leading index", async () => {
+    const store = await sqliteStore();
+    await store.saveCanonicalEvent(event({ id: "a" }));
+    await store.saveCanonicalEvent(event({ id: "b" }));
+
+    const plan = (store as unknown as { database: { prepare(sql: string): { all(...args: unknown[]): unknown[] } } })
+      .database
+      .prepare("explain query plan select payload from canonical_events where +person_id = ? and id in (?, ?)")
+      .all("person_1", "a", "b") as { detail: string }[];
+
+    const detail = plan.map((row) => row.detail).join(" ");
+    expect(detail).toMatch(/sqlite_autoindex_canonical_events_1|PRIMARY KEY/i);
+    expect(detail).not.toMatch(/idx_canonical_events_person_scope/);
+  });
+
   it("answers the scope pairs from migration 5's expression index", async () => {
     const store = await sqliteStore();
     await store.saveCanonicalEvent(event({ id: "a" }));

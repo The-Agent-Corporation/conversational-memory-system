@@ -100,6 +100,41 @@ export interface ContractionSliceResult {
   embedded: EmbedStageCounts;
 }
 
+/**
+ * The events a slice may read, addressed by GLOBAL position in the canonical spine.
+ *
+ * A slice knows where all ~292,000 events sit (the spine: id, occurredAt, nativeSequence) but reads
+ * the content of only the few hundred it processes. Every index in `drainSlice` is therefore a
+ * global one, while the backing array holds just `[offset, offset + events.length)`.
+ *
+ * Out-of-window access THROWS rather than returning undefined. That is the whole safety argument
+ * for this class: an off-by-one against a plain array would silently hand the summarizer a
+ * different event's text and persist the result as memory. A crash is recoverable; that is not.
+ */
+class SliceEventWindow {
+  constructor(
+    private readonly events: readonly CanonicalEvent[],
+    private readonly offset: number,
+    /** Length of the FULL spine, not of the window -- `complete` is decided against this. */
+    readonly totalLength: number
+  ) {}
+
+  at(index: number): CanonicalEvent {
+    const event = this.events[index - this.offset];
+    if (!event) {
+      throw new Error(`Contraction window does not cover event index ${index} (offset ${this.offset}, length ${this.events.length})`);
+    }
+    return event;
+  }
+
+  slice(from: number, to: number): CanonicalEvent[] {
+    if (from < this.offset || to > this.offset + this.events.length || from > to) {
+      throw new Error(`Contraction window does not cover [${from}, ${to}) (offset ${this.offset}, length ${this.events.length})`);
+    }
+    return this.events.slice(from - this.offset, to - this.offset);
+  }
+}
+
 export class ContractionRunner {
   private readonly clock: ContractionClock;
   private readonly summarizer: Summarizer;
@@ -143,10 +178,17 @@ export class ContractionRunner {
     // "Daemon write authority is missing, stale, or expired". Yielding here caps the longest
     // unbroken block at the largest single load rather than at their sum.
     const maybeYield = createEventLoopYielder();
-    const allEvents = context.preloadedEvents ?? await this.store.listCanonicalEvents(personId);
+    // The SPINE: every event's identity and position, no content. A daemon slice needs to know where
+    // all ~292,000 events sit but reads the text of only the ~250 it processes, and conflating those
+    // two needs is what made one slice cost ~22 s (19.7 s of it this single load) while the daemon's
+    // 30 s write lease ticked down. Served from a covering index at 1.23 s; content comes later, for
+    // a bounded window, via `listCanonicalEventsByIds`.
+    const spine: readonly CanonicalOrderKey[] = context.preloadedEvents
+      ? context.preloadedEvents.map((event) => orderKey(event)!)
+      : await this.store.listCanonicalEventKeys(personId);
     await maybeYield();
-    if (!context.scopesAlreadyAsserted) await this.assertEventScopes(personId, allEvents);
-    const eventIndexById = context.eventIndexById ?? buildEventIndex(allEvents);
+    if (!context.scopesAlreadyAsserted) await this.assertEventScopes(personId, context.preloadedEvents);
+    const eventIndexById = context.eventIndexById ?? buildSpineIndex(spine);
     await maybeYield();
     const checkpointId = `contraction_checkpoint_${jobId}`;
     const previous = await this.store.getContractionCheckpoint(checkpointId);
@@ -165,7 +207,7 @@ export class ContractionRunner {
       (previous.processedThroughOrderKey === null ||
         compareKeys(job.earliestAffected, previous.processedThroughOrderKey) >= 0) &&
       (previous.pendingToolRun === null ||
-        pendingToolRunStillOpen(previous.pendingToolRun, allEvents, eventIndexById));
+        await this.pendingToolRunStillOpen(personId, previous.pendingToolRun, spine, eventIndexById, context));
 
     if (checkpointCanResume && previous.immediateStage === "complete" && job.state === "complete") {
       return {
@@ -182,10 +224,10 @@ export class ContractionRunner {
     }
 
     const startIndex = checkpointCanResume
-      ? resumeIndex(allEvents, previous, eventIndexById)
-      : await this.affectedStartIndex(personId, allEvents, job.earliestAffected, eventIndexById);
+      ? resumeIndex(spine, previous, eventIndexById)
+      : await this.affectedStartIndex(personId, spine, job.earliestAffected, eventIndexById);
     await maybeYield();
-    const rewindOrderKey = checkpointCanResume ? null : orderKey(allEvents[startIndex] ?? null);
+    const rewindOrderKey = checkpointCanResume ? null : (spine[startIndex] ?? null);
     const monitor = new TopicMonitor();
     if (checkpointCanResume && previous.activeTopic) monitor.restore(previous.activeTopic);
 
@@ -195,6 +237,21 @@ export class ContractionRunner {
       throw new Error("Contraction limits must be positive");
     }
 
+    // The window this slice may read. It starts at the RESTORED active span rather than at
+    // `startIndex`: a resumed span's summary is re-derived over its whole range, so its earlier
+    // events are read again even though they were processed by a previous slice. A span that opens
+    // during this slice can only start at or after `startIndex`, so it needs nothing earlier.
+    //
+    // The upper bound is the loop's own cap. The loop may stop earlier (`maxMonotonicMs`), which
+    // just leaves part of the window unread.
+    const restoredSpanStart = checkpointCanResume && previous.activeTopic
+      ? previous.activeTopic.sourceTurnRange.startSequence - 1
+      : startIndex;
+    const windowLow = Math.max(0, Math.min(startIndex, restoredSpanStart));
+    const windowHigh = Math.min(spine.length, startIndex + maxEvents);
+    const events = await this.materializeWindow(personId, spine, windowLow, windowHigh, context);
+    await maybeYield();
+
     const startedAt = this.clock.monotonicNow();
     const turns: Turn[] = [];
     const anchors: Anchor[] = [];
@@ -202,8 +259,8 @@ export class ContractionRunner {
     const processed: CanonicalEvent[] = [];
     const threadId = `person:${personId}`;
 
-    for (let index = startIndex; index < allEvents.length && processed.length < maxEvents; index += 1) {
-      const event = allEvents[index];
+    for (let index = startIndex; index < events.totalLength && processed.length < maxEvents; index += 1) {
+      const event = events.at(index);
       const turn = turnFromEvent(event, threadId, index + 1);
       turns.push(turn);
       // Anchors are generated below, per span window, gated on whether an event's OWN text
@@ -242,7 +299,7 @@ export class ContractionRunner {
     }
 
     const nextIndex = startIndex + processed.length;
-    const complete = nextIndex >= allEvents.length;
+    const complete = nextIndex >= events.totalLength;
     const activeTopic = monitor.current(threadId);
 
     // Events preceding the first span ever created (corpus head with no active topic yet) belong to
@@ -256,10 +313,10 @@ export class ContractionRunner {
       // NON-complete slice can end inside an open run. A run at the end of the corpus (complete ===
       // true) cannot grow, so it is always flushed rather than withheld (Task 2 case f5).
       if (!complete) {
-        const openStart = openToolRunStart(allEvents.slice(windowStart, windowEnd));
+        const openStart = openToolRunStart(events.slice(windowStart, windowEnd));
         if (openStart !== null) {
           derivationEnd = windowStart + openStart;
-          const withheldEvents = allEvents.slice(derivationEnd, windowEnd);
+          const withheldEvents = events.slice(derivationEnd, windowEnd);
           pendingToolRun = {
             startEventId: withheldEvents[0]!.id,
             eventCount: withheldEvents.length,
@@ -281,7 +338,7 @@ export class ContractionRunner {
       summaries.push(await this.summaryForSpan(
         personId,
         window.span,
-        allEvents,
+        events,
         window.windowStart,
         window.windowEnd,
         window.derivationEnd
@@ -300,9 +357,9 @@ export class ContractionRunner {
       // hygiene gate itself (with `eventKind`, which a CanonicalEvent has and a Turn does not). That
       // is deliberate belt-and-braces: this call site's own filter and the minter's gate are the two
       // halves that GAP-11-G found had drifted apart when they were separate implementations.
-      for (const relativeIndex of survivingDerivationIndices(allEvents.slice(window.windowStart, window.derivationEnd))) {
+      for (const relativeIndex of survivingDerivationIndices(events.slice(window.windowStart, window.derivationEnd))) {
         const globalIndex = window.windowStart + relativeIndex;
-        const event = allEvents[globalIndex]!;
+        const event = events.at(globalIndex);
         anchors.push(...anchorsForTurn(
           turnFromEvent(event, threadId, globalIndex + 1),
           { eventKind: event.eventKind }
@@ -340,7 +397,7 @@ export class ContractionRunner {
       });
     }
 
-    const nextEvent = allEvents[nextIndex] ?? null;
+    const nextEvent = spine[nextIndex] ?? null;
     const processedThroughOrderKey = orderKey(processed.at(-1) ?? null);
     const now = this.clock.now();
     const nextCheckpoint: ContractionCheckpoint = {
@@ -350,7 +407,7 @@ export class ContractionRunner {
       processorVersion: PROCESSOR_VERSION,
       generation: job.generation,
       processedThroughOrderKey,
-      nextOrderKey: orderKey(nextEvent),
+      nextOrderKey: nextEvent,
       nextEventId: nextEvent?.id ?? null,
       activeTopic,
       sliceCount: (previous?.sliceCount ?? 0) + 1,
@@ -518,11 +575,11 @@ export class ContractionRunner {
 
   private async affectedStartIndex(
     personId: string,
-    events: CanonicalEvent[],
+    spine: readonly CanonicalOrderKey[],
     affected: CanonicalOrderKey,
     eventIndexById: ReadonlyMap<string, number>
   ): Promise<number> {
-    const earliestIndex = Math.max(0, events.findIndex((event) => compareKeys(orderKey(event)!, affected) >= 0));
+    const earliestIndex = Math.max(0, spine.findIndex((key) => compareKeys(key, affected) >= 0));
     // Pushed into the store rather than filtered in JS. The unfiltered `listSummaries()` loaded and
     // Zod-parsed every summary in the corpus -- measured at 13.6 s for 138,373 rows on the live
     // database -- to answer a question about a subset, inside a slice whose write authority expires
@@ -544,21 +601,107 @@ export class ContractionRunner {
     return boundary;
   }
 
-  private async assertEventScopes(personId: string, events: CanonicalEvent[]): Promise<void> {
+  /**
+   * Same invariant as before, obtained differently: every canonical event's source must belong to
+   * this person, and the event's scope must equal that source's.
+   *
+   * It used to loop over every materialized event. That is a statement about the DISTINCT
+   * (sourceId, scopeId) pairs, though -- the live corpus has 292,407 events and 18 pairs -- so the
+   * store answers it from an index instead (15.18 s -> 0.024 s) and no payload is read. Same pairs,
+   * same comparison, same error.
+   *
+   * `preloadedEvents` keeps the in-memory path for the bootstrapper, which already holds every
+   * event and would otherwise issue a query for data it is sitting on.
+   */
+  private async assertEventScopes(personId: string, preloadedEvents?: readonly CanonicalEvent[]): Promise<void> {
     const sources = new Map((await this.store.listSources(personId)).map((source) => [source.id, source]));
-    for (const event of events) {
-      const source = sources.get(event.sourceId);
+    const pairs = preloadedEvents
+      ? [...new Map(preloadedEvents.map((event) => {
+          const scopeId = event.scopeId ?? "personal";
+          return [`${event.sourceId} ${scopeId}`, { sourceId: event.sourceId, scopeId }] as const;
+        })).values()]
+      : await this.store.listCanonicalEventScopePairs(personId);
+
+    for (const pair of pairs) {
+      const source = sources.get(pair.sourceId);
       if (!source || source.personId !== personId) throw new Error("Canonical event source ownership dependency mismatch");
-      if ((event.scopeId ?? "personal") !== (source.scopeId ?? "personal")) {
+      if (pair.scopeId !== (source.scopeId ?? "personal")) {
         throw new Error("Canonical event scope dependency mismatch");
       }
     }
   }
 
+  /**
+   * Materializes `[low, high)` of the spine, and nothing else.
+   *
+   * `listCanonicalEventsByIds` returns rows in the store's canonical order, which is the spine's
+   * order, so the result lines up with `[low, high)` positionally. That is asserted rather than
+   * assumed: a mismatch would offset every index in the slice and derive summaries from the wrong
+   * events, which no test downstream would catch.
+   */
+  private async materializeWindow(
+    personId: string,
+    spine: readonly CanonicalOrderKey[],
+    low: number,
+    high: number,
+    context: DrainSliceContext
+  ): Promise<SliceEventWindow> {
+    if (context.preloadedEvents) {
+      return new SliceEventWindow(context.preloadedEvents, 0, context.preloadedEvents.length);
+    }
+    if (high <= low) return new SliceEventWindow([], low, spine.length);
+
+    const wanted = spine.slice(low, high);
+    const events = await this.store.listCanonicalEventsByIds(personId, wanted.map((key) => key.id));
+    if (events.length !== wanted.length) {
+      throw new Error(`Contraction window expected ${wanted.length} events, resolved ${events.length}`);
+    }
+    for (let offset = 0; offset < wanted.length; offset += 1) {
+      if (events[offset]!.id !== wanted[offset]!.id) {
+        throw new Error("Contraction window order does not match the canonical spine");
+      }
+    }
+    return new SliceEventWindow(events, low, spine.length);
+  }
+
+  /**
+   * Drift guard for a withheld open tool run, over a BOUNDED region.
+   *
+   * The predicate is unchanged: the recorded run must still be exactly the trailing open run at its
+   * recorded position. It was evaluated by scanning every event from index 0 to the run's boundary,
+   * which on a resumed slice near the end of the corpus meant materializing essentially everything.
+   *
+   * Only the run and the event immediately before it can affect the answer, so the same
+   * `openToolRunStart` is applied to `[runStart - 1, boundary]`:
+   *   - if the predecessor is not tool activity, the run opens at relative index 1, i.e. runStart;
+   *   - if it IS tool activity, the run extends earlier, `openToolRunStart` returns 0, and the
+   *     comparison fails -- exactly as the full-prefix scan failed, and in the safe direction
+   *     (fall back to the full rewind/invalidation path).
+   * `openToolRunStart` itself is untouched; GAP-11-G came from re-implementing a hygiene walk in a
+   * second place, and this deliberately does not do that.
+   */
+  private async pendingToolRunStillOpen(
+    personId: string,
+    pending: PendingToolRun,
+    spine: readonly CanonicalOrderKey[],
+    eventIndexById: ReadonlyMap<string, number>,
+    context: DrainSliceContext
+  ): Promise<boolean> {
+    if (pending.ruleVersion !== HYGIENE_RULE_VERSION) return false;
+    const runStart = eventIndexById.get(pending.startEventId);
+    if (runStart === undefined) return false;
+    const boundaryIndex = runStart + pending.eventCount - 1;
+    if (boundaryIndex < 0 || boundaryIndex >= spine.length) return false;
+
+    const low = Math.max(0, runStart - 1);
+    const window = await this.materializeWindow(personId, spine, low, boundaryIndex + 1, context);
+    return openToolRunStart(window.slice(low, boundaryIndex + 1)) === runStart - low;
+  }
+
   private async summaryForSpan(
     personId: string,
     span: CompletedTopicSpan,
-    events: CanonicalEvent[],
+    events: SliceEventWindow,
     windowStart: number,
     windowEnd: number,
     derivationEnd: number
@@ -621,9 +764,9 @@ interface SpanWindow {
   derivationEnd: number;
 }
 
-function buildEventIndex(events: CanonicalEvent[]): ReadonlyMap<string, number> {
+function buildSpineIndex(spine: readonly CanonicalOrderKey[]): ReadonlyMap<string, number> {
   const index = new Map<string, number>();
-  for (let position = 0; position < events.length; position += 1) index.set(events[position]!.id, position);
+  for (let position = 0; position < spine.length; position += 1) index.set(spine[position]!.id, position);
   return index;
 }
 
@@ -665,24 +808,8 @@ function tallyToolCounts(names: string[]): PendingToolRun["toolCounts"] {
  * segmentation is local — an earlier conversational event always flushes any prior run — so scanning
  * from the corpus start cannot misattribute the trailing run's true start index.
  */
-function pendingToolRunStillOpen(
-  pending: PendingToolRun,
-  events: CanonicalEvent[],
-  eventIndexById: ReadonlyMap<string, number>
-): boolean {
-  if (pending.ruleVersion !== HYGIENE_RULE_VERSION) return false;
-  const startIndex = eventIndexById.get(pending.startEventId);
-  if (startIndex === undefined) return false;
-  // The boundary is always the pending run's start plus its withheld length: the last event
-  // processed by the slice that recorded this checkpoint.
-  const boundaryIndex = startIndex + pending.eventCount - 1;
-  if (boundaryIndex < 0 || boundaryIndex >= events.length) return false;
-  const recomputedStart = openToolRunStart(events.slice(0, boundaryIndex + 1));
-  return recomputedStart === startIndex;
-}
-
 function resumeIndex(
-  events: CanonicalEvent[],
+  spine: readonly CanonicalOrderKey[],
   checkpoint: ContractionCheckpoint,
   eventIndexById: ReadonlyMap<string, number>
 ): number {
@@ -702,9 +829,9 @@ function resumeIndex(
     const lastIndex = eventIndexById.get(lastId);
     if (lastIndex !== undefined) return lastIndex + 1;
   }
-  if (!checkpoint.nextOrderKey) return events.length;
-  const index = events.findIndex((event) => compareKeys(orderKey(event)!, checkpoint.nextOrderKey!) >= 0);
-  return index < 0 ? events.length : index;
+  if (!checkpoint.nextOrderKey) return spine.length;
+  const index = spine.findIndex((key) => compareKeys(key, checkpoint.nextOrderKey!) >= 0);
+  return index < 0 ? spine.length : index;
 }
 
 function summaryIntersectsAtOrAfter(

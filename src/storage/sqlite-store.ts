@@ -1009,7 +1009,13 @@ export class SqliteStore implements MemoryStore {
       const chunk = unique.slice(offset, offset + CHUNK_SIZE);
       const placeholders = chunk.map(() => "?").join(", ");
       const rows = this.database
-        .prepare(`select payload from canonical_events where person_id = ? and id in (${placeholders})`)
+        // `+person_id` deliberately marks that term UNUSABLE as an index lookup. Without it SQLite
+        // prefers a person_id-leading index over the primary key and scans every one of the
+        // person's 292,407 index entries to find a few hundred ids: measured 10.086 s against
+        // 0.026 s here, a 388x regression that appeared the moment migration 5 added a second
+        // person_id-leading index. The predicate itself is unchanged and still enforced in SQL --
+        // only the planner's freedom to lead with it is removed.
+        .prepare(`select payload from canonical_events where +person_id = ? and id in (${placeholders})`)
         .all(personId, ...chunk) as PayloadRow[];
       for (const row of rows) events.push(CanonicalEventSchema.parse(JSON.parse(row.payload)));
     }

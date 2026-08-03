@@ -765,6 +765,114 @@ describe("ContractionRunner", () => {
 
     expect(heartbeatFired).toBe(true);
   });
+
+  /**
+   * The point of the spine/window split: a slice must read the CONTENT of only the events it
+   * processes, never the whole corpus. Before this, every slice loaded all 292,407 canonical events
+   * to process 250 -- 19.7 s of a ~22 s slice on the live corpus, and the reason the daemon's 30 s
+   * write lease could lapse inside a single slice.
+   *
+   * Asserted by counting what the store is asked for, not by timing: on a synthetic fixture the
+   * whole-corpus load is fast, so a timing assertion would pass against the very bug this prevents.
+   */
+  it("reads the spine for position and payloads only for the window it processes", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore({ clock });
+    const events = Array.from({ length: 600 }, (_, index) =>
+      event(`window-${index}`, index + 1, `Topic ${index % 5} discussion point ${index}.`, index * 10));
+    const job = await commitStableBatch(store, "window-scope", events, clock.now());
+    await store.acquireDaemonLease({ databaseId: "memory-db", ownerToken: "token-window", pid: 120, now: clock.now() });
+
+    let fullLoads = 0;
+    let spineLoads = 0;
+    const idBatches: number[] = [];
+    const listCanonicalEvents = store.listCanonicalEvents.bind(store);
+    const listCanonicalEventsByIds = store.listCanonicalEventsByIds.bind(store);
+    store.listCanonicalEvents = async (personId) => { fullLoads += 1; return listCanonicalEvents(personId); };
+    // Deliberately bypasses the patched property: `InMemoryStore` derives its spine FROM
+    // `listCanonicalEvents`, so delegating here would count the store's own internal call and make
+    // `fullLoads` say nothing about the runner. `SqliteStore` has no such relationship -- it answers
+    // the spine from a covering index -- so this keeps the assertion about the caller either way.
+    store.listCanonicalEventKeys = async (personId) => {
+      spineLoads += 1;
+      return (await listCanonicalEvents(personId)).map((item) => ({
+        id: item.id,
+        occurredAt: item.occurredAt,
+        nativeSequence: item.nativeSequence
+      }));
+    };
+    store.listCanonicalEventsByIds = async (personId, ids) => {
+      idBatches.push(ids.length);
+      return listCanonicalEventsByIds(personId, ids);
+    };
+
+    const result = await new ContractionRunner(store, { clock, authority: daemonAuthority("token-window") })
+      .drainSlice(PERSON_ID, job.id, { maxEvents: 100 });
+
+    expect(result.processedEvents).toBe(100);
+    // The whole-corpus payload load is gone entirely from the daemon path.
+    expect(fullLoads).toBe(0);
+    expect(spineLoads).toBeGreaterThan(0);
+    // Every payload batch is bounded by the slice, not by the corpus. 600 events exist; the window
+    // covers the 100 processed plus at most a resumed span's earlier events.
+    expect(idBatches.length).toBeGreaterThan(0);
+    expect(Math.max(...idBatches)).toBeLessThanOrEqual(200);
+  });
+
+  /**
+   * The window addresses events by GLOBAL position while holding only a slice of them. An
+   * off-by-one against a plain array would silently hand the summarizer a different event's text
+   * and persist the result as memory, so out-of-window access must be loud.
+   */
+  it("refuses to resolve an event outside the materialized window", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore({ clock });
+    const events = Array.from({ length: 30 }, (_, index) =>
+      event(`bounds-${index}`, index + 1, `Topic ${index % 3} point ${index}.`, index * 10));
+    const job = await commitStableBatch(store, "window-bounds", events, clock.now());
+    await store.acquireDaemonLease({ databaseId: "memory-db", ownerToken: "token-bounds", pid: 121, now: clock.now() });
+
+    // A store that silently drops a requested id: the window must notice rather than shift every
+    // subsequent index by one.
+    const listCanonicalEventsByIds = store.listCanonicalEventsByIds.bind(store);
+    store.listCanonicalEventsByIds = async (personId, ids) =>
+      (await listCanonicalEventsByIds(personId, ids)).slice(1);
+
+    await expect(
+      new ContractionRunner(store, { clock, authority: daemonAuthority("token-bounds") })
+        .drainSlice(PERSON_ID, job.id)
+    ).rejects.toThrow(/window expected|does not match the canonical spine/i);
+  });
+
+  /**
+   * A resumed slice re-derives its active span over the span's WHOLE range, so the window has to
+   * reach back to where that span opened -- earlier than the resume point. Getting this wrong
+   * throws (the window refuses the read) rather than corrupting, but it would break every resumed
+   * slice, which is the common case for a daemon against an existing corpus.
+   */
+  it("covers a restored active span that opened before the resume point", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore({ clock });
+    // One long uninterrupted topic: the span stays open across the slice boundary.
+    const events = Array.from({ length: 80 }, (_, index) =>
+      event(`span-${index}`, index + 1, `A single continuous topic, point ${index}.`, index * 10));
+    const job = await commitStableBatch(store, "window-span", events, clock.now());
+    await store.acquireDaemonLease({ databaseId: "memory-db", ownerToken: "token-span", pid: 122, now: clock.now() });
+
+    const runner = new ContractionRunner(store, { clock, authority: daemonAuthority("token-span") });
+    const first = await runner.drainSlice(PERSON_ID, job.id, { maxEvents: 40 });
+    expect(first.complete).toBe(false);
+    expect(first.checkpoint.activeTopic).not.toBeNull();
+
+    const second = await runner.drainSlice(PERSON_ID, job.id, { maxEvents: 40 });
+
+    expect(second.processedEvents).toBe(40);
+    expect(second.complete).toBe(true);
+    // The re-derived span covers the full range, including the events the first slice processed.
+    const summaries = await store.listSummaries();
+    const widest = Math.max(...summaries.map((summary) => summary.sourceCanonicalEventIds?.length ?? 0));
+    expect(widest).toBeGreaterThan(40);
+  });
 });
 
 describe("ProposalScheduler", () => {
