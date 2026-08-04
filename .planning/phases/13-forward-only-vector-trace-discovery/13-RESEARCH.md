@@ -591,25 +591,46 @@ Personal, local-first, single-user system. No network surface is added by this p
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED — see the plans and ADR 0055)
+
+All six were answered during planning on 2026-08-04. The resolution is recorded inline below so
+`/gsd:verify-work 13` does not read them as open. The deciding plan is named in each case.
 
 1. **Is the shared-term planner deleted or retained-but-unwired?**
+   → **RESOLVED (D-13-5, Plan 13-12):** retained and unreachable, with deprecation headers and an
+   `src/`-wide fence test; `parallel-trace-backfill.ts` and `trace-backfill-worker.mjs` are deleted subject
+   to an A2 re-verification grep. The four pinned `trace_smith_pip_provider_bill` expectations are handled
+   in one pass in Plan 13-01: three stay green unedited, the two Hermes ones change there.
    - Known: CONTEXT forbids *tuning* it; it does not say delete. Four tests across three suites pin its output.
    - Unclear: whether `trace-candidate-core.ts`, `parallel-trace-backfill.ts`, and `trace-backfill-worker.mjs` (~370 lines plus a worker) leave the tree in this phase.
    - Recommendation: decide in wave 1, because the GAP-12-E switch location depends on it, and so does whether four tests are edited or deleted.
 
 2. **Where does the GAP-12-E off-switch live?**
+   → **RESOLVED (Plan 13-01):** `ProposalScheduler` wiring, as an injected `NullTraceProposalPlanner`
+   default — and the same one-line remedy in the Hermes path, replacing an earlier corpus-size refusal
+   guard that needed the very `listSummaries` load it was protecting against.
    - `ProposalScheduler`/daemon wiring → `tests/sleep/sleep-reviewer.test.ts:186-207` and the Hermes tests stay green.
    - Inside `SleepReviewer.proposeTraces` → those tests break, and `hermes:sleep` behaviour changes for a non-daemon caller.
    - Recommendation: the daemon wiring, because GAP-12-E is explicitly about "the daemon's proposal review", and the Hermes path is human-invoked.
 
-3. **Does the cursor advance over suppressed candidates?** (R5) — must be settled before wave 2.
+3. **Does the cursor advance over suppressed candidates?** (R5)
+   → **RESOLVED (D-13-2, Plan 13-06):** yes, unconditionally. Suppression goes to a bounded, deterministic,
+   reported backlog (`backlogCap` 1,000) that competes on score with fresh work. The alternative — advance
+   only over fully-emitted work — is rejected for head-of-line blocking.
 
-4. **What authority does the offline bootstrap write under?** `commitProposalRun` asserts `historical-bootstrap` operation authority (`sqlite-store.ts:827`; `contraction-runner.ts:153-156`). Reusing it is plausible; introducing a new operation kind is a `WriteAuthority` change with sync implications. Not resolved here.
+4. **What authority does the offline bootstrap write under?**
+   → **DISSOLVED (D-13-4, Plan 13-11):** the bootstrap publishes nothing. It writes only the Phase-13
+   checkpoint, and `saveBootstrapCheckpoint` (`sqlite-store.ts:1145-1158`) takes no `WriteAuthority`, so the
+   Phase-13 checkpoint trio needs none either. Original text: `commitProposalRun` asserts `historical-bootstrap` operation authority (`sqlite-store.ts:827`; `contraction-runner.ts:153-156`). Reusing it is plausible; introducing a new operation kind is a `WriteAuthority` change with sync implications. Not resolved here.
 
-5. **Does the bootstrap emit proposals at all, or traces-in-`proposed`-state?** `commitProposalRun` accepts `traces` (all in `state: "proposed"`, `daemon/types.ts:229-232`), and `stageProposals` currently always returns `traces: []` (`sleep-reviewer.ts:140`). Emitting proposed traces directly is a path the storage layer already supports and that nothing currently uses. Worth a deliberate decision, not an accident.
+5. **Does the bootstrap emit proposals at all, or traces-in-`proposed`-state?**
+   → **RESOLVED (D-13-4, Plan 13-11):** neither. It fills a ranked backlog the daemon drains through the
+   unchanged `commitProposalRun` path, which makes idempotence structural. Original text: `commitProposalRun` accepts `traces` (all in `state: "proposed"`, `daemon/types.ts:229-232`), and `stageProposals` currently always returns `traces: []` (`sleep-reviewer.ts:140`). Emitting proposed traces directly is a path the storage layer already supports and that nothing currently uses. Worth a deliberate decision, not an accident.
 
-6. **Rejection memory** (§5.4) — does a rejected trace proposal suppress re-proposal forever, for a period, or not at all?
+6. **Rejection memory** (§5.4)
+   → **RESOLVED (Plan 13-07, extended by D-13-6 in Plan 13-08):** a rejected member set suppresses any
+   equal-or-subset candidate permanently; a strict superset is allowed one offer. Separately, a candidate
+   overlapping a live *proposed* trace proposal is suppressed until that proposal is decided.
 
 ---
 
