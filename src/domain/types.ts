@@ -70,6 +70,16 @@ export const MemoryStateSchema = z.enum([
   "disputed"
 ]);
 
+/**
+ * Every memory state EXCEPT `superseded`. Derived from the schema rather than written out so a
+ * newly added state is included by default -- the predicates this replaces were exclusions
+ * (`state !== "superseded"`), and a hand-listed inclusion would silently start dropping rows.
+ *
+ * Shared so the contraction runner and the sleep reviewer cannot drift apart on what a live
+ * derivation is.
+ */
+export const NON_SUPERSEDED_STATES = MemoryStateSchema.options.filter((state) => state !== "superseded");
+
 export const TurnRangeSchema = z.object({
   threadId: z.string().min(1),
   startSequence: z.number().int().nonnegative(),

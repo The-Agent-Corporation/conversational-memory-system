@@ -45,10 +45,11 @@ export class ProposalScheduler {
     const dueJobs = await this.dueJobs(personId, reviewedAt);
     if (dueJobs.length === 0) return { boxProposals: 0, traceProposals: 0, ran: false };
     const job = dueJobs[0]!;
-    const { staging, summaries } = await this.createStagingStore(personId);
-    const reviewer = this.options.reviewerFactory?.(staging) ?? new SleepReviewer(staging);
+    const staging = await this.createStagingStore(personId);
+    const reviewer = this.options.reviewerFactory?.(staging)
+      ?? new SleepReviewer(this.store, { writeStore: staging });
     const staged = await reviewer.stageProposals({ personId, reviewedAt });
-    validateStagedReview(personId, staged, summaries);
+    await this.validateStagedReview(personId, staged);
     const expectedCheckpoint = await this.store.getContractionCheckpoint(`contraction_checkpoint_${job.id}`);
     const nextJob: ContractionJob = {
       ...job,
@@ -80,26 +81,28 @@ export class ProposalScheduler {
     };
   }
 
-  private async createStagingStore(personId: string): Promise<{ staging: InMemoryStore; summaries: Summary[] }> {
+  /**
+   * An EMPTY staging store, sized by the review's output rather than by the corpus.
+   *
+   * This used to copy the whole derived corpus in so the reviewer could both read and write against
+   * an isolated store. On the live corpus that was 145,765 summaries plus every box, anchor,
+   * proposal and trace, each materialised once out of SQLite and again by `InMemoryStore`'s
+   * `structuredClone` on write: measured at 1,089 MB of heap for ONE call, which is what exhausted
+   * the daemon (two OOM crashes in 25 minutes, at a 4 GB heap limit).
+   *
+   * The isolation that staging exists for is about WRITES -- nothing may become visible until
+   * `commitProposalRun` publishes it atomically. So the reviewer now reads durably and writes here,
+   * and this store holds only what the review produced.
+   *
+   * The person row is still copied because the reviewer's write path asserts person ownership
+   * against the store it writes to.
+   */
+  private async createStagingStore(personId: string): Promise<InMemoryStore> {
     const person = await this.store.getPerson(personId);
     if (!person) throw new Error(`Cannot stage proposals for unknown person ${personId}`);
-    const [allSummaries, allBoxes, allAnchors, allProposals, allTraces] = await Promise.all([
-      this.store.listSummaries(),
-      this.store.listBoxes(),
-      this.store.listAnchors(),
-      this.store.listProposals({ state: "proposed" }),
-      this.store.listTraces()
-    ]);
-    const summaries = allSummaries.filter((item) => item.personId === personId && item.state !== "superseded");
-    assertCompleteSummaryProvenance(summaries);
     const staging = new InMemoryStore({ clock: this.clock });
     await staging.savePerson(person);
-    for (const summary of summaries) await staging.saveSummary(summary);
-    for (const box of allBoxes.filter((item) => item.personId === personId)) await staging.saveBox(box);
-    for (const anchor of allAnchors.filter((item) => item.personId === personId)) await staging.saveAnchor(anchor);
-    for (const proposal of allProposals.filter((item) => item.personId === personId)) await staging.saveProposal(proposal);
-    for (const trace of allTraces.filter((item) => item.personId === personId)) await staging.saveTrace(trace);
-    return { staging, summaries };
+    return staging;
   }
 
   private async dueJobs(personId: string, nowAt: string) {
@@ -112,7 +115,46 @@ export class ProposalScheduler {
       return quietDue || forcedDue;
     });
   }
+
+  /**
+   * Validates the staged output, resolving the summaries it REFERENCES rather than holding the
+   * whole corpus.
+   *
+   * The reference check is unchanged in effect but stronger in one respect: it used to test
+   * membership against an in-memory candidate set, and now resolves each referenced id durably and
+   * re-asserts person ownership and non-superseded state at the same time. A proposal citing a
+   * summary that does not exist, belongs to someone else, or has since been superseded fails here.
+   *
+   * The provenance assertion moved with it, and this is a deliberate narrowing: it used to run over
+   * every candidate summary (145,765 rows on the live corpus, which is exactly the load being
+   * removed) and now runs over the summaries the review actually cites. Those are the only ones
+   * whose provenance can reach a published proposal.
+   */
+  private async validateStagedReview(personId: string, staged: StagedSleepReviewResult): Promise<void> {
+    const outputs: Array<Box | MemoryProposal | MemoryTrace> = [...staged.boxes, ...staged.proposals, ...staged.traces];
+    if (outputs.some((item) => item.state !== "proposed" || item.personId !== personId)) {
+      throw new Error("Proposal scheduler accepts only proposed person-owned review objects");
+    }
+    const referencedSummaryIds = [
+      ...staged.boxes.flatMap((item) => item.summaryIds),
+      ...staged.proposals.flatMap((item) => item.sourceSummaryIds),
+      ...staged.traces.flatMap((item) => item.summaryIds)
+    ];
+    if (outputs.length > 0 && referencedSummaryIds.length === 0) {
+      throw new Error("Proposal scheduler rejects scope-mismatched or provenance-incomplete review objects");
+    }
+    const unique = [...new Set(referencedSummaryIds)];
+    const resolved = await this.store.listSummariesByIds(unique);
+    const usable = new Map(resolved
+      .filter((summary) => summary.personId === personId && summary.state !== "superseded")
+      .map((summary) => [summary.id, summary]));
+    if (unique.some((id) => !usable.has(id))) {
+      throw new Error("Proposal scheduler rejects scope-mismatched or provenance-incomplete review objects");
+    }
+    assertCompleteSummaryProvenance([...usable.values()]);
+  }
 }
+
 
 function assertCompleteSummaryProvenance(summaries: Summary[]): void {
   if (summaries.some((summary) =>
@@ -122,18 +164,3 @@ function assertCompleteSummaryProvenance(summaries: Summary[]): void {
   }
 }
 
-function validateStagedReview(personId: string, staged: StagedSleepReviewResult, summaries: Summary[]): void {
-  const summaryIds = new Set(summaries.map((summary) => summary.id));
-  const outputs: Array<Box | MemoryProposal | MemoryTrace> = [...staged.boxes, ...staged.proposals, ...staged.traces];
-  if (outputs.some((item) => item.state !== "proposed" || item.personId !== personId)) {
-    throw new Error("Proposal scheduler accepts only proposed person-owned review objects");
-  }
-  const referencedSummaryIds = [
-    ...staged.boxes.flatMap((item) => item.summaryIds),
-    ...staged.proposals.flatMap((item) => item.sourceSummaryIds),
-    ...staged.traces.flatMap((item) => item.summaryIds)
-  ];
-  if ((outputs.length > 0 && referencedSummaryIds.length === 0) || referencedSummaryIds.some((id) => !summaryIds.has(id))) {
-    throw new Error("Proposal scheduler rejects scope-mismatched or provenance-incomplete review objects");
-  }
-}

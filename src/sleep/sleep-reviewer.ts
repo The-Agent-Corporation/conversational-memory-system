@@ -1,4 +1,13 @@
-import { BoxProposalPayloadSchema, type Box, type MemoryProposal, type MemoryTrace, type Summary, type TurnRange } from "../domain/types.js";
+import {
+  BoxProposalPayloadSchema,
+  NON_SUPERSEDED_STATES,
+  type Anchor,
+  type Box,
+  type MemoryProposal,
+  type MemoryTrace,
+  type Summary,
+  type TurnRange
+} from "../domain/types.js";
 import { DeterministicBoxProposalPlanner, type BoxProposalPlanner } from "../boxes/box-proposal-planner.js";
 import { DeterministicTraceProposalPlanner, type TraceProposalPlanner } from "../traces/trace-proposal-planner.js";
 import type { MemoryStore } from "../storage/memory-store.js";
@@ -41,11 +50,41 @@ export interface StagedSleepReviewResult {
 export interface SleepReviewerOptions {
   boxPlanner?: BoxProposalPlanner;
   tracePlanner?: TraceProposalPlanner;
+  /**
+   * Where the reviewer's own writes land. Defaults to the read store, which is the standalone
+   * behaviour every existing caller relies on.
+   *
+   * The daemon needs a review to publish atomically, so it passes an isolated staging store here.
+   * It used to get that isolation by COPYING the entire derived corpus into an `InMemoryStore` and
+   * pointing the reviewer at the copy -- measured at 1,089 MB of heap for a single call on the live
+   * corpus (145,765 summaries, each materialised once from SQLite and again by the staging store's
+   * `structuredClone` on write), which is what exhausted the daemon's heap. Reading durably and
+   * writing to an empty staging store gives the same publication boundary for the size of the
+   * OUTPUT rather than the size of the corpus.
+   */
+  writeStore?: MemoryStore;
+}
+
+/**
+ * The summaries one review pass may consider, loaded once.
+ *
+ * Both planners cluster GLOBALLY -- which summaries group together depends on the whole candidate
+ * set -- so this cannot be narrowed to a recent window without changing which boxes and traces get
+ * proposed. What it can do is stop being loaded twice (once per planner) and stop dragging in the
+ * 89,059 superseded rows that were only ever filtered out in JS.
+ */
+interface ReviewCandidates {
+  summaries: Summary[];
+  boxes: Box[];
+  anchors: Anchor[];
+  proposals: MemoryProposal[];
+  traces: MemoryTrace[];
 }
 
 export class SleepReviewer {
   private readonly boxPlanner: BoxProposalPlanner;
   private readonly tracePlanner: TraceProposalPlanner;
+  private readonly writeStore: MemoryStore;
 
   constructor(
     private readonly store: MemoryStore,
@@ -53,6 +92,36 @@ export class SleepReviewer {
   ) {
     this.boxPlanner = options.boxPlanner ?? new DeterministicBoxProposalPlanner();
     this.tracePlanner = options.tracePlanner ?? new DeterministicTraceProposalPlanner();
+    this.writeStore = options.writeStore ?? store;
+  }
+
+  /**
+   * One scoped read of everything a review pass considers.
+   *
+   * `states` is pushed into the store rather than filtered afterwards: on the live corpus that is
+   * 145,765 rows loaded and Zod-parsed to keep 56,706. `personId` is passed for the same reason it
+   * is elsewhere -- it excludes nothing on a single-person corpus, but a second person makes it
+   * load-bearing rather than requiring this to be revisited.
+   */
+  private async loadCandidates(personId: string | undefined): Promise<ReviewCandidates> {
+    const [summaries, boxes, anchors, proposals, traces] = await Promise.all([
+      this.store.listSummaries({ ...(personId ? { personId } : {}), states: NON_SUPERSEDED_STATES }),
+      this.store.listBoxes(),
+      this.store.listAnchors(),
+      this.store.listProposals({ state: "proposed" }),
+      this.store.listTraces()
+    ]);
+    return {
+      // The state predicate is re-applied here, not trusted from the query: `listSummaries` without
+      // a filter is still a legal call shape, and a future caller passing none must not silently
+      // start feeding superseded summaries to the planners.
+      summaries: summaries.filter((summary) =>
+        summary.state !== "superseded" && (!personId || summary.personId === personId)),
+      boxes: boxes.filter((box) => !personId || box.personId === personId),
+      anchors: anchors.filter((anchor) => !personId || anchor.personId === personId),
+      proposals: proposals.filter((proposal) => !personId || proposal.personId === personId),
+      traces: traces.filter((trace) => !personId || trace.personId === personId)
+    };
   }
 
   /**
@@ -60,8 +129,11 @@ export class SleepReviewer {
    * need an atomic publication boundary must supply an isolated staging store.
    */
   async stageProposals(request: SleepReviewRequest): Promise<StagedSleepReviewResult> {
-    const boxReview = await this.proposeBoxes(request);
-    const traceReview = await this.proposeTraces(request);
+    // ONE load for both passes. They previously issued the same five whole-table reads each, so a
+    // single review materialised the corpus twice over.
+    const candidates = await this.loadCandidates(request.personId);
+    const boxReview = await this.proposeBoxes(request, candidates);
+    const traceReview = await this.proposeTraces(request, candidates);
     return {
       boxes: boxReview.proposedBoxes,
       proposals: [...boxReview.proposals, ...traceReview.proposals],
@@ -71,21 +143,9 @@ export class SleepReviewer {
     };
   }
 
-  async proposeBoxes(request: SleepReviewRequest): Promise<SleepReviewResult> {
-    const [summaries, boxes, anchors, proposals] = await Promise.all([
-      this.store.listSummaries(),
-      this.store.listBoxes(),
-      this.store.listAnchors(),
-      this.store.listProposals({ state: "proposed" })
-    ]);
-    const scopedSummaries = summaries.filter((summary) =>
-      summary.state !== "superseded" && summary.personId === request.personId
-    );
-    const scopedBoxes = boxes.filter((box) => box.personId === request.personId);
-    const scopedAnchors = anchors.filter((anchor) => anchor.personId === request.personId);
-    const scopedProposals = proposals.filter((proposal) =>
-      proposal.personId === request.personId
-    );
+  async proposeBoxes(request: SleepReviewRequest, preloaded?: ReviewCandidates): Promise<SleepReviewResult> {
+    const { summaries: scopedSummaries, boxes: scopedBoxes, anchors: scopedAnchors, proposals: scopedProposals } =
+      preloaded ?? await this.loadCandidates(request.personId);
     const result = await this.boxPlanner.proposeBoxes({
       reviewedAt: request.reviewedAt,
       idNamespace: request.personId,
@@ -102,42 +162,32 @@ export class SleepReviewer {
       ...proposal,
       ...(request.personId ? { personId: request.personId } : {})
     }));
+    // Built ONCE for the whole loop. See buildProposedBoxFromProposal.
+    const summariesById = new Map(scopedSummaries.map((summary) => [summary.id, summary]));
     for (const proposal of scopedResultProposals) {
-      await this.store.saveProposal(proposal);
+      await this.writeStore.saveProposal(proposal);
       if (proposal.proposalType !== "box") {
         continue;
       }
 
-      const box = buildProposedBoxFromProposal(
-        proposal,
-        request.reviewedAt,
-        scopedSummaries
-      );
-      await this.store.saveBox(box);
+      const box = buildProposedBoxFromProposal(proposal, request.reviewedAt, summariesById);
+      await this.writeStore.saveBox(box);
       proposedBoxes.push(box);
     }
 
     return { proposedBoxes, proposals: scopedResultProposals };
   }
 
-  async proposeTraces(request: SleepReviewRequest): Promise<TraceProposalReviewResult> {
-    const [summaries, boxes, anchors, proposals, traces] = await Promise.all([
-      this.store.listSummaries(),
-      this.store.listBoxes(),
-      this.store.listAnchors(),
-      this.store.listProposals({ state: "proposed" }),
-      this.store.listTraces()
-    ]);
+  async proposeTraces(request: SleepReviewRequest, preloaded?: ReviewCandidates): Promise<TraceProposalReviewResult> {
+    const candidates = preloaded ?? await this.loadCandidates(request.personId);
     const result = await this.tracePlanner.proposeTraces({
       reviewedAt: request.reviewedAt,
       idNamespace: request.personId,
-      summaries: summaries.filter((summary) =>
-        summary.state !== "superseded" && summary.personId === request.personId
-      ),
-      boxes: boxes.filter((box) => box.personId === request.personId),
-      anchors: anchors.filter((anchor) => anchor.personId === request.personId),
-      proposals: proposals.filter((proposal) => proposal.personId === request.personId),
-      traces: traces.filter((trace) => trace.personId === request.personId),
+      summaries: candidates.summaries,
+      boxes: candidates.boxes,
+      anchors: candidates.anchors,
+      proposals: candidates.proposals,
+      traces: candidates.traces,
       minimumTraceSummaries: request.minimumTraceSummaries,
       minimumConfidence: request.minimumTraceConfidence
     });
@@ -147,7 +197,7 @@ export class SleepReviewer {
       ...(request.personId ? { personId: request.personId } : {})
     }));
     for (const proposal of scopedProposals) {
-      await this.store.saveProposal(proposal);
+      await this.writeStore.saveProposal(proposal);
     }
 
     return { proposals: scopedProposals };
@@ -165,7 +215,7 @@ export class SleepReviewer {
         continue;
       }
 
-      await this.store.saveSummary(decayed);
+      await this.writeStore.saveSummary(decayed);
       updatedSummaries.push(decayed);
     }
 
@@ -187,7 +237,7 @@ export class SleepReviewer {
         continue;
       }
 
-      await this.store.saveBox(refreshed);
+      await this.writeStore.saveBox(refreshed);
       updatedBoxes.push(refreshed);
     }
 
@@ -195,9 +245,20 @@ export class SleepReviewer {
   }
 }
 
-function buildProposedBoxFromProposal(proposal: MemoryProposal, reviewedAt: string, summaries: Summary[]): Box {
+/**
+ * Takes the id index rather than the summary list, because it is called once per proposal.
+ *
+ * It used to build `new Map(summaries.map(...))` itself, which on the live corpus is a
+ * 56,706-entry Map allocated for EVERY box proposal in the review -- O(proposals x summaries).
+ * That was the single largest allocation left in a review pass once the staged corpus copy was
+ * removed: 901 MB -> 2,358 MB inside one `proposeBoxes` call, and then out of heap.
+ */
+function buildProposedBoxFromProposal(
+  proposal: MemoryProposal,
+  reviewedAt: string,
+  summariesById: ReadonlyMap<string, Summary>
+): Box {
   const payload = BoxProposalPayloadSchema.parse(proposal.payload);
-  const summariesById = new Map(summaries.map((summary) => [summary.id, summary]));
   const sourceSummaries = payload.sourceSummaryIds
     .map((summaryId) => summariesById.get(summaryId))
     .filter((summary): summary is Summary => summary !== undefined);

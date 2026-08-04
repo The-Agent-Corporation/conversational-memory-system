@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProposalScheduler } from "../../src/daemon/proposal-scheduler.js";
+import { SleepReviewer } from "../../src/sleep/sleep-reviewer.js";
 import type { ContractionCheckpoint, ContractionJob, WriteAuthority } from "../../src/daemon/types.js";
 import type { Person } from "../../src/domain/canonical.js";
 import type { MemoryProposal, ProposalState, Summary } from "../../src/domain/types.js";
@@ -144,6 +145,95 @@ describe("ProposalScheduler", () => {
       })
     }).runDue(PERSON_ID)).rejects.toThrow(/proposed|person|scope|provenance/i);
     expect(await publicationSnapshot(store)).toEqual(before);
+  });
+
+  /**
+   * The daemon's staging store used to be a COPY of the whole derived corpus, so the reviewer could
+   * read and write against an isolated store. On the live corpus that was 145,765 summaries plus
+   * every box, anchor, proposal and trace -- materialised once out of SQLite and again by
+   * `InMemoryStore`'s `structuredClone` on write -- measured at 1,089 MB of heap for a single call.
+   * That is what exhausted the daemon: two OOM crashes in 25 minutes at a 4 GB limit.
+   *
+   * Staging exists to isolate WRITES, not reads. This pins that the reviewer reads durably and the
+   * staging store only ever holds what the review produced, so its size tracks the output rather
+   * than the corpus.
+   */
+  it("stages into an empty store rather than copying the corpus into it", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore(clock);
+
+    let stagingSummaryCount: number | null = null;
+    let stagingWasWrittenTo = false;
+    const scheduler = new ProposalScheduler(store, {
+      clock,
+      authority: foregroundAuthority(),
+      reviewerFactory: (staging) => {
+        // Observed at the moment the reviewer is constructed: before this change the staging store
+        // already held every summary in the corpus.
+        void (async () => { stagingSummaryCount = (await staging.listSummaries()).length; })();
+        return new SleepReviewer(store, { writeStore: staging });
+      },
+      beforeCommit: async () => {
+        stagingWasWrittenTo = true;
+      }
+    });
+
+    const result = await scheduler.runDue(PERSON_ID);
+
+    expect(result).toMatchObject({ ran: true });
+    expect(stagingWasWrittenTo).toBe(true);
+    expect(stagingSummaryCount).toBe(0);
+  });
+
+  /**
+   * Reads move to the durable store, so the write isolation has to be re-proven: nothing the
+   * reviewer produces may be visible in the durable store until `commitProposalRun` publishes it.
+   */
+  it("keeps reviewer writes out of the durable store until publication", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore(clock);
+    const before = await publicationSnapshot(store);
+
+    let atCommit: Awaited<ReturnType<typeof publicationSnapshot>> | null = null;
+    const scheduler = new ProposalScheduler(store, {
+      clock,
+      authority: foregroundAuthority(),
+      beforeCommit: async () => { atCommit = await publicationSnapshot(store); }
+    });
+
+    await scheduler.runDue(PERSON_ID);
+
+    // The reviewer wrote proposals and boxes; none of them reached the durable store early.
+    expect(atCommit).toEqual(before);
+  });
+
+  /**
+   * The reference check used to test membership against the in-memory corpus copy. It now resolves
+   * each referenced id durably, which also lets it re-assert ownership and live state -- a proposal
+   * citing a summary that does not exist, belongs to someone else, or has been superseded is
+   * rejected rather than published.
+   */
+  it("rejects staged output citing a summary that is not a live person-owned summary", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore(clock);
+    const superseded = (await store.listSummaries())[0]!;
+    await store.saveSummary({ ...superseded, state: "superseded" });
+
+    const scheduler = new ProposalScheduler(store, {
+      clock,
+      authority: foregroundAuthority(),
+      reviewerFactory: (staging) => ({
+        stageProposals: async () => ({
+          boxes: [],
+          proposals: [proposal("proposed", PERSON_ID, superseded.id)],
+          traces: [],
+          boxProposalCount: 1,
+          traceProposalCount: 0
+        })
+      }) as never
+    });
+
+    await expect(scheduler.runDue(PERSON_ID)).rejects.toThrow(/scope-mismatched or provenance-incomplete/i);
   });
 });
 

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createEventLoopYielder } from "../imports/cooperative-yield.js";
 import { anchorsForTurn } from "../anchors/anchor-detector.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
-import { MemoryStateSchema, type Anchor, type Summary, type Turn } from "../domain/types.js";
+import { NON_SUPERSEDED_STATES, type Anchor, type Summary, type Turn } from "../domain/types.js";
 import type { Embedder } from "../embeddings/embedder.js";
 import { DerivationInvalidator } from "../service/derivation-invalidator.js";
 import type { DerivationSupersession, PendingToolRun } from "./types.js";
@@ -30,13 +30,6 @@ import {
 // Exported (additive, no behavior change) so `rebuild-derivations-command.ts` can detect a stale
 // checkpoint without duplicating the version string (REQ-054).
 export const PROCESSOR_VERSION = `continuous-contraction/v1+${HYGIENE_RULE_VERSION}`;
-/**
- * Every memory state EXCEPT `superseded`. Derived from the schema rather than written out so a
- * newly added state is included by default -- the predicate this replaces was an exclusion
- * (`state !== "superseded"`), and a hand-listed inclusion would silently start dropping rows.
- */
-const NON_SUPERSEDED_STATES = MemoryStateSchema.options.filter((state) => state !== "superseded");
-
 export const DEFAULT_CONTRACTION_LIMITS = Object.freeze({ maxEvents: 250, maxMonotonicMs: 2_000 });
 
 /**
