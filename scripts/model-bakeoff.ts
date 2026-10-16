@@ -1,70 +1,143 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { OpenRouterClient } from "../src/openrouter/client.js";
+import {
+  CHAT_BAKEOFF_CASES,
+  CHAT_BAKEOFF_MODELS,
+  EMBEDDING_MODEL,
+  qualityPoints,
+  scoreSummary
+} from "../src/openrouter/bakeoff-score.js";
+import { PERSONAL_AGENT_SUMMARY_PROMPT } from "../src/summarization/openrouter-summarizer.js";
 
-const EMBEDDING_MODELS = [
-  "qwen/qwen3-embedding-8b",
-  "qwen/qwen3-embedding-4b",
-  "openai/text-embedding-3-small"
-];
-const CHAT_MODELS = [
-  "google/gemini-2.5-flash",
-  "anthropic/claude-3.5-haiku",
-  "openai/gpt-4o-mini"
-];
-
-const queries = [
-  "What did we decide about coverage?",
-  "When is the next deadline?",
-  "What preference did I state?",
-  "Which project was active?",
-  "What should be remembered?",
-  "What changed in the plan?",
-  "Who owns the follow-up?",
-  "What was the budget?",
-  "Which case names came up?",
-  "What is still open?",
-  "What did the journal say about routines?",
-  "What should not be injected?"
-];
-
-async function main(): Promise<void> {
-  const slicePath = process.argv[2];
-  const slice = slicePath ? readFileSync(slicePath, "utf8").slice(0, 4_000) : "No corpus slice was provided.";
-  if (!process.env.OPENROUTER_API_KEY) {
-    process.stdout.write(`${JSON.stringify({
-      ok: true,
-      skipped: true,
-      reason: "OPENROUTER_API_KEY is unset and this workspace has no ~/.memory/aaron.db clone.",
-      embeddingModels: EMBEDDING_MODELS,
-      chatModels: CHAT_MODELS,
-      queries
-    }, null, 2)}\n`);
-    return;
-  }
-  const client = new OpenRouterClient({ dailySpendCapUsd: 10 });
-  const rows = [];
-  for (const model of EMBEDDING_MODELS) {
-    const started = Date.now();
-    const embedded = await client.embeddings({ model, input: queries, stage: "bakeoff-embed" });
-    rows.push({ kind: "embedding", model, ms: Date.now() - started, dimensions: embedded.vectors[0]?.length ?? 0, costUsd: embedded.usage.costUsd });
-  }
-  for (const model of CHAT_MODELS) {
-    const started = Date.now();
-    const chat = await client.chatJson({
-      model,
-      stage: "bakeoff-chat",
-      promptVersion: "bakeoff-v1",
-      messages: [
-        { role: "system", content: "Summarize the slice in one sentence. Preserve domain terms." },
-        { role: "user", content: slice }
-      ]
-    });
-    rows.push({ kind: "chat", model, ms: Date.now() - started, costUsd: chat.usage.costUsd, preview: chat.content.slice(0, 180) });
-  }
-  process.stdout.write(`${JSON.stringify({ ok: true, skipped: false, rows }, null, 2)}\n`);
+export interface ChatBakeoffRow {
+  model: string;
+  caseId: string;
+  ok: boolean;
+  ms: number;
+  costUsd: number | null;
+  promptTokens: number;
+  completionTokens: number;
+  quality: number;
+  schemaValid: boolean;
+  requiredMisses: string[];
+  forbiddenHits: string[];
+  title: string | null;
+  error: string | null;
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+export async function runChatBakeoff(env: NodeJS.ProcessEnv = process.env): Promise<{
+  ok: true;
+  skipped: boolean;
+  reason?: string;
+  embeddingModel: string;
+  chatModels: readonly string[];
+  embedding?: { ms: number; dimensions: number; costUsd: number | null; error: string | null };
+  rows: ChatBakeoffRow[];
+}> {
+  if (!env.OPENROUTER_API_KEY?.trim()) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "OPENROUTER_API_KEY is unset. No live chat comparison was run.",
+      embeddingModel: EMBEDDING_MODEL,
+      chatModels: CHAT_BAKEOFF_MODELS,
+      rows: []
+    };
+  }
+  const client = new OpenRouterClient({
+    apiKey: env.OPENROUTER_API_KEY,
+    dailySpendCapUsd: 5,
+    provider: { data_collection: "deny" }
+  });
+  const embedStarted = Date.now();
+  let embedding: { ms: number; dimensions: number; costUsd: number | null; error: string | null };
+  try {
+    const embedded = await client.embeddings({
+      model: EMBEDDING_MODEL,
+      input: ["Martinez v. Hale BI hearing"],
+      stage: "bakeoff-embed",
+      dimensions: 768
+    });
+    embedding = {
+      ms: Date.now() - embedStarted,
+      dimensions: embedded.vectors[0]?.length ?? 0,
+      costUsd: embedded.usage.costUsd,
+      error: null
+    };
+  } catch (error) {
+    embedding = {
+      ms: Date.now() - embedStarted,
+      dimensions: 0,
+      costUsd: null,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+  const rows: ChatBakeoffRow[] = [];
+  for (const model of CHAT_BAKEOFF_MODELS) {
+    for (const testCase of CHAT_BAKEOFF_CASES) {
+      const started = Date.now();
+      try {
+        const chat = await client.chatJson({
+          model,
+          stage: "bakeoff-chat",
+          promptVersion: "openrouter-summarizer-v2",
+          messages: [
+            { role: "system", content: PERSONAL_AGENT_SUMMARY_PROMPT },
+            { role: "user", content: JSON.stringify(testCase.payload) }
+          ]
+        });
+        const score = scoreSummary(chat.content, testCase);
+        rows.push({
+          model,
+          caseId: testCase.id,
+          ok: score.schemaValid && score.requiredMisses.length === 0 && score.forbiddenHits.length === 0,
+          ms: Date.now() - started,
+          costUsd: chat.usage.costUsd,
+          promptTokens: chat.usage.promptTokens,
+          completionTokens: chat.usage.completionTokens,
+          quality: qualityPoints(score, testCase),
+          schemaValid: score.schemaValid,
+          requiredMisses: score.requiredMisses,
+          forbiddenHits: score.forbiddenHits,
+          title: score.title,
+          error: null
+        });
+      } catch (error) {
+        rows.push({
+          model,
+          caseId: testCase.id,
+          ok: false,
+          ms: Date.now() - started,
+          costUsd: null,
+          promptTokens: 0,
+          completionTokens: 0,
+          quality: 0,
+          schemaValid: false,
+          requiredMisses: testCase.requiredTerms,
+          forbiddenHits: [],
+          title: null,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+  }
+  return { ok: true, skipped: false, embeddingModel: EMBEDDING_MODEL, chatModels: CHAT_BAKEOFF_MODELS, embedding, rows };
+}
+
+async function main(): Promise<void> {
+  const result = await runChatBakeoff();
+  const outPath = resolve(".planning/phases/14-semantic-recall/bakeoff-results.json");
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, `${JSON.stringify(result, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (result.skipped) process.exitCode = 2;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
