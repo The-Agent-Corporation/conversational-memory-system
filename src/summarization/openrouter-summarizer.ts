@@ -33,7 +33,8 @@ export class OpenRouterSummarizerError extends Error {
   }
 }
 
-const PROMPT_VERSION = "openrouter-summarizer-v2";
+export const SUMMARY_PROMPT_VERSION = "openrouter-summarizer-v3";
+const PROMPT_VERSION = SUMMARY_PROMPT_VERSION;
 
 export const PERSONAL_AGENT_SUMMARY_PROMPT = [
   "You summarize a completed conversation span for a personal agent's source-linked memory.",
@@ -41,8 +42,11 @@ export const PERSONAL_AGENT_SUMMARY_PROMPT = [
   "title is a short human description of the span, not a keyword list.",
   "summaryText states what was decided and why, facts about the person and their preferences,",
   "commitments, deadlines, open questions, and uncertainty.",
+  "confidence is a number from 0 to 1 for how settled the content is; lower it when the speaker is unsure.",
+  "detailLevel is exactly one of full, medium, brief, stub. tokenCount is an integer estimate of summaryText length.",
   "When the conversation uses a specialized domain, preserve its exact terms: project and repository names,",
   "legal case names, coverage types, identifiers, and distinctions such as PIP versus BI.",
+  "Copy numbers, amounts, and dates exactly as written; do not add separators, currency symbols, or units.",
   "anchors is an array of { anchorType, content, turnSequence } where anchorType is one of",
   "deadline, decision, key_fact, strategic_insight, bookmark. Only anchor conversational turns.",
   "Do not invent facts that are not in the turns."

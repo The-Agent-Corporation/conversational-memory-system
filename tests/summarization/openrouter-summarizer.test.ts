@@ -91,7 +91,7 @@ describe("OpenRouterSummarizer", () => {
     expect(draft).toEqual({
       summaryText: "Smith PIP demand timing and coverage issues.",
       model: "openrouter:anthropic/claude-3.5-sonnet",
-      promptVersion: "openrouter-summarizer-v2",
+      promptVersion: "openrouter-summarizer-v3",
       confidence: 0.82,
       detailLevel: "brief",
       tokenCount: 12
@@ -109,6 +109,7 @@ describe("OpenRouterSummarizer", () => {
     expect(body.model).toBe("anthropic/claude-3.5-sonnet");
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(body.messages[0].role).toBe("system");
+    expect(body.messages[0].content).toContain("detailLevel is exactly one of full, medium, brief, stub");
     expect(body.messages[1].content).toContain("Smith PIP (2 turns, seq 1-2)");
     expect(body.messages[1].content).toContain("The Smith PIP issue is about demand timing.");
   });

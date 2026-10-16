@@ -9,11 +9,18 @@ import {
   qualityPoints,
   scoreSummary
 } from "../src/openrouter/bakeoff-score.js";
-import { PERSONAL_AGENT_SUMMARY_PROMPT } from "../src/summarization/openrouter-summarizer.js";
+import { OpenRouterRequestError, type OpenRouterLedger } from "../src/openrouter/types.js";
+import {
+  PERSONAL_AGENT_SUMMARY_PROMPT,
+  SUMMARY_PROMPT_VERSION
+} from "../src/summarization/openrouter-summarizer.js";
+
+const SPEND_CAP_USD = 5;
 
 export interface ChatBakeoffRow {
   model: string;
   caseId: string;
+  run: number;
   ok: boolean;
   ms: number;
   costUsd: number | null;
@@ -27,28 +34,47 @@ export interface ChatBakeoffRow {
   error: string | null;
 }
 
+export interface ChatBakeoffModelSummary {
+  model: string;
+  calls: number;
+  passed: number;
+  schemaValid: number;
+  meanQuality: number;
+  medianMs: number;
+  totalCostUsd: number;
+}
+
 export async function runChatBakeoff(env: NodeJS.ProcessEnv = process.env): Promise<{
   ok: true;
   skipped: boolean;
   reason?: string;
+  promptVersion: string;
+  repeats: number;
   embeddingModel: string;
   chatModels: readonly string[];
   embedding?: { ms: number; dimensions: number; costUsd: number | null; error: string | null };
+  summary?: ChatBakeoffModelSummary[];
+  totalCostUsd?: number;
   rows: ChatBakeoffRow[];
 }> {
+  const repeats = Math.max(1, Math.floor(Number(env.BAKEOFF_REPEATS ?? "1")) || 1);
   if (!env.OPENROUTER_API_KEY?.trim()) {
     return {
       ok: true,
       skipped: true,
       reason: "OPENROUTER_API_KEY is unset. No live chat comparison was run.",
+      promptVersion: SUMMARY_PROMPT_VERSION,
+      repeats,
       embeddingModel: EMBEDDING_MODEL,
       chatModels: CHAT_BAKEOFF_MODELS,
       rows: []
     };
   }
+  const ledger = runLedger();
   const client = new OpenRouterClient({
     apiKey: env.OPENROUTER_API_KEY,
-    dailySpendCapUsd: 5,
+    dailySpendCapUsd: SPEND_CAP_USD,
+    ledger: ledger.ledger,
     provider: { data_collection: "deny" }
   });
   const embedStarted = Date.now();
@@ -71,59 +97,110 @@ export async function runChatBakeoff(env: NodeJS.ProcessEnv = process.env): Prom
       ms: Date.now() - embedStarted,
       dimensions: 0,
       costUsd: null,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorText(error)
     };
   }
   const rows: ChatBakeoffRow[] = [];
-  for (const model of CHAT_BAKEOFF_MODELS) {
-    for (const testCase of CHAT_BAKEOFF_CASES) {
-      const started = Date.now();
-      try {
-        const chat = await client.chatJson({
-          model,
-          stage: "bakeoff-chat",
-          promptVersion: "openrouter-summarizer-v2",
-          messages: [
-            { role: "system", content: PERSONAL_AGENT_SUMMARY_PROMPT },
-            { role: "user", content: JSON.stringify(testCase.payload) }
-          ]
-        });
-        const score = scoreSummary(chat.content, testCase);
-        rows.push({
-          model,
-          caseId: testCase.id,
-          ok: score.schemaValid && score.requiredMisses.length === 0 && score.forbiddenHits.length === 0,
-          ms: Date.now() - started,
-          costUsd: chat.usage.costUsd,
-          promptTokens: chat.usage.promptTokens,
-          completionTokens: chat.usage.completionTokens,
-          quality: qualityPoints(score, testCase),
-          schemaValid: score.schemaValid,
-          requiredMisses: score.requiredMisses,
-          forbiddenHits: score.forbiddenHits,
-          title: score.title,
-          error: null
-        });
-      } catch (error) {
-        rows.push({
-          model,
-          caseId: testCase.id,
-          ok: false,
-          ms: Date.now() - started,
-          costUsd: null,
-          promptTokens: 0,
-          completionTokens: 0,
-          quality: 0,
-          schemaValid: false,
-          requiredMisses: testCase.requiredTerms,
-          forbiddenHits: [],
-          title: null,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
+  const plan = Array.from({ length: repeats }, (_, index) => index + 1).flatMap((run) =>
+    CHAT_BAKEOFF_MODELS.flatMap((model) => CHAT_BAKEOFF_CASES.map((testCase) => ({ run, model, testCase }))));
+  for (const { run, model, testCase } of plan) {
+    const started = Date.now();
+    try {
+      const chat = await client.chatJson({
+        model,
+        stage: "bakeoff-chat",
+        promptVersion: SUMMARY_PROMPT_VERSION,
+        messages: [
+          { role: "system", content: PERSONAL_AGENT_SUMMARY_PROMPT },
+          { role: "user", content: JSON.stringify(testCase.payload) }
+        ]
+      });
+      const score = scoreSummary(chat.content, testCase);
+      rows.push({
+        model,
+        caseId: testCase.id,
+        run,
+        ok: score.schemaValid && score.requiredMisses.length === 0 && score.forbiddenHits.length === 0,
+        ms: Date.now() - started,
+        costUsd: chat.usage.costUsd,
+        promptTokens: chat.usage.promptTokens,
+        completionTokens: chat.usage.completionTokens,
+        quality: qualityPoints(score, testCase),
+        schemaValid: score.schemaValid,
+        requiredMisses: score.requiredMisses,
+        forbiddenHits: score.forbiddenHits,
+        title: score.title,
+        error: null
+      });
+    } catch (error) {
+      rows.push({
+        model,
+        caseId: testCase.id,
+        run,
+        ok: false,
+        ms: Date.now() - started,
+        costUsd: null,
+        promptTokens: 0,
+        completionTokens: 0,
+        quality: 0,
+        schemaValid: false,
+        requiredMisses: testCase.requiredTerms,
+        forbiddenHits: [],
+        title: null,
+        error: errorText(error)
+      });
     }
   }
-  return { ok: true, skipped: false, embeddingModel: EMBEDDING_MODEL, chatModels: CHAT_BAKEOFF_MODELS, embedding, rows };
+  return {
+    ok: true,
+    skipped: false,
+    promptVersion: SUMMARY_PROMPT_VERSION,
+    repeats,
+    embeddingModel: EMBEDDING_MODEL,
+    chatModels: CHAT_BAKEOFF_MODELS,
+    embedding,
+    summary: summarizeRows(rows),
+    totalCostUsd: Number(ledger.spent().toFixed(6)),
+    rows
+  };
+}
+
+export function summarizeRows(rows: ChatBakeoffRow[]): ChatBakeoffModelSummary[] {
+  return CHAT_BAKEOFF_MODELS.map((model) => {
+    const mine = rows.filter((row) => row.model === model);
+    const ms = mine.map((row) => row.ms).sort((left, right) => left - right);
+    return {
+      model,
+      calls: mine.length,
+      passed: mine.filter((row) => row.ok).length,
+      schemaValid: mine.filter((row) => row.schemaValid).length,
+      meanQuality: mine.length === 0 ? 0 : Number((mine.reduce((sum, row) => sum + row.quality, 0) / mine.length).toFixed(3)),
+      medianMs: ms.length === 0 ? 0 : ms[Math.floor((ms.length - 1) / 2)]!,
+      totalCostUsd: Number(mine.reduce((sum, row) => sum + (row.costUsd ?? 0), 0).toFixed(6))
+    };
+  });
+}
+
+function runLedger(): { ledger: OpenRouterLedger; spent: () => number } {
+  let spent = 0;
+  return {
+    spent: () => spent,
+    ledger: {
+      spentOnDay: async () => spent,
+      recordUsage: async (entry) => {
+        spent += entry.costUsd ?? 0;
+      },
+      getCachedOutput: async () => null,
+      putCachedOutput: async () => undefined
+    }
+  };
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof OpenRouterRequestError && error.responseText) {
+    return `${error.message} ${error.responseText.slice(0, 300)}`;
+  }
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function main(): Promise<void> {
