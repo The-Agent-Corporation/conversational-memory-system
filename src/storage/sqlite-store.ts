@@ -84,6 +84,7 @@ import {
 import { daemonSourceStateFromGrant, daemonSourceStateId } from "../daemon/source-state.js";
 import { MAX_RETAINED_GAP_SLOTS } from "../relay/domain/types.js";
 import {
+  CommitEventDeletionInputSchema,
   CommitHistoryImportInputSchema,
   CommitProposalDecisionInputSchema,
   CommitSourceDeletionInputSchema,
@@ -268,6 +269,36 @@ export class SqliteStore implements MemoryStore {
    * (when present), in bytes. Used by the health/status surface to report
    * database size accurately regardless of journal mode.
    */
+  countCanonicalEvents(personId: string): number {
+    const row = this.database.prepare("select count(*) as count from canonical_events where person_id = ?").get(personId) as { count: number };
+    return Number(row.count);
+  }
+
+  countHistoricalSummaries(personId: string): number {
+    const row = this.database.prepare(
+      `select count(*) as count from summaries
+       where json_extract(payload, '$.personId') = ?
+         and json_extract(payload, '$.origin') = 'historical_bootstrap'
+         and json_extract(payload, '$.state') != 'superseded'`
+    ).get(personId) as { count: number };
+    return Number(row.count);
+  }
+
+  countAnchorsForPerson(personId: string): number {
+    const row = this.database.prepare(
+      "select count(*) as count from anchors where json_extract(payload, '$.personId') = ?"
+    ).get(personId) as { count: number };
+    return Number(row.count);
+  }
+
+  countRetrievableSummaries(): number {
+    const row = this.database.prepare(
+      `select count(*) as count from summaries
+       where json_extract(payload, '$.state') in ('active', 'compacted', 'revived')`
+    ).get() as { count: number };
+    return Number(row.count);
+  }
+
   dbFileSizeBytes(): number {
     let total = 0;
     for (const path of [this.location, `${this.location}-wal`, `${this.location}-shm`]) {
@@ -1853,6 +1884,144 @@ export class SqliteStore implements MemoryStore {
         (left.summaryId < right.summaryId ? -1 : left.summaryId > right.summaryId ? 1 : 0)
     );
     return matches.slice(0, query.topK);
+  }
+
+  async recordModelUsage(entry: import("../openrouter/types.js").ModelUsageEntry): Promise<void> {
+    this.database.prepare(
+      `insert into openrouter_usage (id, day, stage, model, prompt_tokens, completion_tokens, cost_usd, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?)
+       on conflict(id) do nothing`
+    ).run(entry.id, entry.day, entry.stage, entry.model, entry.promptTokens, entry.completionTokens, entry.costUsd, entry.createdAt);
+  }
+
+  async modelSpendOnDay(day: string): Promise<number> {
+    const row = this.database.prepare(
+      "select coalesce(sum(cost_usd), 0) as spent from openrouter_usage where day = ?"
+    ).get(day) as { spent: number };
+    return Number(row.spent);
+  }
+
+  async getModelOutputCache(cacheKey: string): Promise<string | null> {
+    const row = this.database.prepare(
+      "select output_json as outputJson from openrouter_output_cache where cache_key = ?"
+    ).get(cacheKey) as { outputJson: string } | undefined;
+    return row?.outputJson ?? null;
+  }
+
+  async putModelOutputCache(entry: import("../openrouter/types.js").ModelOutputCacheEntry): Promise<void> {
+    this.database.prepare(
+      `insert into openrouter_output_cache
+         (cache_key, stage, prompt_version, model, input_sha256, output_json, created_at)
+       values (?, ?, ?, ?, ?, ?, ?)
+       on conflict(cache_key) do update set output_json = excluded.output_json`
+    ).run(entry.cacheKey, entry.stage, entry.promptVersion, entry.model, entry.inputSha256, entry.outputJson, entry.createdAt);
+  }
+
+  async isCanonicalEventTombstoned(canonicalEventId: string): Promise<boolean> {
+    const row = this.database.prepare(
+      "select 1 as present from canonical_event_tombstones where canonical_event_id = ?"
+    ).get(canonicalEventId) as { present: number } | undefined;
+    return row !== undefined;
+  }
+
+  async commitEventDeletion(input: import("./mcp-mutation-contracts.js").CommitEventDeletionInput): Promise<import("./mcp-mutation-contracts.js").MutationCommitReceipt> {
+    const parsed = CommitEventDeletionInputSchema.parse(input);
+    this.database.exec("begin immediate");
+    try {
+      const event = this.findEventForDeletion(parsed);
+      if (!event) throw new Error("Canonical event was not found for this person");
+      this.database.prepare(
+        `insert into canonical_event_tombstones
+           (canonical_event_id, person_id, source_id, native_event_id, deleted_at, actor, reason)
+         values (?, ?, ?, ?, ?, ?, ?)
+         on conflict(canonical_event_id) do nothing`
+      ).run(event.id, event.personId, event.sourceId, event.nativeEventId, parsed.deletedAt, parsed.actor, parsed.reason);
+      this.database.prepare("delete from canonical_events where id = ?").run(event.id);
+      const turnRows = this.database.prepare("select id, payload from turns").all() as Array<{ id: string; payload: string }>;
+      const turnIds = turnRows.filter((row) => {
+        const payload = JSON.parse(row.payload) as { metadata?: { canonicalEventId?: string } };
+        return payload.metadata?.canonicalEventId === event.id || row.id === `personal_turn_${event.id}` || row.id === `turn_${event.id}`;
+      }).map((row) => row.id);
+      for (const id of turnIds) this.database.prepare("delete from turns where id = ?").run(id);
+      const anchorRows = this.database.prepare("select id, payload from anchors").all() as Array<{ id: string; payload: string }>;
+      const anchorIds = anchorRows.filter((row) => {
+        const payload = JSON.parse(row.payload) as { canonicalEventId?: string; turnId?: string };
+        return payload.canonicalEventId === event.id || turnIds.includes(payload.turnId ?? "");
+      }).map((row) => row.id);
+      for (const id of anchorIds) this.database.prepare("delete from anchors where id = ?").run(id);
+      const summaryRows = this.database.prepare(
+        "select id, payload from summaries where json_extract(payload,'$.personId') = ?"
+      ).all(parsed.personId) as Array<{ id: string; payload: string }>;
+      const summaryIds: string[] = [];
+      for (const row of summaryRows) {
+        const summary = JSON.parse(row.payload) as { sourceCanonicalEventIds?: string[]; state?: string };
+        if (!(summary.sourceCanonicalEventIds ?? []).includes(event.id)) continue;
+        summaryIds.push(row.id);
+        summary.state = "superseded";
+        this.database.prepare("update summaries set payload = ? where id = ?").run(JSON.stringify(summary), row.id);
+      }
+      for (const id of summaryIds) this.database.prepare("delete from summary_vectors where summary_id = ?").run(id);
+      const injectionRows = this.database.prepare("select id, payload from injections").all() as Array<{ id: string; payload: string }>;
+      let injections = 0;
+      for (const row of injectionRows) {
+        const payload = JSON.parse(row.payload) as { sourceSummaryIds?: string[] };
+        if ((payload.sourceSummaryIds ?? []).some((id) => summaryIds.includes(id))) {
+          this.database.prepare("delete from injections where id = ?").run(row.id);
+          injections += 1;
+        }
+      }
+      const jobs = this.database.prepare(
+        "select payload from daemon_contraction_job where person_id = ?"
+      ).all(parsed.personId) as PayloadRow[];
+      for (const row of jobs) {
+        const job = JSON.parse(row.payload) as { id: string; immediateDirty: boolean; state: string; updatedAt: string };
+        job.immediateDirty = true;
+        if (job.state === "complete") job.state = "pending";
+        job.updatedAt = parsed.deletedAt;
+        this.database.prepare(
+          "update daemon_contraction_job set payload = ? where id = ?"
+        ).run(JSON.stringify(job), job.id);
+      }
+      const auditId = `event_delete_${event.id}`;
+      this.database.prepare(
+        `insert into event_deletion_audit (id, person_id, canonical_event_id, actor, occurred_at, reason)
+         values (?, ?, ?, ?, ?, ?)
+         on conflict(id) do nothing`
+      ).run(auditId, parsed.personId, event.id, parsed.actor, parsed.deletedAt, parsed.reason);
+      this.database.exec("commit");
+      return {
+        operation: "event_deletion",
+        status: "COMMITTED",
+        personId: parsed.personId,
+        targetId: event.id,
+        effectCounts: {
+          events: 1,
+          turns: turnIds.length,
+          anchors: anchorIds.length,
+          summaries: summaryIds.length,
+          injections,
+          audits: 1
+        },
+        committedAt: parsed.deletedAt
+      };
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
+  private findEventForDeletion(input: import("./mcp-mutation-contracts.js").CommitEventDeletionInput): CanonicalEvent | null {
+    if (input.canonicalEventId) {
+      const row = this.database.prepare(
+        "select payload from canonical_events where id = ? and person_id = ?"
+      ).get(input.canonicalEventId, input.personId) as PayloadRow | undefined;
+      return row ? CanonicalEventSchema.parse(JSON.parse(row.payload)) : null;
+    }
+    const row = this.database.prepare(
+      `select payload from canonical_events
+       where person_id = ? and json_extract(payload,'$.sourceId') = ? and json_extract(payload,'$.nativeEventId') = ?`
+    ).get(input.personId, input.sourceId, input.nativeEventId) as PayloadRow | undefined;
+    return row ? CanonicalEventSchema.parse(JSON.parse(row.payload)) : null;
   }
 
   async deleteSummaryVectors(summaryIds: string[]): Promise<void> {

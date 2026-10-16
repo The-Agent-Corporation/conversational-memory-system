@@ -8,10 +8,13 @@ export interface ProfileAuthority {
   readonly ingestScopeId: string;
   readonly sourceRoots: Readonly<Record<string, string>>;
   readonly scopeAliases: Readonly<Record<string, string>>;
+  readonly allowInjection?: boolean;
   readonly fingerprint: string;
 }
 
-export interface ProfileAuthorityInput extends Omit<ProfileAuthority, "fingerprint"> {}
+export interface ProfileAuthorityInput extends Omit<ProfileAuthority, "fingerprint" | "allowInjection"> {
+  allowInjection?: boolean;
+}
 
 const sortedRecord = (value: Record<string, string>): Record<string, string> =>
   Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)));
@@ -28,7 +31,8 @@ export const createProfileAuthority = (input: ProfileAuthorityInput): ProfileAut
     allowedScopeIds,
     ingestScopeId: input.ingestScopeId,
     sourceRoots,
-    scopeAliases
+    scopeAliases,
+    allowInjection: input.allowInjection === true
   });
 
   return Object.freeze({
@@ -39,6 +43,7 @@ export const createProfileAuthority = (input: ProfileAuthorityInput): ProfileAut
     ingestScopeId: input.ingestScopeId,
     sourceRoots,
     scopeAliases,
+    allowInjection: input.allowInjection === true,
     fingerprint: createHash("sha256").update(fingerprintPayload).digest("hex")
   });
 };

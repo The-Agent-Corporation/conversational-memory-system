@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Anchor, Box, InjectionPacket, MemoryTrace, Summary, TurnRange } from "../domain/types.js";
-import { cosineSimilarity, type Embedder } from "../embeddings/embedder.js";
+import { cosineSimilarity, isAsymmetricEmbedder, type Embedder } from "../embeddings/embedder.js";
 import type { InjectionRequest } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import { RETRIEVAL_CANDIDATE_STATES, REVIVABLE_MEMORY_STATE, isRetrievableState } from "./retrievable-state.js";
@@ -35,12 +35,14 @@ export class MemoryRetriever {
       request.personId !== undefined
         ? { personId: request.personId, scopeIds: request.allowedScopeIds, states: RETRIEVAL_CANDIDATE_STATES }
         : { states: RETRIEVAL_CANDIDATE_STATES };
-    const [allSummaries, allAnchors, allTraces, allBoxes] = await Promise.all([
+    const [listedSummaries, allAnchors, allTraces, allBoxes] = await Promise.all([
       this.store.listSummaries(summaryFilter),
       this.store.listAnchors(),
       this.store.listTraces({ state: "approved" }),
       this.store.listBoxes()
     ]);
+    const vectorSelection = await this.selectVectorCandidates(request, listedSummaries);
+    const allSummaries = vectorSelection.summaries;
     const { summaries, anchors, traces, boxes, allowedScopeIds, revivableSummaries } = applyRetrievalBoundary(
       request,
       allSummaries,
@@ -52,7 +54,11 @@ export class MemoryRetriever {
     const topicEmbedding = this.options.embedder
       ? await this.options.embedder.embed(request.currentTopicSummary)
       : null;
-    const rankingOptions = { embedder: this.options.embedder, topicEmbedding };
+    const rankingOptions = {
+      embedder: this.options.embedder,
+      topicEmbedding,
+      vectorScores: vectorSelection.vectorScores
+    };
     const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, rankingOptions);
 
     if (ranked.length === 0) {
@@ -90,6 +96,29 @@ export class MemoryRetriever {
     await this.recordSelectedSummaryAccess(summaries, selected, createdAt);
     await this.promoteRevivableSummaries(revivableSummaries, request.currentTopicSummary, selected, rankingOptions, createdAt);
     return packet;
+  }
+
+  private async selectVectorCandidates(
+    request: InjectionRequest,
+    listedSummaries: Summary[]
+  ): Promise<{ summaries: Summary[]; vectorScores: Map<string, number> }> {
+    const vectorScores = new Map<string, number>();
+    if (!this.options.embedder || request.personId === undefined) {
+      return { summaries: listedSummaries, vectorScores };
+    }
+    const embedding = await embedForRetrieval(this.options.embedder, request.currentTopicSummary);
+    const nearest = await this.store.findNearestSummaries({
+      vector: embedding.vector,
+      provider: embedding.provider,
+      model: embedding.model,
+      personId: request.personId,
+      allowedScopeIds: request.allowedScopeIds ?? [],
+      topK: 32
+    });
+    if (nearest.length === 0) return { summaries: listedSummaries, vectorScores };
+    for (const match of nearest) vectorScores.set(match.summaryId, match.score);
+    const summaries = await this.store.listSummariesByIds([...vectorScores.keys()]);
+    return { summaries, vectorScores };
   }
 
   private async recordSelectedSummaryAccess(
@@ -416,6 +445,7 @@ export function rankMemories(
   options: {
     embedder?: Embedder;
     topicEmbedding: Summary["embedding"];
+    vectorScores?: ReadonlyMap<string, number>;
   } = { topicEmbedding: null }
 ): RankedMemory[] {
   const topicWords = significantWords(topicSummary);
@@ -446,9 +476,12 @@ function rankSummary(
   options: {
     embedder?: Embedder;
     topicEmbedding: Summary["embedding"];
+    vectorScores?: ReadonlyMap<string, number>;
   }
 ): RankedMemory {
-  const vectorScore = embeddingScore(options, summary.embedding);
+  const vectorScore = options.vectorScores?.has(summary.id)
+    ? options.vectorScores.get(summary.id)!
+    : embeddingScore(options, summary.embedding);
   if (vectorScore !== null) {
     return {
       kind: "summary",
@@ -650,6 +683,10 @@ function dedupeTurnRanges(ranges: TurnRange[]): TurnRange[] {
   }
 
   return deduped;
+}
+
+async function embedForRetrieval(embedder: Embedder, text: string) {
+  return isAsymmetricEmbedder(embedder) ? embedder.embedQuery(text) : embedder.embed(text);
 }
 
 function normalizedMemoryText(value: string): string {

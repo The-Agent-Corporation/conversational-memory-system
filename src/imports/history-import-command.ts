@@ -3,6 +3,8 @@ import { pathToFileURL } from "node:url";
 import { SqliteStore } from "../storage/sqlite-store.js";
 import { approveClaudeHistory, discoverClaudeHistory } from "./claude-discovery.js";
 import { ClaudeHistoryImporter } from "./claude-importer.js";
+import { approveCordisHistory, discoverCordisHistory } from "./cordis-discovery.js";
+import { CordisHistoryImporter } from "./cordis-importer.js";
 import { approveHermesHistory, discoverHermesHistory } from "./hermes-discovery.js";
 import { HermesHistoryImporter } from "./hermes-importer.js";
 import { readFlags, type ImportSource } from "./history-discover-command.js";
@@ -40,7 +42,7 @@ export interface HistoryImportCommandResult {
   checkpointCount: number;
 }
 
-export type ConfiguredHistorySource = "codex" | "claude-code" | "openclaw" | "hermes";
+export type ConfiguredHistorySource = "codex" | "claude-code" | "openclaw" | "hermes" | "cordis";
 
 export interface ConfiguredHistoryImportRequest {
   sourceAlias: string;
@@ -161,7 +163,9 @@ export async function runHistoryImportCommand(
     ? await discoverClaudeHistory(sourcePath, requestedAt)
     : options.source === "openclaw"
       ? await discoverOpenClawHistory(sourcePath, requestedAt)
-      : await discoverHermesHistory(sourcePath, requestedAt);
+      : options.source === "hermes"
+        ? await discoverHermesHistory(sourcePath, requestedAt)
+        : await discoverCordisHistory(sourcePath, requestedAt);
   if (candidate.id !== options.approvedCandidateId) {
     throw new Error(`${options.source} history import requires approval for candidate ${candidate.id}`);
   }
@@ -191,10 +195,15 @@ export async function runHistoryImportCommand(
         .importApprovedSource(
           approveOpenClawHistory(candidate, options.personId, profileId, requestedAt, scopeId)
         );
-    } else {
+    } else if (candidate.application === "hermes") {
       imported = await new HermesHistoryImporter(store, { clock: () => requestedAt })
         .importApprovedSource(
           approveHermesHistory(candidate, options.personId, profileId, requestedAt, scopeId)
+        );
+    } else {
+      imported = await new CordisHistoryImporter(store, { clock: () => requestedAt })
+        .importApprovedSource(
+          approveCordisHistory(candidate, options.personId, profileId, requestedAt, scopeId)
         );
     }
     const [events, checkpoints] = await Promise.all([
@@ -216,8 +225,8 @@ export async function runHistoryImportCommand(
 function parseArgs(args: string[]): HistoryImportCommandOptions {
   const values = readFlags(args);
   const source = values.get("--source");
-  if (source !== "claude-code" && source !== "openclaw" && source !== "hermes") {
-    throw new Error("Missing or unsupported --source. Use claude-code, openclaw, or hermes.");
+  if (source !== "claude-code" && source !== "openclaw" && source !== "hermes" && source !== "cordis") {
+    throw new Error("Missing or unsupported --source. Use claude-code, openclaw, hermes, or cordis.");
   }
   const sourcePath = values.get("--root");
   const databasePath = values.get("--db");

@@ -35,12 +35,14 @@ import type {
   CommitSourceDeletionInput,
   CommitSourceRevocationInput,
   CommitSupersededSummaryPruneInput,
+  CommitEventDeletionInput,
   CommitUnhygienicAnchorPruneInput,
   MutationCommitReceipt,
   SourceDeletionEffects,
   SupersededSummaryPruneReceipt,
   UnhygienicAnchorPruneReceipt
 } from "./mcp-mutation-contracts.js";
+import type { ModelOutputCacheEntry, ModelUsageEntry } from "../openrouter/types.js";
 import type {
   AcceptedSyncOperation,
   CommitLocalSyncOperationInput,
@@ -337,4 +339,14 @@ export interface MemoryStore {
    * commitSourceDeletion.
    */
   deleteSummaryVectors(summaryIds: string[]): Promise<void>;
+  recordModelUsage(entry: ModelUsageEntry): Promise<void>;
+  modelSpendOnDay(day: string): Promise<number>;
+  getModelOutputCache(cacheKey: string): Promise<string | null>;
+  putModelOutputCache(entry: ModelOutputCacheEntry): Promise<void>;
+  isCanonicalEventTombstoned(canonicalEventId: string): Promise<boolean>;
+  /**
+   * Deletes one canonical event and the derivations that cite it, and records a tombstone so a
+   * later rescan of an append-only source cannot resurrect the text.
+   */
+  commitEventDeletion(input: CommitEventDeletionInput): Promise<MutationCommitReceipt>;
 }

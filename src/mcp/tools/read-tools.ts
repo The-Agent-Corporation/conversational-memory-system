@@ -149,6 +149,23 @@ export const SourceStatusOutputSchema = z.object({
     online: z.boolean(),
     state: z.enum(["running", "stopping", "stale", "stopped"])
   }).strict(),
+  sources: z.array(z.object({
+    grantId: IdentifierSchema,
+    candidateId: IdentifierSchema,
+    application: z.string().min(1).max(128),
+    format: z.string().min(1).max(128),
+    rowHighWaterMark: z.string().min(1).nullable(),
+    lastSuccessAt: IsoDateTimeSchema.nullable(),
+    lastError: z.string().max(500).nullable()
+  }).strict()).max(1_000),
+  pipeline: z.object({
+    pendingContractionJobs: z.number().int().nonnegative(),
+    failedContractionJobs: z.number().int().nonnegative(),
+    missingVectors: z.number().int().nonnegative(),
+    pendingProposals: z.number().int().nonnegative(),
+    traceDiscoveryEnabled: z.boolean(),
+    semanticPausedBySpendCap: z.boolean()
+  }).strict(),
   disclosure: z.string().min(1).max(2_000)
 }).strict();
 

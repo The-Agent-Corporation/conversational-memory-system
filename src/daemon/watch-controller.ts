@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import type { SourceGrant } from "../domain/source-lifecycle.js";
 import type { DaemonTimer, WatchHandle, WatcherFactory } from "./runtime-adapters.js";
 
@@ -13,7 +14,7 @@ export class WatchController {
   private readonly handles = new Map<string, {
     grantId: string;
     sourceLocator: string;
-    handle: WatchHandle;
+    handles: WatchHandle[];
   }>();
   private readonly pending = new Map<string, unknown>();
   private readonly unavailable = new Set<string>();
@@ -25,13 +26,17 @@ export class WatchController {
     const current = this.handles.get(key);
     if (current?.grantId === grant.id && current.sourceLocator === grant.sourceLocator) return true;
     this.closeHandle(key);
+    const opened: WatchHandle[] = [];
     try {
-      const handle = this.options.watcherFactory.watch(grant.sourceLocator, () => this.onEvent(grant));
-      this.handles.set(key, { grantId: grant.id, sourceLocator: grant.sourceLocator, handle });
+      for (const path of watchPaths(grant.sourceLocator)) {
+        opened.push(this.options.watcherFactory.watch(path, () => this.onEvent(grant)));
+      }
+      this.handles.set(key, { grantId: grant.id, sourceLocator: grant.sourceLocator, handles: opened });
       this.unavailable.delete(key);
       return true;
     } catch {
       // Watch delivery is advisory. The scheduler's durable periodic rescan remains authoritative.
+      for (const handle of opened) handle.close();
       this.unavailable.add(key);
       return false;
     }
@@ -54,7 +59,9 @@ export class WatchController {
   close(): void {
     for (const timer of this.pending.values()) this.options.timers.clearTimeout(timer);
     this.pending.clear();
-    for (const entry of this.handles.values()) entry.handle.close();
+    for (const entry of this.handles.values()) {
+      for (const handle of entry.handles) handle.close();
+    }
     this.handles.clear();
     this.unavailable.clear();
   }
@@ -70,7 +77,7 @@ export class WatchController {
   }
 
   private closeHandle(key: string): void {
-    this.handles.get(key)?.handle.close();
+    for (const handle of this.handles.get(key)?.handles ?? []) handle.close();
     this.handles.delete(key);
   }
 
@@ -85,4 +92,10 @@ export class WatchController {
   private key(personId: string, candidateId: string): string {
     return `${personId}\u0000${candidateId}`;
   }
+}
+
+/** SQLite journals append to `-wal`. Directory sources stay a single watch. */
+export function watchPaths(sourceLocator: string): string[] {
+  if (!/\.(db|sqlite)$/i.test(sourceLocator)) return [sourceLocator];
+  return [...new Set([sourceLocator, `${sourceLocator}-wal`, dirname(sourceLocator)])];
 }

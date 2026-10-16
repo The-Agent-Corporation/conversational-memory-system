@@ -40,6 +40,17 @@ export interface AnchorDetectionOptions {
  * When no eventKind is supplied the classification inputs are unchanged, so callers that never had
  * the information behave exactly as before.
  */
+export function modelAnchorsForTurn(
+  turn: Turn,
+  anchors: ReadonlyArray<{ anchorType: Anchor["anchorType"]; content: string }>
+): Anchor[] {
+  return anchors.map((anchor) => ({
+    ...buildAnchor(turn, anchor.anchorType),
+    id: `anchor_${turn.id}_model_${anchor.anchorType}`,
+    content: anchor.content
+  }));
+}
+
 export function anchorsForTurn(turn: Turn, options: AnchorDetectionOptions = {}): Anchor[] {
   if (!drivesTopicLabel({ content: turn.content, eventKind: options.eventKind, role: turn.role })) {
     return [];

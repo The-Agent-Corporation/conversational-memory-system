@@ -7,9 +7,8 @@ import type { HistoricalBootstrapCheckpoint } from "./types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import type { LaunchAgentStatus } from "../daemon/macos/launch-agent.js";
 import { probeEmbedderHealth, type EmbedderHealth } from "../embeddings/embedder-resolver.js";
+import { readSemanticConfig } from "../openrouter/config.js";
 import { composeModelIdentity } from "../embeddings/embedder-identity.js";
-import { isRetrievableState } from "../retrieval/retrievable-state.js";
-
 export interface DaemonStatusSnapshot {
   state: "running" | "stopping" | "stale" | "stopped";
   ownerToken: string | null;
@@ -106,6 +105,23 @@ export interface MemoryStatusCommandResult {
   embedder: EmbedderHealth;
   /** Live, ground-truth embedding backfill completeness snapshot (REQ-042 SC4). */
   embeddingBackfill: EmbeddingBackfillSnapshot;
+  sources: Array<{
+    grantId: string;
+    candidateId: string;
+    application: string;
+    format: string;
+    rowHighWaterMark: string | null;
+    lastSuccessAt: string | null;
+    lastError: string | null;
+  }>;
+  pipeline: {
+    pendingContractionJobs: number;
+    failedContractionJobs: number;
+    missingVectors: number;
+    pendingProposals: number;
+    traceDiscoveryEnabled: boolean;
+    semanticPausedBySpendCap: boolean;
+  };
 }
 
 export async function readDaemonStatusSnapshot(
@@ -176,23 +192,26 @@ export async function runMemoryStatusCommand(
   const store = new SqliteStore(parsed.databasePath);
   try {
     const startedAt = clock.now();
-    const [sources, events, imports, grants, audits, quarantine, summaries, anchors, boxes, proposals, syncOutbox, checkpoint, daemon, embedder] =
+    const [sources, imports, grants, audits, quarantine, boxes, proposals, syncOutbox, checkpoint, daemon, embedder, jobs, sourceStates] =
       await Promise.all([
         store.listSources(parsed.personId),
-        store.listCanonicalEvents(parsed.personId),
         store.listImportCheckpoints(parsed.personId),
         store.listSourceGrants(parsed.personId),
         store.listSourceLifecycleAuditEvents(parsed.personId),
         store.listQuarantineRecords(parsed.personId),
-        store.listSummaries(),
-        store.listAnchors(),
         store.listBoxes(),
         store.listProposals({ state: "proposed" }),
         store.listSyncOutboxOperations(parsed.personId),
         store.getBootstrapCheckpoint(historicalBootstrapCheckpointId(parsed.personId)),
         readDaemonStatusSnapshot(store, new Date().toISOString(), null, parsed.personId),
-        probeEmbedderHealth(parsed.databasePath)
+        probeEmbedderHealth(parsed.databasePath),
+        store.listContractionJobs(parsed.personId),
+        store.listDaemonSourceStates(parsed.personId)
       ]);
+    const canonicalEventCount = store.countCanonicalEvents(parsed.personId);
+    const historicalSummaryCount = store.countHistoricalSummaries(parsed.personId);
+    const anchorCount = store.countAnchorsForPerson(parsed.personId);
+    const totalSummaries = store.countRetrievableSummaries();
     const activeProvider = embedder.enabled ? embedder.provider : "deterministic";
     // GAP-12-A: the health probe reports the sidecar's bare repo id and its
     // revision separately, but vectors are keyed by the composed identity. Query
@@ -207,7 +226,6 @@ export async function runMemoryStatusCommand(
     // the corpus size and deflates every mid-backfill fraction -- on the live corpus by 89,059
     // superseded rows that will never be embedded. Filtered from the array already in hand from
     // the Promise.all above rather than issuing a second query.
-    const totalSummaries = summaries.filter((summary) => isRetrievableState(summary.state)).length;
     const missingVectors = missingVectorSummaryIds.length;
     const completedFraction = totalSummaries === 0 ? 1 : (totalSummaries - missingVectors) / totalSummaries;
 
@@ -223,25 +241,22 @@ export async function runMemoryStatusCommand(
       null
     );
     const personProposals = proposals.filter((proposal) => proposal.personId === parsed.personId);
+    const semantic = readSemanticConfig(parsed.databasePath);
+    const spentToday = await store.modelSpendOnDay(new Date().toISOString().slice(0, 10));
 
     return {
       ok: true,
       personId: parsed.personId,
       sourceCount: sources.length,
-      canonicalEventCount: events.length,
+      canonicalEventCount,
       importCheckpointCount: imports.length,
       approvedSourceGrantCount: grants.filter((grant) => grant.state === "approved").length,
       revokedSourceGrantCount: grants.filter((grant) => grant.state === "revoked").length,
       sourceLifecycleAuditEventCount: audits.length,
       pendingQuarantineRecordCount: quarantine.filter((record) => record.state === "pending").length,
       replayRequestedQuarantineRecordCount: quarantine.filter((record) => record.state === "replay_requested").length,
-      historicalSummaryCount: summaries.filter(
-        (summary) =>
-          summary.personId === parsed.personId &&
-          summary.origin === "historical_bootstrap" &&
-          summary.state !== "superseded"
-      ).length,
-      anchorCount: anchors.filter((anchor) => anchor.personId === parsed.personId).length,
+      historicalSummaryCount,
+      anchorCount,
       proposedBoxCount: boxes.filter(
         (box) => box.personId === parsed.personId && box.state === "proposed"
       ).length,
@@ -267,6 +282,27 @@ export async function runMemoryStatusCommand(
         totalSummaries,
         missingVectors,
         completedFraction
+      },
+      sources: grants.map((grant) => {
+        const checkpoint = imports.find((item) => item.candidateId === grant.candidateId);
+        const state = sourceStates.find((item) => item.candidateId === grant.candidateId);
+        return {
+          grantId: grant.id,
+          candidateId: grant.candidateId,
+          application: grant.application,
+          format: grant.format,
+          rowHighWaterMark: checkpoint?.rowHighWaterMark ?? null,
+          lastSuccessAt: state?.lastSuccessAt ?? null,
+          lastError: state?.errorCategory ?? null
+        };
+      }),
+      pipeline: {
+        pendingContractionJobs: jobs.filter((job) => job.state === "pending" || job.immediateDirty).length,
+        failedContractionJobs: jobs.filter((job) => job.state === "failed").length,
+        missingVectors,
+        pendingProposals: personProposals.length,
+        traceDiscoveryEnabled: semantic.traceDiscoveryEnabled,
+        semanticPausedBySpendCap: semantic.enabled && spentToday >= semantic.dailySpendCapUsd
       }
     };
   } finally {

@@ -28,7 +28,7 @@
  * 11-GAP-11-H.md, and ADR 0048's GAP-11-H addendum.
  */
 
-export const HYGIENE_RULE_VERSION = "hygiene-rules/v4";
+export const HYGIENE_RULE_VERSION = "hygiene-rules/v5";
 
 export type DerivationClass = "conversational" | "tool_activity" | "synthetic_injected";
 
@@ -37,6 +37,12 @@ export interface ClassifiableEvent {
   content: string;
   eventKind?: string | null;
   role?: string | null;
+  /** Journal rows the agent generated itself (cron, loop, heartbeat, peer) carry this. */
+  origin?: string | null;
+  metadata?: {
+    origin?: unknown;
+    sourceMetadata?: { origin?: unknown } | null;
+  } | null;
 }
 
 export interface ClassificationResult {
@@ -195,6 +201,15 @@ export const collapseText = (names: string[]): string => {
   return `[Activity] ran ${names.length} tool calls: ${parts.join(", ")}`;
 };
 
+function journalOrigin(event: ClassifiableEvent): string | null {
+  if (typeof event.origin === "string" && event.origin.trim()) return event.origin.trim();
+  const direct = event.metadata?.origin;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const nested = event.metadata?.sourceMetadata?.origin;
+  if (typeof nested === "string" && nested.trim()) return nested.trim();
+  return null;
+}
+
 export const classifyEvent = (event: ClassifiableEvent): ClassificationResult => {
   const content = event.content ?? "";
   const eventKind = event.eventKind ?? null;
@@ -207,6 +222,10 @@ export const classifyEvent = (event: ClassifiableEvent): ClassificationResult =>
 
   if (isToolActivity) {
     return { derivationClass: "tool_activity", ruleId: null, ruleVersion: HYGIENE_RULE_VERSION };
+  }
+
+  if (journalOrigin(event)) {
+    return { derivationClass: "synthetic_injected", ruleId: "journal-origin", ruleVersion: HYGIENE_RULE_VERSION };
   }
 
   const trimmed = content.trimStart();

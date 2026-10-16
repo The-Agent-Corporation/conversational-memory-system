@@ -546,7 +546,7 @@ describe("MCP mutation application contract", () => {
       expect(catalog.tools.map((tool) => tool.name)).toEqual(MEMORY_MUTATION_TOOL_NAMES);
       const destructive = new Set([
         "proposal_approve_execute", "proposal_reject_execute",
-        "source_revoke_execute", "source_delete_execute"
+        "source_revoke_execute", "source_delete_execute", "event_delete_execute"
       ]);
       for (const tool of catalog.tools) {
         expect(tool.annotations).toEqual({
@@ -610,7 +610,7 @@ const mutationProtocolHarness = async () => {
     personId: "person-alpha", sourcePath: "/synthetic/root"
   });
   const receipt = (
-    operation: "history_import" | "proposal_decision" | "source_revocation" | "source_deletion",
+    operation: "history_import" | "proposal_decision" | "source_revocation" | "source_deletion" | "event_deletion",
     targetId: string,
     effectCounts: Record<string, number>
   ) => ({ operation, status: "COMMITTED" as const, personId: "person-alpha", targetId, effectCounts, committedAt: LATER });
@@ -624,7 +624,9 @@ const mutationProtocolHarness = async () => {
     async previewSourceRevocation(input) { record("previewSourceRevocation", input); return preview({ grantIds: ["g"], auditEventIds: ["a"] }); },
     async executeSourceRevocation(input) { record("executeSourceRevocation", input); return receipt("source_revocation", input.candidateId, { grants: 1, audits: 1 }); },
     async previewSourceDeletion(input) { record("previewSourceDeletion", input); return preview({ sourceIds: ["s"], canonicalEventIds: ["e"], turnIds: [], anchorIds: [], injectionIds: [], quarantineIds: [], bootstrapCheckpointIds: [], supersededSummaryIds: [], supersededBoxIds: [], supersededProposalIds: [], supersededTraceIds: [], auditEventIds: ["a1", "a2"] }); },
-    async executeSourceDeletion(input) { record("executeSourceDeletion", input); return receipt("source_deletion", input.candidateId, { sources: 1, events: 1, anchors: 0, summaries: 0, boxes: 0, proposals: 0, traces: 0, audits: 2 }); }
+    async executeSourceDeletion(input) { record("executeSourceDeletion", input); return receipt("source_deletion", input.candidateId, { sources: 1, events: 1, anchors: 0, summaries: 0, boxes: 0, proposals: 0, traces: 0, audits: 2 }); },
+    async previewEventDeletion(input) { record("previewEventDeletion", input); return preview({ events: ["e"], turns: [], anchors: [], summaries: [], injections: [], audits: ["a"] }); },
+    async executeEventDeletion(input) { record("executeEventDeletion", input); return receipt("event_deletion", input.canonicalEventId ?? "event", { events: 1, turns: 1, anchors: 0, summaries: 0, injections: 0, audits: 1 }); }
   };
   const server = new McpServer({ name: "synthetic-memory-mutations", version: "1.0.0" });
   registerMemoryMutationTools(server, application);

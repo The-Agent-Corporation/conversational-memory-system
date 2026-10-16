@@ -10,6 +10,7 @@ import type {
   CommitHistoryImportInput,
   CommitProposalDecisionInput,
   CommitSourceDeletionInput,
+  CommitEventDeletionInput,
   CommitSourceRevocationInput,
   MutationCommitReceipt
 } from "../storage/mcp-mutation-contracts.js";
@@ -18,7 +19,7 @@ import {
   planConfiguredHistoryImport,
   type ConfiguredHistoryImportRequest
 } from "../imports/history-import-command.js";
-import { mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
+import { CommitEventDeletionInputSchema, mutationEffectsFingerprint } from "../storage/mcp-mutation-contracts.js";
 import {
   DEFAULT_LOCAL_SYNC_DEVICE_ID,
   emitLocalSyncOperation
@@ -55,7 +56,8 @@ type StoredPlan =
   | { kind: "proposal_approve" | "proposal_reject"; input: CommitProposalDecisionInput }
   | { kind: "source_revoke"; input: CommitSourceRevocationInput }
   | { kind: "source_delete"; input: CommitSourceDeletionInput }
-  | { kind: "history_ingest"; input: CommitHistoryImportInput; request: ConfiguredHistoryImportRequest };
+  | { kind: "history_ingest"; input: CommitHistoryImportInput; request: ConfiguredHistoryImportRequest }
+  | { kind: "event_delete"; input: CommitEventDeletionInput & { effectsFingerprint: string } };
 
 interface ProposalMutationRequest extends Omit<ProposalDecisionPlanRequest, "decision"> {}
 interface SourceRevocationRequest { candidateId: string; actor: string; revokedAt: string }
@@ -175,6 +177,58 @@ export class MemoryMutationApplication {
     return this.issue("source_delete", input, [request.candidateId], this.sourceDeletionParameters(request), input.effects);
   }
 
+  async previewEventDeletion(request: {
+    canonicalEventId?: string;
+    nativeEventId?: string;
+    sourceId?: string;
+    actor: string;
+    reason: string;
+    deletedAt: string;
+  }) {
+    let input: CommitEventDeletionInput;
+    try {
+      input = CommitEventDeletionInputSchema.parse({
+        personId: this.options.authority.personId,
+        ...(request.canonicalEventId ? { canonicalEventId: request.canonicalEventId } : {}),
+        ...(request.nativeEventId ? { nativeEventId: request.nativeEventId } : {}),
+        ...(request.sourceId ? { sourceId: request.sourceId } : {}),
+        actor: request.actor,
+        reason: request.reason,
+        deletedAt: request.deletedAt
+      });
+    } catch {
+      throw new MutationApplicationError("UNAUTHORIZED_OR_NOT_FOUND");
+    }
+    const target = input.canonicalEventId ?? `${input.sourceId}:${input.nativeEventId}`;
+    const effects = {
+      events: [target],
+      turns: [target],
+      anchors: [target],
+      summaries: [target],
+      injections: [target],
+      audits: [target]
+    };
+    const effectsFingerprint = mutationEffectsFingerprint(effects);
+    return this.issue("event_delete", { ...input, effectsFingerprint }, [target], this.eventDeletionParameters(request), effects);
+  }
+
+  async executeEventDeletion(request: {
+    canonicalEventId?: string;
+    nativeEventId?: string;
+    sourceId?: string;
+    actor: string;
+    reason: string;
+    deletedAt: string;
+    token: string;
+  }): Promise<MutationCommitReceipt> {
+    const plan = this.takePlan(request.token, "event_delete");
+    const target = request.canonicalEventId ?? `${request.sourceId}:${request.nativeEventId}`;
+    this.consume(request.token, "event_delete", [target], this.eventDeletionParameters(request), plan?.input.effectsFingerprint ?? "");
+    if (!plan || plan.kind !== "event_delete") throw new ConfirmationError("CONFIRMATION_MISMATCH");
+    const { effectsFingerprint: _fingerprint, ...input } = plan.input;
+    return this.options.store.commitEventDeletion(input);
+  }
+
   async executeSourceDeletion(request: SourceDeletionRequest & { token: string }): Promise<MutationCommitReceipt> {
     const plan = this.takePlan(request.token, "source_delete");
     this.consume(request.token, "source_delete", [request.candidateId], this.sourceDeletionParameters(request), plan?.input.effectsFingerprint ?? "");
@@ -248,6 +302,24 @@ export class MemoryMutationApplication {
 
   private sourceRevocationParameters(request: SourceRevocationRequest): Record<string, unknown> {
     return { actor: request.actor, revokedAt: request.revokedAt };
+  }
+
+  private eventDeletionParameters(request: {
+    canonicalEventId?: string;
+    nativeEventId?: string;
+    sourceId?: string;
+    actor: string;
+    reason: string;
+    deletedAt: string;
+  }): Record<string, unknown> {
+    return {
+      canonicalEventId: request.canonicalEventId ?? null,
+      nativeEventId: request.nativeEventId ?? null,
+      sourceId: request.sourceId ?? null,
+      actor: request.actor,
+      reason: request.reason,
+      deletedAt: request.deletedAt
+    };
   }
 
   private sourceDeletionParameters(request: SourceDeletionRequest): Record<string, unknown> {

@@ -1,5 +1,7 @@
 import { DeterministicEmbedder, type Embedder } from "./embedder.js";
-import { readEmbeddingsConfig } from "./embeddings-config.js";
+import { readEmbeddingsConfig, type EmbeddingsConfig } from "./embeddings-config.js";
+import { OpenRouterEmbedder } from "./openrouter-embedder.js";
+import { openRouterApiKeyRequired, resolveBaseUrl } from "../openrouter/config.js";
 import { TransformerEmbedder } from "./transformer-embedder.js";
 
 /**
@@ -29,6 +31,10 @@ export async function resolveEmbedder(databasePath: string): Promise<Embedder> {
 
   if (!config.enabled) {
     return new DeterministicEmbedder();
+  }
+
+  if (config.provider === "openrouter") {
+    return openRouterEmbedder(config);
   }
 
   const embedder = new TransformerEmbedder({
@@ -72,6 +78,18 @@ export async function probeEmbedderHealth(databasePath: string): Promise<Embedde
     };
   }
 
+  if (config.provider === "openrouter") {
+    const reason = openRouterHealthReason(config);
+    return {
+      enabled: true,
+      provider: config.provider,
+      model: config.model,
+      revision: config.dimensions ? String(config.dimensions) : config.revision,
+      healthy: reason === null,
+      reason
+    };
+  }
+
   try {
     const embedder = new TransformerEmbedder({
       localModelPath: config.modelPath,
@@ -96,4 +114,24 @@ export async function probeEmbedderHealth(databasePath: string): Promise<Embedde
       reason: error instanceof Error ? error.message : String(error)
     };
   }
+}
+
+function openRouterEmbedder(config: EmbeddingsConfig): OpenRouterEmbedder {
+  const reason = openRouterHealthReason(config);
+  if (reason) throw new Error(reason);
+  return new OpenRouterEmbedder({
+    model: config.model,
+    ...(config.dimensions ? { dimensions: config.dimensions } : {}),
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseUrl: resolveBaseUrl(process.env, "")
+  });
+}
+
+function openRouterHealthReason(config: EmbeddingsConfig): string | null {
+  if (!config.model.trim()) return "OpenRouter embeddings require a model id.";
+  const baseUrl = resolveBaseUrl(process.env, "");
+  if (openRouterApiKeyRequired(baseUrl) && !process.env.OPENROUTER_API_KEY?.trim()) {
+    return "OpenRouter API key is required for the public OpenRouter API.";
+  }
+  return null;
 }

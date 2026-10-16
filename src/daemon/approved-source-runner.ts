@@ -6,6 +6,7 @@ import type { MemoryStore } from "../storage/memory-store.js";
 import { CodexHistoryImporter } from "../imports/codex-importer.js";
 import { ClaudeHistoryImporter } from "../imports/claude-importer.js";
 import { OpenClawHistoryImporter } from "../imports/openclaw-importer.js";
+import { CordisHistoryImporter } from "../imports/cordis-importer.js";
 import { HermesHistoryImporter } from "../imports/hermes-importer.js";
 
 interface BatchImporter {
@@ -17,6 +18,7 @@ export interface ApprovedSourceRunnerImporters {
   claudeCode: BatchImporter;
   openClaw: BatchImporter;
   hermes: BatchImporter;
+  cordis: BatchImporter;
 }
 
 export interface ApprovedSourceRunnerOptions {
@@ -49,7 +51,8 @@ export class ApprovedSourceRunner {
       codex: new CodexHistoryImporter(store, importerOptions),
       claudeCode: new ClaudeHistoryImporter(store, importerOptions),
       openClaw: new OpenClawHistoryImporter(store, importerOptions),
-      hermes: new HermesHistoryImporter(store, importerOptions)
+      hermes: new HermesHistoryImporter(store, importerOptions),
+      cordis: new CordisHistoryImporter(store, importerOptions)
     };
   }
 
@@ -91,6 +94,7 @@ export class ApprovedSourceRunner {
     if (pair === "claude-code/claude-project-jsonl") return this.importers.claudeCode;
     if (pair === "openclaw/openclaw-session-jsonl") return this.importers.openClaw;
     if (pair === "hermes/hermes-state-sqlite") return this.importers.hermes;
+    if (pair === "cordis/cordis-journal-sqlite") return this.importers.cordis;
     return null;
   }
 }

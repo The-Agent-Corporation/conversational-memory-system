@@ -26,7 +26,7 @@ const IdListSchema = z.array(IdSchema);
 const EffectCountsSchema = z.record(z.number().int().nonnegative());
 
 export const MutationCommitReceiptSchema = z.object({
-  operation: z.enum(["history_import", "proposal_decision", "source_revocation", "source_deletion"]),
+  operation: z.enum(["history_import", "proposal_decision", "source_revocation", "source_deletion", "event_deletion"]),
   status: z.enum(["COMMITTED", "STATE_CHANGED"]),
   personId: IdSchema,
   targetId: IdSchema,
@@ -498,6 +498,25 @@ export const UnhygienicAnchorPruneReceiptSchema = z.object({
   ruleVersion: z.string().min(1),
   committedAt: IsoDateTimeSchema
 }).strict();
+
+export const CommitEventDeletionInputSchema = z.object({
+  personId: IdSchema,
+  canonicalEventId: IdSchema.optional(),
+  nativeEventId: IdSchema.optional(),
+  sourceId: IdSchema.optional(),
+  deletedAt: IsoDateTimeSchema,
+  actor: z.string().trim().min(1).max(256),
+  reason: z.string().trim().min(1).max(2_000)
+}).strict().superRefine((value, context) => {
+  if (!value.canonicalEventId && !(value.nativeEventId && value.sourceId)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "canonicalEventId or both nativeEventId and sourceId are required"
+    });
+  }
+});
+
+export type CommitEventDeletionInput = z.infer<typeof CommitEventDeletionInputSchema>;
 
 export type CommitHistoryImportInput = z.infer<typeof CommitHistoryImportInputSchema>;
 export type CommitProposalDecisionInput = z.infer<typeof CommitProposalDecisionInputSchema>;

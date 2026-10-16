@@ -91,7 +91,7 @@ describe("OpenRouterSummarizer", () => {
     expect(draft).toEqual({
       summaryText: "Smith PIP demand timing and coverage issues.",
       model: "openrouter:anthropic/claude-3.5-sonnet",
-      promptVersion: "openrouter-summarizer-v1",
+      promptVersion: "openrouter-summarizer-v2",
       confidence: 0.82,
       detailLevel: "brief",
       tokenCount: 12

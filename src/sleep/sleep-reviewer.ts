@@ -63,6 +63,10 @@ export interface SleepReviewerOptions {
    * OUTPUT rather than the size of the corpus.
    */
   writeStore?: MemoryStore;
+  /** Omitted means traces stay on, which is what existing unit tests expect. */
+  traceDiscoveryEnabled?: boolean;
+  /** Caps the summary set passed to planners. Omitted means the full candidate set. */
+  maxReviewCandidates?: number;
 }
 
 /**
@@ -85,6 +89,8 @@ export class SleepReviewer {
   private readonly boxPlanner: BoxProposalPlanner;
   private readonly tracePlanner: TraceProposalPlanner;
   private readonly writeStore: MemoryStore;
+  private readonly traceDiscoveryEnabled: boolean;
+  private readonly maxReviewCandidates: number | undefined;
 
   constructor(
     private readonly store: MemoryStore,
@@ -93,6 +99,8 @@ export class SleepReviewer {
     this.boxPlanner = options.boxPlanner ?? new DeterministicBoxProposalPlanner();
     this.tracePlanner = options.tracePlanner ?? new DeterministicTraceProposalPlanner();
     this.writeStore = options.writeStore ?? store;
+    this.traceDiscoveryEnabled = options.traceDiscoveryEnabled !== false;
+    this.maxReviewCandidates = options.maxReviewCandidates;
   }
 
   /**
@@ -115,8 +123,8 @@ export class SleepReviewer {
       // The state predicate is re-applied here, not trusted from the query: `listSummaries` without
       // a filter is still a legal call shape, and a future caller passing none must not silently
       // start feeding superseded summaries to the planners.
-      summaries: summaries.filter((summary) =>
-        summary.state !== "superseded" && (!personId || summary.personId === personId)),
+      summaries: boundCandidates(summaries.filter((summary) =>
+        summary.state !== "superseded" && (!personId || summary.personId === personId)), this.maxReviewCandidates),
       boxes: boxes.filter((box) => !personId || box.personId === personId),
       anchors: anchors.filter((anchor) => !personId || anchor.personId === personId),
       proposals: proposals.filter((proposal) => !personId || proposal.personId === personId),
@@ -133,7 +141,9 @@ export class SleepReviewer {
     // single review materialised the corpus twice over.
     const candidates = await this.loadCandidates(request.personId);
     const boxReview = await this.proposeBoxes(request, candidates);
-    const traceReview = await this.proposeTraces(request, candidates);
+    const traceReview = this.traceDiscoveryEnabled
+      ? await this.proposeTraces(request, candidates)
+      : { proposals: [] as MemoryProposal[] };
     return {
       boxes: boxReview.proposedBoxes,
       proposals: [...boxReview.proposals, ...traceReview.proposals],
@@ -380,6 +390,41 @@ function refreshBoxState(
   }
 
   return null;
+}
+
+function boundCandidates(summaries: Summary[], max: number | undefined): Summary[] {
+  if (max === undefined || summaries.length <= max) return summaries;
+  const ordered = [...summaries].sort((left, right) => left.id.localeCompare(right.id));
+  const selected: Summary[] = [];
+  for (const summary of ordered) {
+    if (selected.length >= max) break;
+    const vector = summary.embedding?.vector;
+    const neighbor = vector && selected.some((kept) => {
+      const other = kept.embedding?.vector;
+      return other && other.length === vector.length && cosine(vector, other) >= 0.92;
+    });
+    if (!neighbor) selected.push(summary);
+  }
+  if (selected.length < max) {
+    for (const summary of ordered) {
+      if (selected.length >= max) break;
+      if (!selected.includes(summary)) selected.push(summary);
+    }
+  }
+  return selected;
+}
+
+function cosine(left: number[], right: number[]): number {
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    dot += left[index]! * right[index]!;
+    leftNorm += left[index]! * left[index]!;
+    rightNorm += right[index]! * right[index]!;
+  }
+  if (leftNorm === 0 || rightNorm === 0) return 0;
+  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
 }
 
 function isBoxRefreshEligible(box: Box): boolean {

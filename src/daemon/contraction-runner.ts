@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createEventLoopYielder } from "../imports/cooperative-yield.js";
-import { anchorsForTurn } from "../anchors/anchor-detector.js";
+import { anchorsForTurn, modelAnchorsForTurn } from "../anchors/anchor-detector.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
 import { NON_SUPERSEDED_STATES, type Anchor, type Summary, type Turn } from "../domain/types.js";
 import type { Embedder } from "../embeddings/embedder.js";
@@ -16,6 +16,7 @@ import {
   toolNameOf,
   type ClassifiableEvent
 } from "../topic/derivation-hygiene.js";
+import { SemanticTopicMonitor } from "../topic/semantic-topic-monitor.js";
 import { TopicMonitor, type CompletedTopicSpan, type RollingTopicState } from "../topic/topic-monitor.js";
 import {
   WriteAuthoritySchema,
@@ -72,6 +73,19 @@ export interface ContractionRunnerOptions {
    * must be resolved once per PROCESS by the caller, never once per slice (T-12-17).
    */
   summaryEmbedder?: Embedder;
+  /**
+   * `topic-label` hashes the visible label into the summary id (historical default).
+   * `span-boundary` hashes person, first event, and boundary version so a later title
+   * does not mint a new id.
+   */
+  summaryIdentity?: "topic-label" | "span-boundary";
+  /** `every-slice` summarizes every window. `on-completion` calls the model only for closed spans. */
+  summarizePolicy?: "every-slice" | "on-completion";
+  boundaryVersion?: string;
+  topicEmbedder?: Embedder;
+  topicSimilarityThreshold?: number;
+  /** Cheap summary used while a semantic span is still open. */
+  provisionalSummarizer?: Summarizer;
 }
 
 /** Per-slice outcome of the post-commit embed stage. `attempted` counts committed summaries. */
@@ -221,7 +235,9 @@ export class ContractionRunner {
       : await this.affectedStartIndex(personId, spine, job.earliestAffected, eventIndexById);
     await maybeYield();
     const rewindOrderKey = checkpointCanResume ? null : (spine[startIndex] ?? null);
-    const monitor = new TopicMonitor();
+    const monitor = this.options.topicEmbedder
+      ? new SemanticTopicMonitor(this.options.topicEmbedder, this.options.topicSimilarityThreshold)
+      : new TopicMonitor();
     if (checkpointCanResume && previous.activeTopic) monitor.restore(previous.activeTopic);
 
     const maxEvents = limits.maxEvents ?? DEFAULT_CONTRACTION_LIMITS.maxEvents;
@@ -262,7 +278,7 @@ export class ContractionRunner {
       // (REQ-052/REQ-053): tool-activity and synthetic events can neither open a span nor change a
       // topic label. They are still turned into Turn rows and still counted in `processed` above.
       if (drivesTopicLabel(event)) {
-        const observed = monitor.observe({
+        const observed = await monitor.observe({
           id: event.id,
           host: "unknown",
           profileId: personId,
@@ -281,7 +297,8 @@ export class ContractionRunner {
             span: observed.completed,
             windowStart: observed.completed.sourceTurnRange.startSequence - 1,
             windowEnd: index,
-            derivationEnd: index
+            derivationEnd: index,
+            final: true
           });
         }
       }
@@ -322,20 +339,24 @@ export class ContractionRunner {
         span: { ...activeTopic, completedAt: activeTopic.updatedAt },
         windowStart,
         windowEnd,
-        derivationEnd
+        derivationEnd,
+        final: complete
       });
     }
 
     const summaries: Summary[] = [];
     for (const window of spanWindows) {
-      summaries.push(await this.summaryForSpan(
+      const summary = await this.summaryForSpan(
         personId,
         window.span,
         events,
         window.windowStart,
         window.windowEnd,
-        window.derivationEnd
-      ));
+        window.derivationEnd,
+        window.final
+      );
+      summaries.push(summary.summary);
+      anchors.push(...summary.modelAnchors);
       // Anchors follow derivation content exactly (REQ-053): an event produces anchors only when it
       // contributed its OWN text to the summary — i.e. only conversational events. Synthetic events
       // never produce anchors, and neither does ANY tool_activity event: after Plan 11-24 reversed
@@ -697,8 +718,9 @@ export class ContractionRunner {
     events: SliceEventWindow,
     windowStart: number,
     windowEnd: number,
-    derivationEnd: number
-  ): Promise<Summary> {
+    derivationEnd: number,
+    final: boolean
+  ): Promise<{ summary: Summary; modelAnchors: Anchor[] }> {
     // The FULL raw window — including collapsed tool events, withheld open-run events, and excluded
     // synthetic events. Provenance is never narrowed by a content (derivation) decision (Pitfall 3):
     // DerivationInvalidator, affectedStartIndex, and summaryIntersectsAtOrAfter all key off this list.
@@ -717,11 +739,22 @@ export class ContractionRunner {
     // Ephemeral hygiene view used ONLY for summarization input; never mutate rawTurns and never
     // persist these ephemeral turns to the store (Pitfall 2 — the positional invariant).
     const sourceTurns = derivationContents(derivable).map(({ index, content }) => ({ ...rawTurns[index]!, content }));
-    const draft = await this.summarizer.summarize({ span, sourceTurns });
-    return {
-      // A topic-label change deliberately changes this id; DerivationInvalidator finds the OLD
-      // summary by sourceCanonicalEventIds intersection, not by id equality (Pitfall 5).
-      id: summaryId(personId, first.id, span.topicLabel),
+    const policy = this.options.summarizePolicy ?? "every-slice";
+    const summarizer = policy === "on-completion" && !final
+      ? (this.options.provisionalSummarizer ?? new DeterministicSummarizer())
+      : this.summarizer;
+    const draft = await summarizer.summarize({ span, sourceTurns });
+    const identity = this.options.summaryIdentity === "span-boundary"
+      ? summaryIdForBoundary(personId, first.id, this.options.boundaryVersion ?? "semantic-boundary/v1")
+      : summaryId(personId, first.id, span.topicLabel);
+    const anchorTurn = sourceTurns[0] ?? rawTurns[0];
+    const modelAnchors = anchorTurn && draft.anchors?.length
+      ? modelAnchorsForTurn(anchorTurn, draft.anchors)
+      : [];
+    return { modelAnchors, summary: {
+      // A topic-label change deliberately changes this id unless summaryIdentity is span-boundary.
+      // DerivationInvalidator finds the OLD summary by sourceCanonicalEventIds intersection (Pitfall 5).
+      id: identity,
       personId,
       scopeIds: [...new Set(sourceEvents.map((event) => event.scopeId ?? "personal"))].sort(),
       origin: "historical_bootstrap",
@@ -745,7 +778,7 @@ export class ContractionRunner {
       retrievedAt: null,
       halfLifeHours: 168,
       outcomeScore: null
-    };
+    } };
   }
 }
 
@@ -755,6 +788,7 @@ interface SpanWindow {
   windowStart: number;
   windowEnd: number;
   derivationEnd: number;
+  final: boolean;
 }
 
 function buildSpineIndex(spine: readonly CanonicalOrderKey[]): ReadonlyMap<string, number> {
@@ -871,5 +905,10 @@ function turnFromEvent(event: CanonicalEvent, threadId: string, sequence: number
 
 function summaryId(personId: string, firstEventId: string, topicLabel: string): string {
   const hash = createHash("sha256").update(JSON.stringify([personId, firstEventId, topicLabel.toLowerCase()])).digest("hex");
+  return `historical_summary_${hash}`;
+}
+
+function summaryIdForBoundary(personId: string, firstEventId: string, boundaryVersion: string): string {
+  const hash = createHash("sha256").update(JSON.stringify([personId, firstEventId, boundaryVersion])).digest("hex");
   return `historical_summary_${hash}`;
 }

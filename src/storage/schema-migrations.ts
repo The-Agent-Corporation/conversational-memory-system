@@ -105,6 +105,63 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
           );
       `);
     }
+  },
+  {
+    version: 6,
+    description: "OpenRouter usage ledger and deterministic model-output cache",
+    apply: (database) => {
+      database.exec(`
+        create table if not exists openrouter_usage (
+          id text primary key,
+          day text not null,
+          stage text not null,
+          model text not null,
+          prompt_tokens integer not null,
+          completion_tokens integer not null,
+          cost_usd real,
+          created_at text not null
+        );
+        create index if not exists idx_openrouter_usage_day on openrouter_usage (day);
+
+        create table if not exists openrouter_output_cache (
+          cache_key text primary key,
+          stage text not null,
+          prompt_version text not null,
+          model text not null,
+          input_sha256 text not null,
+          output_json text not null,
+          created_at text not null
+        );
+      `);
+    }
+  },
+  {
+    version: 7,
+    description: "Single-event deletion tombstones and audit rows",
+    apply: (database) => {
+      database.exec(`
+        create table if not exists canonical_event_tombstones (
+          canonical_event_id text primary key,
+          person_id text not null,
+          source_id text not null,
+          native_event_id text not null,
+          deleted_at text not null,
+          actor text not null,
+          reason text not null
+        );
+        create index if not exists idx_event_tombstones_native
+          on canonical_event_tombstones (person_id, source_id, native_event_id);
+
+        create table if not exists event_deletion_audit (
+          id text primary key,
+          person_id text not null,
+          canonical_event_id text not null,
+          actor text not null,
+          occurred_at text not null,
+          reason text not null
+        );
+      `);
+    }
   }
 ];
 

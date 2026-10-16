@@ -1,33 +1,24 @@
 import { z } from "zod";
+import { OpenRouterClient, type FetchLike } from "../openrouter/client.js";
+import { OpenRouterRequestError } from "../openrouter/types.js";
 import type { Summarizer, SummarizerInput, SummaryDraft } from "./summarizer.js";
 
-export interface FetchResponseLike {
-  ok: boolean;
-  status: number;
-  statusText?: string;
-  text(): Promise<string>;
-}
-
-export type FetchLike = (
-  url: string,
-  init: {
-    method: "POST";
-    headers: Record<string, string>;
-    body: string;
-  }
-) => Promise<FetchResponseLike>;
+export type { FetchLike };
 
 export interface OpenRouterSummarizerOptions {
-  apiKey: string;
+  apiKey?: string;
   model: string;
   endpoint?: string;
+  baseUrl?: string;
   referer?: string;
   title?: string;
   fetch?: FetchLike;
+  dailySpendCapUsd?: number;
+  ledger?: import("../openrouter/types.js").OpenRouterLedger;
 }
 
 export type OpenRouterEnvironment = Partial<Record<
-  "OPENROUTER_API_KEY" | "OPENROUTER_MODEL" | "OPENROUTER_REFERER" | "OPENROUTER_TITLE",
+  "OPENROUTER_API_KEY" | "OPENROUTER_MODEL" | "OPENROUTER_BASE_URL" | "OPENROUTER_REFERER" | "OPENROUTER_TITLE",
   string | undefined
 >>;
 
@@ -42,47 +33,53 @@ export class OpenRouterSummarizerError extends Error {
   }
 }
 
-const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const PROMPT_VERSION = "openrouter-summarizer-v1";
+const PROMPT_VERSION = "openrouter-summarizer-v2";
 
-const ChatCompletionResponseSchema = z.object({
-  choices: z.array(z.object({
-    message: z.object({
-      content: z.string().min(1)
-    })
-  })).min(1)
-});
+export const PERSONAL_AGENT_SUMMARY_PROMPT = [
+  "You summarize a completed conversation span for a personal agent's source-linked memory.",
+  "Return JSON only with title, summaryText, confidence, detailLevel, tokenCount, and anchors.",
+  "title is a short human description of the span, not a keyword list.",
+  "summaryText states what was decided and why, facts about the person and their preferences,",
+  "commitments, deadlines, open questions, and uncertainty.",
+  "When the conversation uses a specialized domain, preserve its exact terms: project and repository names,",
+  "legal case names, coverage types, identifiers, and distinctions such as PIP versus BI.",
+  "anchors is an array of { anchorType, content, turnSequence } where anchorType is one of",
+  "deadline, decision, key_fact, strategic_insight, bookmark. Only anchor conversational turns.",
+  "Do not invent facts that are not in the turns."
+].join(" ");
 
 const SummaryContentSchema = z.object({
+  title: z.string().min(1).optional(),
   summaryText: z.string().min(1),
   confidence: z.number().min(0).max(1),
   detailLevel: z.enum(["full", "medium", "brief", "stub"]),
-  tokenCount: z.number().int().nonnegative()
+  tokenCount: z.number().int().nonnegative(),
+  anchors: z.array(z.object({
+    anchorType: z.enum(["deadline", "decision", "key_fact", "strategic_insight", "bookmark"]),
+    content: z.string().min(1),
+    turnSequence: z.number().int().nonnegative().optional()
+  })).optional()
 });
 
 export class OpenRouterSummarizer implements Summarizer {
   readonly providerModel: string;
-
-  private readonly apiKey: string;
-  private readonly endpoint: string;
-  private readonly referer?: string;
-  private readonly title?: string;
-  private readonly fetchFn: FetchLike;
+  private readonly client: OpenRouterClient;
 
   constructor(options: OpenRouterSummarizerOptions) {
-    if (!options.apiKey.trim()) {
-      throw new OpenRouterSummarizerError("OpenRouter API key is required.");
-    }
     if (!options.model.trim()) {
       throw new OpenRouterSummarizerError("OpenRouter model is required.");
     }
-
-    this.apiKey = options.apiKey;
     this.providerModel = options.model;
-    this.endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
-    this.referer = options.referer;
-    this.title = options.title;
-    this.fetchFn = options.fetch ?? globalFetch;
+    this.client = new OpenRouterClient({
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      chatEndpoint: options.endpoint,
+      referer: options.referer,
+      title: options.title,
+      fetch: options.fetch,
+      dailySpendCapUsd: options.dailySpendCapUsd,
+      ledger: options.ledger
+    });
   }
 
   static fromEnv(
@@ -92,6 +89,7 @@ export class OpenRouterSummarizer implements Summarizer {
     return new OpenRouterSummarizer({
       apiKey: env.OPENROUTER_API_KEY ?? "",
       model: env.OPENROUTER_MODEL ?? "",
+      baseUrl: env.OPENROUTER_BASE_URL,
       referer: env.OPENROUTER_REFERER,
       title: env.OPENROUTER_TITLE,
       ...overrides
@@ -99,80 +97,46 @@ export class OpenRouterSummarizer implements Summarizer {
   }
 
   async summarize(input: SummarizerInput): Promise<SummaryDraft> {
-    const response = await this.fetchFn(this.endpoint, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify({
+    let content: string;
+    try {
+      const result = await this.client.chatJson({
         model: this.providerModel,
+        stage: "summarize",
+        promptVersion: PROMPT_VERSION,
+        cacheInput: toPromptPayload(input),
         messages: [
-          {
-            role: "system",
-            content: [
-              "You summarize completed conversation topic spans for a source-linked memory system.",
-              "Return JSON only with summaryText, confidence, detailLevel, and tokenCount.",
-              "Preserve legal case names, coverage types, deadlines, decisions, and uncertainty."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: JSON.stringify(toPromptPayload(input))
-          }
-        ],
-        response_format: { type: "json_object" }
-      })
-    });
-
-    const responseText = await response.text();
-    if (!response.ok) {
-      throw new OpenRouterSummarizerError(
-        `OpenRouter request failed with status ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.`,
-        response.status,
-        responseText
-      );
+          { role: "system", content: PERSONAL_AGENT_SUMMARY_PROMPT },
+          { role: "user", content: JSON.stringify(toPromptPayload(input)) }
+        ]
+      });
+      content = result.content;
+    } catch (error) {
+      if (error instanceof OpenRouterRequestError) {
+        throw new OpenRouterSummarizerError(error.message, error.status, error.responseText);
+      }
+      throw error;
     }
 
-    const chatResponse = parseJson(responseText, "OpenRouter returned invalid chat JSON.");
-    const parsedChatResponse = ChatCompletionResponseSchema.safeParse(chatResponse);
-    if (!parsedChatResponse.success) {
-      throw new OpenRouterSummarizerError(
-        `OpenRouter chat response did not match the expected shape: ${parsedChatResponse.error.message}`,
-        response.status,
-        responseText
-      );
-    }
-
-    const content = parsedChatResponse.data.choices[0].message.content;
     const summaryContent = parseJson(content, "OpenRouter model returned invalid summary JSON.");
     const parsedSummary = SummaryContentSchema.safeParse(summaryContent);
     if (!parsedSummary.success) {
       throw new OpenRouterSummarizerError(
         `OpenRouter summary JSON did not match the expected shape: ${parsedSummary.error.message}`,
-        response.status,
+        undefined,
         content
       );
     }
 
     return {
-      ...parsedSummary.data,
+      summaryText: parsedSummary.data.summaryText,
+      confidence: parsedSummary.data.confidence,
+      detailLevel: parsedSummary.data.detailLevel,
+      tokenCount: parsedSummary.data.tokenCount,
+      ...(parsedSummary.data.title ? { title: parsedSummary.data.title } : {}),
+      ...(parsedSummary.data.anchors ? { anchors: parsedSummary.data.anchors } : {}),
       model: `openrouter:${this.providerModel}`,
       promptVersion: PROMPT_VERSION
     };
-  }
-
-  private buildHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
-      "Content-Type": "application/json"
-    };
-
-    if (this.referer) {
-      headers["HTTP-Referer"] = this.referer;
-    }
-    if (this.title) {
-      headers["X-OpenRouter-Title"] = this.title;
-    }
-
-    return headers;
   }
 }
 
@@ -203,17 +167,3 @@ function toPromptPayload(input: SummarizerInput): unknown {
     }))
   };
 }
-
-const globalFetch: FetchLike = async (url, init) => {
-  if (typeof fetch !== "function") {
-    throw new OpenRouterSummarizerError("No fetch implementation is available.");
-  }
-
-  const response = await fetch(url, init);
-  return {
-    ok: response.ok,
-    status: response.status,
-    statusText: response.statusText,
-    text: () => response.text()
-  };
-};
