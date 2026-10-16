@@ -19,7 +19,10 @@ const OptionsSchema = z
   .object({
     databasePath: z.string().min(1),
     action: z.enum(["enable", "disable", "show"]),
-    modelPath: z.string().optional()
+    modelPath: z.string().optional(),
+    provider: z.enum(["onnx-transformers", "openrouter"]).optional(),
+    model: z.string().min(1).optional(),
+    dimensions: z.number().int().positive().optional()
   })
   .strict();
 
@@ -27,6 +30,9 @@ export interface EmbeddingsCommandOptions {
   databasePath: string;
   action: "enable" | "disable" | "show";
   modelPath?: string;
+  provider?: "onnx-transformers" | "openrouter";
+  model?: string;
+  dimensions?: number;
 }
 
 export interface EmbeddingsCommandResult {
@@ -54,6 +60,20 @@ export async function runEmbeddingsCommand(
     const nextConfig: EmbeddingsConfig = { ...current, enabled: false };
     writeEmbeddingsConfig(databasePath, nextConfig);
     return { ok: true, action: "disable", config: nextConfig };
+  }
+
+  if (parsed.provider === "openrouter") {
+    if (!parsed.model) throw new Error("OpenRouter embeddings require --model.");
+    const nextConfig: EmbeddingsConfig = {
+      enabled: true,
+      provider: "openrouter",
+      model: parsed.model,
+      revision: "",
+      modelPath: "",
+      ...(parsed.dimensions ? { dimensions: parsed.dimensions } : {})
+    };
+    writeEmbeddingsConfig(databasePath, nextConfig);
+    return { ok: true, action: "enable", config: nextConfig };
   }
 
   // action === "enable"
@@ -95,10 +115,16 @@ function parseArgs(args: string[]): EmbeddingsCommandOptions {
     throw new Error("Pass --action <enable|disable|show>.");
   }
   const modelPath = values.get("--model-path");
+  const provider = values.get("--provider");
+  const model = values.get("--model");
+  const dimensionsRaw = values.get("--dimensions");
   return {
     databasePath: resolve(databasePath),
     action: action as EmbeddingsCommandOptions["action"],
-    modelPath
+    ...(modelPath ? { modelPath } : {}),
+    ...(provider === "openrouter" || provider === "onnx-transformers" ? { provider } : {}),
+    ...(model ? { model } : {}),
+    ...(dimensionsRaw ? { dimensions: Number(dimensionsRaw) } : {})
   };
 }
 

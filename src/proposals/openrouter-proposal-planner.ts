@@ -22,6 +22,8 @@ import type {
   TraceProposalPlanningRequest,
   TraceProposalPlanningResult
 } from "../traces/trace-proposal-planner.js";
+import { OpenRouterClient, type FetchLike as ClientFetch } from "../openrouter/client.js";
+import { OpenRouterRequestError } from "../openrouter/types.js";
 import { dedupeTurnRanges, hasExistingProposal, slugify } from "./proposal-utils.js";
 
 export interface FetchResponseLike {
@@ -41,16 +43,19 @@ export type FetchLike = (
 ) => Promise<FetchResponseLike>;
 
 export interface OpenRouterProposalPlannerOptions {
-  apiKey: string;
+  apiKey?: string;
   model: string;
   endpoint?: string;
+  baseUrl?: string;
   referer?: string;
   title?: string;
-  fetch?: FetchLike;
+  fetch?: FetchLike | ClientFetch;
+  dailySpendCapUsd?: number;
+  ledger?: import("../openrouter/types.js").OpenRouterLedger;
 }
 
 export type OpenRouterProposalPlannerEnvironment = Partial<Record<
-  "OPENROUTER_API_KEY" | "OPENROUTER_MODEL" | "OPENROUTER_REFERER" | "OPENROUTER_TITLE",
+  "OPENROUTER_API_KEY" | "OPENROUTER_MODEL" | "OPENROUTER_BASE_URL" | "OPENROUTER_REFERER" | "OPENROUTER_TITLE",
   string | undefined
 >>;
 
@@ -65,8 +70,15 @@ export class OpenRouterProposalPlannerError extends Error {
   }
 }
 
-const DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
-const PROMPT_VERSION = "openrouter-proposal-planner-v1";
+const PROMPT_VERSION = "openrouter-proposal-planner-v2";
+
+export const PERSONAL_AGENT_PLANNER_PROMPT = [
+  "You are a background memory organization reviewer for a personal agent's source-linked memory.",
+  "Return JSON only with optional arrays boxProposals, parentChildProposals, and traceProposals.",
+  "Never approve proposals. Never invent summary ids or box ids. Prefer no proposal over weak organization.",
+  "Group memories by what the person is actually working on: decisions, preferences, projects, commitments.",
+  "When a specialized domain is present, preserve its exact terms, including legal distinctions such as PIP versus BI and case versus sub-issue."
+].join(" ");
 
 const ModelBoxProposalSchema = z.object({
   boxId: z.string().min(1).optional(),
@@ -111,39 +123,27 @@ const PlannerOutputSchema = z.object({
   traceProposals: z.array(ModelTraceProposalSchema).optional().default([])
 });
 
-const ChatCompletionResponseSchema = z.object({
-  choices: z.array(z.object({
-    message: z.object({
-      content: z.string().min(1)
-    })
-  })).min(1)
-});
-
 type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
 
 export class OpenRouterProposalPlanner implements BoxProposalPlanner, TraceProposalPlanner {
   readonly providerModel: string;
-
-  private readonly apiKey: string;
-  private readonly endpoint: string;
-  private readonly referer?: string;
-  private readonly title?: string;
-  private readonly fetchFn: FetchLike;
+  private readonly client: OpenRouterClient;
 
   constructor(options: OpenRouterProposalPlannerOptions) {
-    if (!options.apiKey.trim()) {
-      throw new OpenRouterProposalPlannerError("OpenRouter API key is required.");
-    }
     if (!options.model.trim()) {
       throw new OpenRouterProposalPlannerError("OpenRouter model is required.");
     }
-
-    this.apiKey = options.apiKey;
     this.providerModel = options.model;
-    this.endpoint = options.endpoint ?? DEFAULT_ENDPOINT;
-    this.referer = options.referer;
-    this.title = options.title;
-    this.fetchFn = options.fetch ?? globalFetch;
+    this.client = new OpenRouterClient({
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      chatEndpoint: options.endpoint,
+      referer: options.referer,
+      title: options.title,
+      fetch: options.fetch as ClientFetch | undefined,
+      dailySpendCapUsd: options.dailySpendCapUsd,
+      ledger: options.ledger
+    });
   }
 
   static fromEnv(
@@ -153,6 +153,7 @@ export class OpenRouterProposalPlanner implements BoxProposalPlanner, TracePropo
     return new OpenRouterProposalPlanner({
       apiKey: env.OPENROUTER_API_KEY ?? "",
       model: env.OPENROUTER_MODEL ?? "",
+      baseUrl: env.OPENROUTER_BASE_URL,
       referer: env.OPENROUTER_REFERER,
       title: env.OPENROUTER_TITLE,
       ...overrides
@@ -304,77 +305,36 @@ export class OpenRouterProposalPlanner implements BoxProposalPlanner, TracePropo
     mode: "box" | "trace",
     request: BoxProposalPlanningRequest | TraceProposalPlanningRequest
   ): Promise<PlannerOutput> {
-    const response = await this.fetchFn(this.endpoint, {
-      method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify({
+    const payload = toPromptPayload(mode, request);
+    let content: string;
+    try {
+      const result = await this.client.chatJson({
         model: this.providerModel,
+        stage: mode === "box" ? "boxes" : "traces",
+        promptVersion: PROMPT_VERSION,
+        cacheInput: payload,
         messages: [
-          {
-            role: "system",
-            content: [
-              "You are a background memory organization reviewer for a source-linked conversational memory system.",
-              "Return JSON only with optional arrays boxProposals, parentChildProposals, and traceProposals.",
-              "Never approve proposals. Never invent summary ids or box ids. Prefer no proposal over weak organization.",
-              "Preserve legal distinctions such as PIP versus BI and case versus sub-issue."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: JSON.stringify(toPromptPayload(mode, request))
-          }
-        ],
-        response_format: { type: "json_object" }
-      })
-    });
-
-    const responseText = await response.text();
-    if (!response.ok) {
-      throw new OpenRouterProposalPlannerError(
-        `OpenRouter request failed with status ${response.status}${response.statusText ? ` ${response.statusText}` : ""}.`,
-        response.status,
-        responseText
-      );
+          { role: "system", content: PERSONAL_AGENT_PLANNER_PROMPT },
+          { role: "user", content: JSON.stringify(payload) }
+        ]
+      });
+      content = result.content;
+    } catch (error) {
+      if (error instanceof OpenRouterRequestError) {
+        throw new OpenRouterProposalPlannerError(error.message, error.status, error.responseText);
+      }
+      throw error;
     }
-
-    const chatResponse = parseJson(responseText, "OpenRouter returned invalid chat JSON.");
-    const parsedChatResponse = ChatCompletionResponseSchema.safeParse(chatResponse);
-    if (!parsedChatResponse.success) {
-      throw new OpenRouterProposalPlannerError(
-        `OpenRouter chat response did not match the expected shape: ${parsedChatResponse.error.message}`,
-        response.status,
-        responseText
-      );
-    }
-
-    const content = parsedChatResponse.data.choices[0].message.content;
     const plannerOutput = parseJson(content, "OpenRouter model returned invalid planner JSON.");
     const parsedPlannerOutput = PlannerOutputSchema.safeParse(plannerOutput);
     if (!parsedPlannerOutput.success) {
       throw new OpenRouterProposalPlannerError(
         `OpenRouter planner JSON did not match the expected shape: ${parsedPlannerOutput.error.message}`,
-        response.status,
+        undefined,
         content
       );
     }
-
     return parsedPlannerOutput.data;
-  }
-
-  private buildHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
-      "Content-Type": "application/json"
-    };
-
-    if (this.referer) {
-      headers["HTTP-Referer"] = this.referer;
-    }
-    if (this.title) {
-      headers["X-OpenRouter-Title"] = this.title;
-    }
-
-    return headers;
   }
 }
 
@@ -519,17 +479,3 @@ function parseJson(value: string, message: string): unknown {
     throw new OpenRouterProposalPlannerError(message, undefined, value);
   }
 }
-
-const globalFetch: FetchLike = async (url, init) => {
-  if (typeof fetch !== "function") {
-    throw new OpenRouterProposalPlannerError("No fetch implementation is available.");
-  }
-
-  const response = await fetch(url, init);
-  return {
-    ok: response.ok,
-    status: response.status,
-    statusText: response.statusText,
-    text: () => response.text()
-  };
-};

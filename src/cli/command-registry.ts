@@ -28,6 +28,7 @@ export const REGISTRY: Record<string, () => Promise<{ main(argv: string[]): Prom
   import: () => import("../imports/history-import-command.js"),
   quarantine: () => import("../imports/quarantine-command.js"),
   "source:delete": () => import("../imports/source-delete-command.js"),
+  "event:delete": () => import("../imports/event-delete-command.js"),
   "source:revoke": () => import("../imports/source-revoke-command.js"),
   mcp: () => import("../mcp/server-command.js"),
   "hermes:ingest": () => import("../integrations/hermes/ingest-command.js"),

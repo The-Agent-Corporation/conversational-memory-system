@@ -5,7 +5,10 @@ import { historicalContractionJobId } from "../bootstrap/historical-bootstrapper
 import { ContractionRunner, PROCESSOR_VERSION, type ContractionSliceResult } from "../daemon/contraction-runner.js";
 import type { CanonicalOrderKey, ContractionJob, WriteAuthority } from "../daemon/types.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
+import { readSemanticConfig } from "../openrouter/config.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
+import { OpenRouterSummarizer } from "../summarization/openrouter-summarizer.js";
+import { DeterministicSummarizer } from "../summarization/summarizer.js";
 import { HYGIENE_RULE_VERSION } from "../topic/derivation-hygiene.js";
 
 /**
@@ -142,7 +145,22 @@ export async function runRebuildDerivationsCommand(
       personId: parsed.personId,
       operation: "historical-bootstrap"
     };
-    const runner = new ContractionRunner(store, { authority });
+    const semantic = readSemanticConfig(databasePath);
+    const semanticOn = semantic.enabled && semantic.chatModel.trim().length > 0;
+    const runner = new ContractionRunner(store, {
+      authority,
+      ...(semanticOn ? {
+        summarizer: OpenRouterSummarizer.fromEnv({
+          OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+          OPENROUTER_MODEL: semantic.chatModel,
+          OPENROUTER_BASE_URL: semantic.baseUrl || process.env.OPENROUTER_BASE_URL
+        }, { dailySpendCapUsd: semantic.dailySpendCapUsd }),
+        provisionalSummarizer: new DeterministicSummarizer(),
+        summaryIdentity: "span-boundary",
+        summarizePolicy: "on-completion",
+        boundaryVersion: semantic.boundaryVersion
+      } : {})
+    });
     // Canonical events are immutable for the duration of this pass, so load them once and inject
     // them into every slice — the same fast path HistoricalBootstrapper uses to avoid an O(n^2) walk.
     const eventIndexById = new Map(events.map((event, index) => [event.id, index]));

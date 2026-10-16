@@ -80,7 +80,7 @@ describe("MCP SDK-driven STDIO lifecycle contract", () => {
     await client.connect(transport);
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toEqual(
-      [...MEMORY_READ_TOOL_NAMES, ...MEMORY_MUTATION_TOOL_NAMES]
+      [...MEMORY_READ_TOOL_NAMES, "memory_inject", ...MEMORY_MUTATION_TOOL_NAMES]
     );
     expect(protocolErrors).toEqual([]);
     expect(stderr.join(""))

@@ -74,6 +74,11 @@ export interface DaemonLoopOptions {
   pid: number;
   idlePollMs?: number;
   onceDerivationLimit?: number;
+  /**
+   * When true, an expired lease with no other live owner is re-acquired after a freeze.
+   * Defaults false so a lost lease still stops the loop. Production sets this true.
+   */
+  recoverExpiredLease?: boolean;
 }
 
 export interface DaemonRunResult {
@@ -115,6 +120,7 @@ export class DaemonLoop {
   private leaseOwned = false;
   private leaseLost = false;
   private stopping = false;
+  private externalStop = false;
   private initialized = false;
   private watchController: WatchController | null = null;
   private readonly people: string[] = [];
@@ -133,6 +139,7 @@ export class DaemonLoop {
   }
 
   async drainOne(): Promise<boolean> {
+    if (this.leaseLost && !this.externalStop) await this.tryRecoverExpiredLease();
     if (this.stopping || this.leaseLost) {
       await this.shutdown();
       return false;
@@ -223,7 +230,7 @@ export class DaemonLoop {
   async run(signal?: AbortSignal): Promise<DaemonRunResult> {
     await this.ensureStarted();
     let workItems = 0;
-    const request = () => { this.stopping = true; };
+    const request = () => { this.externalStop = true; this.stopping = true; };
     this.signalListener = request;
     this.dependencies.signals?.on("SIGINT", request);
     this.dependencies.signals?.on("SIGTERM", request);
@@ -362,6 +369,7 @@ export class DaemonLoop {
   }
 
   async requestStop(): Promise<void> {
+    this.externalStop = true;
     this.stopping = true;
     if (this.leaseOwned) {
       await this.dependencies.store.requestDaemonStop(
@@ -436,6 +444,7 @@ export class DaemonLoop {
         this.dependencies.clock.now()
       );
       if (lease) return;
+      if (await this.tryRecoverExpiredLease()) return;
     } catch {
       // A renewal error is indistinguishable from lost writer authority. Fail closed;
       // the durable scheduler will reconstruct unfinished work under a fresh owner.
@@ -452,21 +461,42 @@ export class DaemonLoop {
     const fresh = lease !== null &&
       lease.ownerToken === this.options.ownerToken &&
       Date.parse(lease.expiresAt) > Date.parse(this.dependencies.clock.now());
-    if (!fresh) this.latchLeaseLoss();
+    if (!fresh) {
+      if (await this.tryRecoverExpiredLease()) return true;
+      this.latchLeaseLoss();
+      return false;
+    }
     return fresh;
   }
 
   private latchLeaseLoss(): void {
     this.leaseLost = true;
     this.leaseOwned = false;
-    this.stopping = true;
+    if (!this.options.recoverExpiredLease || this.externalStop) this.stopping = true;
+  }
+
+  private async tryRecoverExpiredLease(): Promise<boolean> {
+    if (!this.options.recoverExpiredLease || this.externalStop) return false;
+    const lease = await this.dependencies.store.acquireDaemonLease({
+      databaseId: this.options.databaseId,
+      ownerToken: this.options.ownerToken,
+      pid: this.options.pid,
+      now: this.dependencies.clock.now()
+    });
+    if (!lease || lease.ownerToken !== this.options.ownerToken) return false;
+    this.leaseOwned = true;
+    this.leaseLost = false;
+    if (!this.externalStop) this.stopping = false;
+    this.startHeartbeat();
+    return true;
   }
 
   private async shouldStop(): Promise<boolean> {
-    if (this.stopping) return true;
+    if (this.externalStop || this.stopping) return true;
     const lease = await this.dependencies.store.getDaemonLease(this.options.databaseId);
     if (!lease || lease.ownerToken !== this.options.ownerToken ||
       Date.parse(lease.expiresAt) <= Date.parse(this.dependencies.clock.now())) {
+      if (await this.tryRecoverExpiredLease()) return false;
       this.latchLeaseLoss();
       return true;
     }

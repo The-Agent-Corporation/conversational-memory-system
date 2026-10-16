@@ -17,7 +17,8 @@ const ProfileConfigSchema = z.object({
   allowedScopeIds: z.array(IdentifierSchema).min(1),
   ingestScopeId: IdentifierSchema,
   sourceRoots: z.record(z.string().trim().min(1).max(64), AbsolutePathSchema),
-  scopeAliases: z.record(IdentifierSchema, SafeAliasSchema)
+  scopeAliases: z.record(IdentifierSchema, SafeAliasSchema),
+  allowInjection: z.boolean().optional().default(false)
 }).strict().superRefine((profile, context) => {
   if (!profile.allowedScopeIds.includes(profile.ingestScopeId)) {
     context.addIssue({
@@ -73,6 +74,7 @@ export const loadMemoryMcpProfile = async (
     sourceRoots: Object.fromEntries(
       Object.entries(profile.sourceRoots).map(([name, path]) => [name, resolve(path)])
     ),
-    scopeAliases: profile.scopeAliases
+    scopeAliases: profile.scopeAliases,
+    allowInjection: profile.allowInjection
   });
 };

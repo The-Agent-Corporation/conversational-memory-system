@@ -73,6 +73,7 @@ export const REQUIRED_MCP_TOOL_CONTRACTS: readonly ToolContract[] = [
   "proposal_list",
   "memory_explain"
 ].map((name) => ({ name, annotations: annotations(true, false) })).concat([
+  { name: "memory_inject", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
   { name: "history_ingest_preview", annotations: annotations(false, false) },
   { name: "history_ingest_execute", annotations: annotations(false, false) },
   { name: "proposal_approve_preview", annotations: annotations(false, false) },
@@ -82,7 +83,9 @@ export const REQUIRED_MCP_TOOL_CONTRACTS: readonly ToolContract[] = [
   { name: "source_revoke_preview", annotations: annotations(false, false) },
   { name: "source_revoke_execute", annotations: annotations(false, true) },
   { name: "source_delete_preview", annotations: annotations(false, false) },
-  { name: "source_delete_execute", annotations: annotations(false, true) }
+  { name: "source_delete_execute", annotations: annotations(false, true) },
+  { name: "event_delete_preview", annotations: annotations(false, false) },
+  { name: "event_delete_execute", annotations: annotations(false, true) }
 ]);
 
 describe("MCP explicit tool catalog contract", () => {
@@ -97,10 +100,10 @@ describe("MCP explicit tool catalog contract", () => {
   });
   it("reserves six reads and ten preview or execute mutations with unique task-specific names", () => {
     const names = REQUIRED_MCP_TOOL_CONTRACTS.map((tool) => tool.name);
-    expect(names).toHaveLength(17);
-    expect(new Set(names).size).toBe(17);
+    expect(names).toHaveLength(20);
+    expect(new Set(names).size).toBe(20);
     expect(names.filter((name) => !name.includes("preview") && !name.includes("execute")))
-      .toHaveLength(7);
+      .toHaveLength(8);
     expect(names).not.toContain("memory_action");
     expect(names).not.toContain("memory_crud");
   });
@@ -123,7 +126,8 @@ describe("MCP explicit tool catalog contract", () => {
       "proposal_approve_execute",
       "proposal_reject_execute",
       "source_revoke_execute",
-      "source_delete_execute"
+      "source_delete_execute",
+      "event_delete_execute"
     ]);
   });
 
@@ -226,10 +230,10 @@ describe("MCP explicit tool catalog contract", () => {
   });
   it("05-07 Task 2 exposes all ten mutation contracts with exact annotations", () => {
     expect(MEMORY_MUTATION_TOOL_NAMES).toEqual(
-      REQUIRED_MCP_TOOL_CONTRACTS.slice(7).map((tool) => tool.name)
+      REQUIRED_MCP_TOOL_CONTRACTS.slice(8).map((tool) => tool.name)
     );
     expect(MEMORY_MUTATION_TOOL_ANNOTATIONS).toEqual(
-      Object.fromEntries(REQUIRED_MCP_TOOL_CONTRACTS.slice(7).map((tool) => [tool.name, tool.annotations]))
+      Object.fromEntries(REQUIRED_MCP_TOOL_CONTRACTS.slice(8).map((tool) => [tool.name, tool.annotations]))
     );
   });
   it("05-08 Task 1 composes the complete catalog without duplicate or umbrella tools", async () => {
@@ -251,7 +255,7 @@ describe("MCP explicit tool catalog contract", () => {
     expect(catalog.tools.map((tool) => tool.annotations)).toEqual(
       REQUIRED_MCP_TOOL_CONTRACTS.map((tool) => tool.annotations)
     );
-    expect(new Set(catalog.tools.map((tool) => tool.name)).size).toBe(17);
+    expect(new Set(catalog.tools.map((tool) => tool.name)).size).toBe(20);
   });
 
   it("05-08 Task 1 keeps every capability available while daemon status is offline", async () => {

@@ -18,6 +18,11 @@ import { EmbeddingRepairRunner } from "./embedding-repair.js";
 import { MacOSLaunchAgent, type LaunchAgentStatus } from "./macos/launch-agent.js";
 import { MacOSNotificationAdapter } from "./macos/notification.js";
 import { MacOSPowerSource } from "./macos/power-source.js";
+import { OpenRouterProposalPlanner } from "../proposals/openrouter-proposal-planner.js";
+import { readSemanticConfig } from "../openrouter/config.js";
+import { SleepReviewer } from "../sleep/sleep-reviewer.js";
+import { OpenRouterSummarizer } from "../summarization/openrouter-summarizer.js";
+import { DeterministicSummarizer } from "../summarization/summarizer.js";
 import { ProposalScheduler } from "./proposal-scheduler.js";
 import type { CommandRunner, SignalAdapter } from "./runtime-adapters.js";
 import { DaemonScheduler } from "./scheduler.js";
@@ -53,7 +58,7 @@ export type DaemonCommandResult =
   | { ok: true; subcommand: "once"; result: DaemonOnceResult }
   | { ok: true; subcommand: "status"; status: DaemonStatusSnapshot | Record<string, unknown> }
   | { ok: true; subcommand: "start" | "stop" | "restart"; service: LaunchAgentStatus }
-  | { ok: false; subcommand: DaemonSubcommand; error: CommandError };
+  | { ok: false; subcommand: DaemonSubcommand; error: CommandError; status?: DaemonStatusSnapshot | Record<string, unknown> };
 
 export interface DaemonCommandDependencies {
   createLoop(databasePath: string): {
@@ -112,10 +117,12 @@ export async function runDaemonCommand(
     }
     if (parsed.subcommand === "status") {
       const service = await runtime.launchAgent.status();
+      const status = await runtime.readStatus(parsed.databasePath, parsed.personId, service);
+      if (!service.capable) return { ...capabilityError(parsed.subcommand), status };
       return {
         ok: true,
         subcommand: "status",
-        status: await runtime.readStatus(parsed.databasePath, parsed.personId, service)
+        status
       };
     }
     if (parsed.subcommand === "start") {
@@ -124,8 +131,10 @@ export async function runDaemonCommand(
       return { ok: true, subcommand: "start", service };
     }
     if (parsed.subcommand === "stop") {
-      const service = await gracefulStop(runtime, parsed.databasePath);
-      return { ok: true, subcommand: "stop", service };
+      const service = await runtime.launchAgent.status();
+      if (!service.capable) return capabilityError(parsed.subcommand);
+      const stopped = await gracefulStop(runtime, parsed.databasePath);
+      return { ok: true, subcommand: "stop", service: stopped };
     }
     await gracefulStop(runtime, parsed.databasePath, false);
     const service = await runtime.launchAgent.start();
@@ -328,6 +337,8 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
         await embedderInitialization;
       };
 
+      const semantic = readSemanticConfig(databasePath);
+      const semanticOn = semantic.enabled && semantic.chatModel.trim().length > 0;
       const loop = new DaemonLoop({
         store,
         scheduler,
@@ -354,11 +365,45 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
         },
         contractionRunner: {
           drainSlice: (personId, jobId, captured) =>
-            new ContractionRunner(store, { clock, authority: captured, summaryEmbedder }).drainSlice(personId, jobId)
+            new ContractionRunner(store, {
+              clock,
+              authority: captured,
+              summaryEmbedder,
+              ...(semanticOn ? {
+                summarizer: OpenRouterSummarizer.fromEnv({
+                  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+                  OPENROUTER_MODEL: semantic.chatModel,
+                  OPENROUTER_BASE_URL: semantic.baseUrl || process.env.OPENROUTER_BASE_URL
+                }, { dailySpendCapUsd: semantic.dailySpendCapUsd }),
+                provisionalSummarizer: new DeterministicSummarizer(),
+                summaryIdentity: "span-boundary" as const,
+                summarizePolicy: "on-completion" as const,
+                boundaryVersion: semantic.boundaryVersion,
+                topicEmbedder: summaryEmbedder,
+                topicSimilarityThreshold: semantic.topicSimilarityThreshold
+              } : {})
+            }).drainSlice(personId, jobId)
         },
         proposalScheduler: {
           runDue: (personId, captured) =>
-            new ProposalScheduler(store, { clock, authority: captured }).runDue(personId)
+            new ProposalScheduler(store, {
+              clock,
+              authority: captured,
+              traceDiscoveryEnabled: semantic.traceDiscoveryEnabled,
+              maxReviewCandidates: semantic.maxReviewCandidates,
+              ...(semanticOn ? {
+                reviewerFactory: (staging) => new SleepReviewer(store, {
+                  writeStore: staging,
+                  traceDiscoveryEnabled: false,
+                  maxReviewCandidates: semantic.maxReviewCandidates,
+                  boxPlanner: OpenRouterProposalPlanner.fromEnv({
+                    OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+                    OPENROUTER_MODEL: semantic.chatModel,
+                    OPENROUTER_BASE_URL: semantic.baseUrl || process.env.OPENROUTER_BASE_URL
+                  }, { dailySpendCapUsd: semantic.dailySpendCapUsd })
+                })
+              } : {})
+            }).runDue(personId)
         },
         // ALWAYS spread, never conditionally (F2). `syncReplication` below can be conditional
         // because it is resolved synchronously, right here; the repair runner cannot, because it
@@ -370,7 +415,7 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
           const syncReplication = resolveProductionSyncReplicationDependency(store, clock, deviceSecretStore);
           return syncReplication ? { syncReplication } : {};
         })()
-      }, { databaseId: "memory-db", ownerToken, pid: process.pid });
+      }, { databaseId: "memory-db", ownerToken, pid: process.pid, recoverExpiredLease: true });
       return {
         run: async (signal) => {
           try {
@@ -458,11 +503,14 @@ function classifyCommandError(error: unknown): CommandError {
   return { code: "invalid_request", message: "Memory daemon request could not be completed." };
 }
 
-function capabilityError(subcommand: DaemonSubcommand): DaemonCommandResult {
+function capabilityError(subcommand: DaemonSubcommand): Extract<DaemonCommandResult, { ok: false }> {
   return {
     ok: false,
     subcommand,
-    error: { code: "capability_unavailable", message: "macOS LaunchAgent capability is unavailable." }
+    error: {
+      code: "capability_unavailable",
+      message: "unmanaged: run memory daemon run under your supervisor"
+    }
   };
 }
 

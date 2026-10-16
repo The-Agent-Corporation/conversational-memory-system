@@ -8,6 +8,9 @@ import { MemoryMutationApplication } from "./mutation-application.js";
 import { registerMemoryTools } from "./tool-catalog.js";
 import { ScopedProposalReviewer } from "../proposals/scoped-proposal-reviewer.js";
 import { ExplainService } from "../audit/explain-service.js";
+import type { Embedder } from "../embeddings/embedder.js";
+import { probeEmbedderHealth, resolveEmbedder } from "../embeddings/embedder-resolver.js";
+import { MemoryRetriever } from "../retrieval/memory-retriever.js";
 import { MemoryQueryService } from "../retrieval/memory-query-service.js";
 import { SubjectExpansionService } from "../retrieval/subject-expansion-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
@@ -28,7 +31,8 @@ const ATOMIC_COMMIT_METHODS = new Set<PropertyKey>([
   "commitProposalDecision",
   "commitSourceRevocation",
   "commitSourceDeletion",
-  "commitLocalSyncOperation"
+  "commitLocalSyncOperation",
+  "commitEventDeletion"
 ]);
 
 export interface CreateMemoryMcpServerOptions extends LoadMemoryMcpProfileOptions {
@@ -61,10 +65,18 @@ export const createMemoryMcpServer = async (
   const cursorSecret = options.cursorSecret ?? randomBytes(32);
   let closed = false;
 
+  let embedder: Embedder | undefined;
+  try {
+    const health = await probeEmbedderHealth(authority.databasePath);
+    if (health.enabled && health.healthy) embedder = await resolveEmbedder(authority.databasePath);
+  } catch {
+    embedder = undefined;
+  }
+
   try {
     registerMemoryTools(server, {
       reads: {
-        queries: new MemoryQueryService(readStore, authority),
+        queries: new MemoryQueryService(readStore, authority, embedder ? { embedder } : {}),
         expansion: new SubjectExpansionService(
           readStore,
           authority,
@@ -78,7 +90,32 @@ export const createMemoryMcpServer = async (
         store: mutationStore,
         authority,
         confirmations: new ConfirmationService({ clock: now })
-      })
+      }),
+      inject: {
+        inject: async (input) => {
+          if (!authority.allowInjection) throw new Error("INJECTION_DISABLED");
+          const writeStore = new SqliteStore(authority.databasePath, { busyTimeoutMs: options.busyTimeoutMs ?? 5_000 });
+          try {
+            const packet = await new MemoryRetriever(writeStore, embedder ? { embedder } : {}).prepareInjection({
+              host: "unknown",
+              profileId: authority.profileName,
+              hostSessionId: input.hostSessionId,
+              currentTopicSummary: input.currentTopicSummary,
+              maxMemoryTokens: input.maxMemoryTokens,
+              personId: authority.personId,
+              allowedScopeIds: [...authority.allowedScopeIds],
+              requestedAt: now()
+            });
+            return {
+              injected: packet !== null,
+              packetId: packet?.id ?? null,
+              disclosure: "Assistive memory only; verify against current sources."
+            };
+          } finally {
+            writeStore.close();
+          }
+        }
+      }
     });
   } catch (error) {
     readStore.close();

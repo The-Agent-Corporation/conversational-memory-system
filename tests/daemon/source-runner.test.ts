@@ -338,7 +338,8 @@ function importerSpies(calls: string[], onOpen: () => void = () => undefined) {
     codex: importer("codex/codex-rollout-jsonl"),
     claudeCode: importer("claude-code/claude-project-jsonl"),
     openClaw: importer("openclaw/openclaw-session-jsonl"),
-    hermes: importer("hermes/hermes-state-sqlite")
+    hermes: importer("hermes/hermes-state-sqlite"),
+    cordis: importer("cordis/cordis-journal-sqlite")
   };
 }
 

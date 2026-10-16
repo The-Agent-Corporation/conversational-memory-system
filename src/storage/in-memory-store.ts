@@ -78,6 +78,7 @@ import {
 import { daemonSourceStateFromGrant, daemonSourceStateId } from "../daemon/source-state.js";
 import { MAX_RETAINED_GAP_SLOTS } from "../relay/domain/types.js";
 import {
+  CommitEventDeletionInputSchema,
   CommitHistoryImportInputSchema,
   CommitProposalDecisionInputSchema,
   CommitSourceDeletionInputSchema,
@@ -169,6 +170,17 @@ export class InMemoryStore implements MemoryStore {
   private readonly syncQuarantine: SyncQuarantineEntry[] = [];
   private readonly syncContractionRanges: SyncContractionRange[] = [];
   private readonly summaryVectors: SummaryVectorRecord[] = [];
+  private readonly modelUsage: import("../openrouter/types.js").ModelUsageEntry[] = [];
+  private readonly modelCache = new Map<string, import("../openrouter/types.js").ModelOutputCacheEntry>();
+  private readonly eventTombstones: Array<{
+    canonicalEventId: string;
+    personId: string;
+    sourceId: string;
+    nativeEventId: string;
+    deletedAt: string;
+    actor: string;
+    reason: string;
+  }> = [];
 
   constructor(options: InMemoryStoreOptions = {}) {
     this.faultInjector = options.faultInjector;
@@ -1886,5 +1898,89 @@ export class InMemoryStore implements MemoryStore {
     if (existing && existing.personId !== item.personId) {
       throw new Error(`Cannot reassign ${item.id} to a different person`);
     }
+  }
+
+  async recordModelUsage(entry: import("../openrouter/types.js").ModelUsageEntry): Promise<void> {
+    this.modelUsage.push({ ...entry });
+  }
+
+  async modelSpendOnDay(day: string): Promise<number> {
+    return this.modelUsage.reduce((sum, entry) => sum + (entry.day === day ? entry.costUsd ?? 0 : 0), 0);
+  }
+
+  async getModelOutputCache(cacheKey: string): Promise<string | null> {
+    return this.modelCache.get(cacheKey)?.outputJson ?? null;
+  }
+
+  async putModelOutputCache(entry: import("../openrouter/types.js").ModelOutputCacheEntry): Promise<void> {
+    this.modelCache.set(entry.cacheKey, { ...entry });
+  }
+
+  async isCanonicalEventTombstoned(canonicalEventId: string): Promise<boolean> {
+    return this.eventTombstones.some((row) => row.canonicalEventId === canonicalEventId);
+  }
+
+  async commitEventDeletion(input: import("./mcp-mutation-contracts.js").CommitEventDeletionInput): Promise<import("./mcp-mutation-contracts.js").MutationCommitReceipt> {
+    const parsed = CommitEventDeletionInputSchema.parse(input);
+    const event = parsed.canonicalEventId
+      ? this.canonicalEvents.find((candidate) => candidate.id === parsed.canonicalEventId && candidate.personId === parsed.personId) ?? null
+      : this.canonicalEvents.find((candidate) =>
+        candidate.personId === parsed.personId &&
+        candidate.sourceId === parsed.sourceId &&
+        candidate.nativeEventId === parsed.nativeEventId
+      ) ?? null;
+    if (!event) throw new Error("Canonical event was not found for this person");
+    if (!this.eventTombstones.some((row) => row.canonicalEventId === event.id)) {
+      this.eventTombstones.push({
+        canonicalEventId: event.id,
+        personId: event.personId,
+        sourceId: event.sourceId,
+        nativeEventId: event.nativeEventId,
+        deletedAt: parsed.deletedAt,
+        actor: parsed.actor,
+        reason: parsed.reason
+      });
+    }
+    this.canonicalEvents.splice(this.canonicalEvents.findIndex((candidate) => candidate.id === event.id), 1);
+    const turnIds = this.turns.filter((turn) =>
+      turn.metadata.canonicalEventId === event.id || turn.id === `personal_turn_${event.id}` || turn.id === `turn_${event.id}`
+    ).map((turn) => turn.id);
+    this.turns.splice(0, this.turns.length, ...this.turns.filter((turn) => !turnIds.includes(turn.id)));
+    const anchorIds = this.anchors.filter((anchor) =>
+      anchor.canonicalEventId === event.id || turnIds.includes(anchor.turnId)
+    ).map((anchor) => anchor.id);
+    this.anchors.splice(0, this.anchors.length, ...this.anchors.filter((anchor) => !anchorIds.includes(anchor.id)));
+    const summaryIds = this.summaries.filter((summary) =>
+      summary.personId === parsed.personId && (summary.sourceCanonicalEventIds ?? []).includes(event.id)
+    ).map((summary) => summary.id);
+    for (const summary of this.summaries) {
+      if (summaryIds.includes(summary.id)) summary.state = "superseded";
+    }
+    this.summaryVectors.splice(0, this.summaryVectors.length, ...this.summaryVectors.filter((row) => !summaryIds.includes(row.summaryId)));
+    const beforeInjections = this.injections.length;
+    this.injections.splice(0, this.injections.length, ...this.injections.filter((packet) =>
+      !packet.sourceSummaryIds.some((id) => summaryIds.includes(id))
+    ));
+    for (const job of this.contractionJobs) {
+      if (job.personId !== parsed.personId) continue;
+      job.immediateDirty = true;
+      if (job.state === "complete") job.state = "pending";
+      job.updatedAt = parsed.deletedAt;
+    }
+    return {
+      operation: "event_deletion",
+      status: "COMMITTED",
+      personId: parsed.personId,
+      targetId: event.id,
+      effectCounts: {
+        events: 1,
+        turns: turnIds.length,
+        anchors: anchorIds.length,
+        summaries: summaryIds.length,
+        injections: beforeInjections - this.injections.length,
+        audits: 1
+      },
+      committedAt: parsed.deletedAt
+    };
   }
 }

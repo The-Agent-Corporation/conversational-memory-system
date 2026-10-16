@@ -9,6 +9,7 @@ export const HostNameSchema = z.enum([
   "hermes",
   "codex",
   "cursor",
+  "cordis",
   "unknown"
 ]);
 

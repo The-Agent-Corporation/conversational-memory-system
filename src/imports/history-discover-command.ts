@@ -2,19 +2,22 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { discoverClaudeHistory } from "./claude-discovery.js";
+import { discoverCordisHistory } from "./cordis-discovery.js";
 import { discoverHermesHistory } from "./hermes-discovery.js";
 import { discoverOpenClawHistory } from "./openclaw-discovery.js";
 import type {
   ClaudeHistoryCandidate,
+  CordisHistoryCandidate,
   HermesHistoryCandidate,
   OpenClawHistoryCandidate
 } from "./types.js";
 
-export type ImportSource = "claude-code" | "openclaw" | "hermes";
+export type ImportSource = "claude-code" | "openclaw" | "hermes" | "cordis";
 export type UniversalHistoryCandidate =
   | ClaudeHistoryCandidate
   | OpenClawHistoryCandidate
-  | HermesHistoryCandidate;
+  | HermesHistoryCandidate
+  | CordisHistoryCandidate;
 
 export interface HistoryDiscoverCommandOptions {
   source: ImportSource;
@@ -37,13 +40,16 @@ export async function runHistoryDiscoverCommand(
     ? await discoverClaudeHistory(sourcePath, discoveredAt)
     : options.source === "openclaw"
       ? await discoverOpenClawHistory(sourcePath, discoveredAt)
-      : await discoverHermesHistory(sourcePath, discoveredAt);
+      : options.source === "hermes"
+        ? await discoverHermesHistory(sourcePath, discoveredAt)
+        : await discoverCordisHistory(sourcePath, discoveredAt);
   return { ok: true, approvalRequired: true, candidate };
 }
 
 function defaultSourcePath(source: ImportSource): string {
   if (source === "claude-code") return join(homedir(), ".claude");
   if (source === "openclaw") return join(homedir(), ".openclaw");
+  if (source === "cordis") return join(homedir(), ".cordis");
   return join(homedir(), ".hermes");
 }
 
@@ -57,8 +63,8 @@ function parseArgs(args: string[]): HistoryDiscoverCommandOptions {
 }
 
 function parseSource(value: string | undefined): ImportSource {
-  if (value === "claude-code" || value === "openclaw" || value === "hermes") return value;
-  throw new Error("Missing or unsupported --source. Use claude-code, openclaw, or hermes.");
+  if (value === "claude-code" || value === "openclaw" || value === "hermes" || value === "cordis") return value;
+  throw new Error("Missing or unsupported --source. Use claude-code, openclaw, hermes, or cordis.");
 }
 
 export function readFlags(args: string[]): Map<string, string> {

@@ -124,6 +124,9 @@ export class MemoryService {
       contentHash
     });
 
+    if (await this.store.isCanonicalEventTombstoned(canonicalEvent.id)) {
+      return null;
+    }
     await this.store.saveCanonicalEvent(canonicalEvent);
     await this.store.saveTurn(turn);
     await emitLocalSyncOperation(this.store, {

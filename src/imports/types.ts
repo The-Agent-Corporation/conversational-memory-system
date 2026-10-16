@@ -123,4 +123,30 @@ export type HermesHistoryCandidate = z.infer<typeof HermesHistoryCandidateSchema
 export type ClaudeHistoryApproval = z.infer<typeof ClaudeHistoryApprovalSchema>;
 export type OpenClawHistoryApproval = z.infer<typeof OpenClawHistoryApprovalSchema>;
 export type HermesHistoryApproval = z.infer<typeof HermesHistoryApprovalSchema>;
+
+export const CordisHistoryCandidateSchema = z.object({
+  id: z.string().min(1),
+  application: z.literal("cordis"),
+  format: z.literal("cordis-journal-sqlite"),
+  databasePath: z.string().min(1),
+  sessionCount: z.number().int().nonnegative(),
+  estimatedBytes: z.number().int().nonnegative(),
+  earliestSessionAt: IsoDateTimeSchema.nullable(),
+  latestSessionAt: IsoDateTimeSchema.nullable(),
+  discoveredAt: IsoDateTimeSchema
+});
+
+export const CordisHistoryApprovalSchema = z.object({
+  candidateId: z.string().min(1),
+  personId: z.string().min(1),
+  application: z.literal("cordis"),
+  format: z.literal("cordis-journal-sqlite"),
+  databasePath: z.string().min(1),
+  profileId: z.string().min(1),
+  scopeId: z.string().min(1).default("personal"),
+  approvedAt: IsoDateTimeSchema
+});
+
+export type CordisHistoryCandidate = z.infer<typeof CordisHistoryCandidateSchema>;
+export type CordisHistoryApproval = z.infer<typeof CordisHistoryApprovalSchema>;
 export type HistoryImportResult = CodexImportResult;

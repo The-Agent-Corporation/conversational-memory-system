@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 import type { ProfileAuthority } from "../mcp/authority.js";
 import { DisclosureLabeler } from "../mcp/disclosure-labels.js";
 import { readDaemonStatusSnapshot } from "../bootstrap/status-command.js";
+import { probeEmbedderHealth } from "../embeddings/embedder-resolver.js";
+import { composeModelIdentity } from "../embeddings/embedder-identity.js";
+import { readSemanticConfig } from "../openrouter/config.js";
 import type { Anchor, Box, MemoryTrace, Summary, TurnRange } from "../domain/types.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import type { Embedder } from "../embeddings/embedder.js";
+import { isAsymmetricEmbedder } from "../embeddings/embedder.js";
 import { isRetrievableState } from "./retrievable-state.js";
 
 export type MemoryReviewKind = "summary" | "anchor" | "box" | "trace";
@@ -69,7 +74,8 @@ export class MemoryQueryService {
 
   constructor(
     private readonly store: MemoryStore,
-    private readonly authority: ProfileAuthority
+    private readonly authority: ProfileAuthority,
+    private readonly retrieval: { embedder?: Embedder } = {}
   ) {
     this.#labeler = new DisclosureLabeler(authority.scopeAliases);
   }
@@ -83,8 +89,9 @@ export class MemoryQueryService {
     const query = request.query.trim();
     if (!query) throw new Error("Search query is required");
     const limit = boundedLimit(request.limit ?? 20);
-    const authorized = await this.loadAuthorizedMemory();
-    const candidates = this.rank(query, authorized).slice(0, limit);
+    const loaded = await this.loadAuthorizedMemory();
+    const { authorized, vectorScores } = await this.withVectorSelection(query, loaded);
+    const candidates = this.rank(query, authorized, vectorScores).slice(0, limit);
     return {
       candidates,
       count: candidates.length,
@@ -106,10 +113,11 @@ export class MemoryQueryService {
     if (!Number.isInteger(request.tokenBudget) || request.tokenBudget <= 0) {
       throw new Error("Recall token budget must be a positive integer");
     }
-    const authorized = await this.loadAuthorizedMemory();
+    const loaded = await this.loadAuthorizedMemory();
+    const { authorized, vectorScores } = await this.withVectorSelection(task, loaded);
     const items: RankedCandidate[] = [];
     let used = 0;
-    for (const candidate of this.rank(task, authorized)) {
+    for (const candidate of this.rank(task, authorized, vectorScores)) {
       if (used + candidate.tokenCount > request.tokenBudget) continue;
       items.push(candidate);
       used += candidate.tokenCount;
@@ -161,15 +169,48 @@ export class MemoryQueryService {
     sourceCount: number;
     memoryCount: number;
     synchronization: { online: boolean; state: "running" | "stopping" | "stale" | "stopped" };
+    sources: Array<{
+      grantId: string;
+      candidateId: string;
+      application: string;
+      format: string;
+      rowHighWaterMark: string | null;
+      lastSuccessAt: string | null;
+      lastError: string | null;
+    }>;
+    pipeline: {
+      pendingContractionJobs: number;
+      failedContractionJobs: number;
+      missingVectors: number;
+      pendingProposals: number;
+      traceDiscoveryEnabled: boolean;
+      semanticPausedBySpendCap: boolean;
+    };
     disclosure: string;
   }> {
-    const [sources, authorized, daemon] = await Promise.all([
+    const [sources, authorized, daemon, grants, checkpoints, states, jobs, proposals] = await Promise.all([
       this.store.listSources(this.authority.personId),
       this.loadAuthorizedMemory(),
-      readDaemonStatusSnapshot(this.store, now, null, this.authority.personId)
+      readDaemonStatusSnapshot(this.store, now, null, this.authority.personId),
+      this.store.listSourceGrants(this.authority.personId),
+      this.store.listImportCheckpoints(this.authority.personId),
+      this.store.listDaemonSourceStates(this.authority.personId),
+      this.store.listContractionJobs(this.authority.personId),
+      this.store.listProposals({ state: "proposed" })
     ]);
     const allowed = new Set(this.authority.allowedScopeIds);
     const sourceCount = sources.filter((source) => allowed.has(source.scopeId ?? "personal")).length;
+    const semantic = readSemanticConfig(this.authority.databasePath);
+    const embedder = await probeEmbedderHealth(this.authority.databasePath);
+    const activeModel = embedder.enabled
+      ? composeModelIdentity(embedder.model, embedder.revision)
+      : "keyword-hash-v1";
+    const missingVectors = (await this.store.listSummaryIdsMissingVector(
+      embedder.enabled ? embedder.provider : "deterministic",
+      activeModel
+    )).length;
+    const day = now.slice(0, 10);
+    const spent = await this.store.modelSpendOnDay(day);
     return {
       personId: this.authority.personId,
       sourceCount,
@@ -177,6 +218,29 @@ export class MemoryQueryService {
       synchronization: {
         online: daemon.state === "running" || daemon.state === "stopping",
         state: daemon.state
+      },
+      sources: grants
+        .filter((grant) => allowed.has(grant.scopeId))
+        .map((grant) => {
+          const checkpoint = checkpoints.find((item) => item.candidateId === grant.candidateId);
+          const state = states.find((item) => item.candidateId === grant.candidateId);
+          return {
+            grantId: grant.id,
+            candidateId: grant.candidateId,
+            application: grant.application,
+            format: grant.format,
+            rowHighWaterMark: checkpoint?.rowHighWaterMark ?? null,
+            lastSuccessAt: state?.lastSuccessAt ?? null,
+            lastError: state?.errorCategory ?? null
+          };
+        }),
+      pipeline: {
+        pendingContractionJobs: jobs.filter((job) => job.state === "pending" || job.immediateDirty).length,
+        failedContractionJobs: jobs.filter((job) => job.state === "failed").length,
+        missingVectors,
+        pendingProposals: proposals.filter((proposal) => proposal.personId === this.authority.personId).length,
+        traceDiscoveryEnabled: semantic.traceDiscoveryEnabled,
+        semanticPausedBySpendCap: semantic.enabled && spent >= semantic.dailySpendCapUsd
       },
       disclosure: DISCLOSURE
     };
@@ -215,12 +279,45 @@ export class MemoryQueryService {
     return { summaries, anchors, boxes, traces, restrictedScopeIds };
   }
 
-  private rank(query: string, authorized: AuthorizedMemory): RankedCandidate[] {
+  private async withVectorSelection(
+    query: string,
+    authorized: AuthorizedMemory
+  ): Promise<{ authorized: AuthorizedMemory; vectorScores: Map<string, number> }> {
+    const vectorScores = new Map<string, number>();
+    const embedder = this.retrieval.embedder;
+    if (!embedder) return { authorized, vectorScores };
+    const embedding = isAsymmetricEmbedder(embedder)
+      ? await embedder.embedQuery(query)
+      : await embedder.embed(query);
+    const nearest = await this.store.findNearestSummaries({
+      vector: embedding.vector,
+      provider: embedding.provider,
+      model: embedding.model,
+      personId: this.authority.personId,
+      allowedScopeIds: [...this.authority.allowedScopeIds],
+      topK: 32
+    });
+    if (nearest.length === 0) return { authorized, vectorScores };
+    const allowed = new Set(authorized.summaries.map((summary) => summary.id));
+    for (const match of nearest) {
+      if (allowed.has(match.summaryId)) vectorScores.set(match.summaryId, match.score);
+    }
+    if (vectorScores.size === 0) return { authorized, vectorScores };
+    return {
+      authorized: {
+        ...authorized,
+        summaries: authorized.summaries.filter((summary) => vectorScores.has(summary.id))
+      },
+      vectorScores
+    };
+  }
+
+  private rank(query: string, authorized: AuthorizedMemory, vectorScores = new Map<string, number>()): RankedCandidate[] {
     const queryWords = significantWords(query);
     return this.toReadItems(authorized)
       .map((item) => {
         const text = item.subject;
-        const score = scoreText(queryWords, text) * item.confidence;
+        const score = (vectorScores.has(item.id) ? vectorScores.get(item.id)! : scoreText(queryWords, text)) * item.confidence;
         return { ...item, text, score, tokenCount: estimateTokenCount(text) };
       })
       .filter((item) => item.score > 0)

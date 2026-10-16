@@ -19,6 +19,9 @@ export interface ProposalSchedulerOptions {
   forcedMs?: number;
   beforeCommit?: (input: CommitProposalRunInput) => void | Promise<void>;
   reviewerFactory?: (store: MemoryStore) => ProposalReviewer;
+  /** Production daemon passes false. Omitted keeps trace discovery on for existing tests. */
+  traceDiscoveryEnabled?: boolean;
+  maxReviewCandidates?: number;
 }
 
 export class ProposalScheduler {
@@ -47,7 +50,11 @@ export class ProposalScheduler {
     const job = dueJobs[0]!;
     const staging = await this.createStagingStore(personId);
     const reviewer = this.options.reviewerFactory?.(staging)
-      ?? new SleepReviewer(this.store, { writeStore: staging });
+      ?? new SleepReviewer(this.store, {
+        writeStore: staging,
+        traceDiscoveryEnabled: this.options.traceDiscoveryEnabled,
+        maxReviewCandidates: this.options.maxReviewCandidates
+      });
     const staged = await reviewer.stageProposals({ personId, reviewedAt });
     await this.validateStagedReview(personId, staged);
     const expectedCheckpoint = await this.store.getContractionCheckpoint(`contraction_checkpoint_${job.id}`);

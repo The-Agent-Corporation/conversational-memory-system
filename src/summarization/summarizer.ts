@@ -1,4 +1,4 @@
-import type { Summary } from "../domain/types.js";
+import type { Anchor, Summary } from "../domain/types.js";
 import type { CompletedTopicSpan } from "../topic/topic-monitor.js";
 import type { Turn } from "../domain/types.js";
 import {
@@ -15,7 +15,14 @@ export interface SummarizerInput {
 export type SummaryDraft = Pick<
   Summary,
   "summaryText" | "model" | "promptVersion" | "confidence" | "detailLevel" | "tokenCount"
->;
+> & {
+  title?: string;
+  anchors?: Array<{
+    anchorType: Anchor["anchorType"];
+    content: string;
+    turnSequence?: number;
+  }>;
+};
 
 export interface Summarizer {
   summarize(input: SummarizerInput): Promise<SummaryDraft>;

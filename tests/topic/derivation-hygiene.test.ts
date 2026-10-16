@@ -20,7 +20,7 @@ const NON_LITERAL_RULE_IDS = ["city-harness-preamble", "structured-json-emission
 // removed", which changes classifyEvent output for 123 live-corpus events, so the rule version
 // bumps again (REQ-054) — see 11-GAP-11-H.md and ADR 0048's GAP-11-H addendum.
 // (v3, Plan 11-24: H-i's embedded-marker matching change plus H-0's SC1 reversal.)
-const EXPECTED_HYGIENE_RULE_VERSION = "hygiene-rules/v4";
+const EXPECTED_HYGIENE_RULE_VERSION = "hygiene-rules/v5";
 
 const conv = (content: string, overrides: Partial<ClassifiableEvent> = {}): ClassifiableEvent => ({
   content,
@@ -271,8 +271,17 @@ describe("classifyEvent", () => {
       expect(result.ruleVersion).toBe(HYGIENE_RULE_VERSION);
     });
 
-    it("classify — HYGIENE_RULE_VERSION is hygiene-rules/v4 (Plan 11-28 bump, GAP-11-H)", () => {
+    it("classify — HYGIENE_RULE_VERSION is hygiene-rules/v5 (journal origin rule)", () => {
       expect(HYGIENE_RULE_VERSION).toBe(EXPECTED_HYGIENE_RULE_VERSION);
+    });
+
+    it("classify — a non-empty journal origin is synthetic_injected", () => {
+      expect(classifyEvent({ content: "heartbeat tick", origin: "cron" }).derivationClass).toBe("synthetic_injected");
+      expect(classifyEvent({ content: "hello", origin: null }).derivationClass).toBe("conversational");
+      expect(classifyEvent({
+        content: "peer said hello",
+        metadata: { sourceMetadata: { origin: "agent:other" } }
+      }).ruleId).toBe("journal-origin");
     });
   });
 

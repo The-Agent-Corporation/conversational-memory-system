@@ -155,6 +155,48 @@ export const SourceDeleteExecuteOutputSchema = z.object({
   effectCounts: DeletionEffectCountsSchema.partial()
 }).strict();
 
+const eventDeleteShape = {
+  canonicalEventId: IdentifierSchema.optional(),
+  nativeEventId: IdentifierSchema.optional(),
+  sourceId: IdentifierSchema.optional(),
+  actor: ActorSchema,
+  reason: NoteSchema,
+  deletedAt: IsoDateTimeSchema
+} as const;
+
+const requireEventTarget = (value: { canonicalEventId?: string; nativeEventId?: string; sourceId?: string }, context: z.RefinementCtx) => {
+  if (!value.canonicalEventId && !(value.nativeEventId && value.sourceId)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "canonicalEventId or sourceId plus nativeEventId is required" });
+  }
+};
+
+export const EventDeletePreviewInputSchema = z.object(eventDeleteShape).strict().superRefine(requireEventTarget);
+
+export const EventDeleteExecuteInputSchema = z.object({
+  ...eventDeleteShape,
+  token: ConfirmationTokenSchema
+}).strict().superRefine(requireEventTarget);
+
+const EventDeletionEffectCountsSchema = z.object({
+  events: CountSchema,
+  turns: CountSchema,
+  anchors: CountSchema,
+  summaries: CountSchema,
+  injections: CountSchema,
+  audits: CountSchema
+}).strict();
+
+export const EventDeletePreviewOutputSchema = z.object({
+  ...PreviewResultFields,
+  effectCounts: EventDeletionEffectCountsSchema
+}).strict();
+
+export const EventDeleteExecuteOutputSchema = z.object({
+  operation: z.literal("event_deletion"),
+  ...ReceiptResultFields,
+  effectCounts: EventDeletionEffectCountsSchema.partial()
+}).strict();
+
 export const MEMORY_MUTATION_TOOL_NAMES = [
   "history_ingest_preview",
   "history_ingest_execute",
@@ -165,7 +207,9 @@ export const MEMORY_MUTATION_TOOL_NAMES = [
   "source_revoke_preview",
   "source_revoke_execute",
   "source_delete_preview",
-  "source_delete_execute"
+  "source_delete_execute",
+  "event_delete_preview",
+  "event_delete_execute"
 ] as const;
 
 export const mutationAnnotations = (destructiveHint: boolean): Readonly<ToolAnnotations> => Object.freeze({
@@ -185,7 +229,9 @@ export const MEMORY_MUTATION_TOOL_ANNOTATIONS: Readonly<Record<typeof MEMORY_MUT
   source_revoke_preview: mutationAnnotations(false),
   source_revoke_execute: mutationAnnotations(true),
   source_delete_preview: mutationAnnotations(false),
-  source_delete_execute: mutationAnnotations(true)
+  source_delete_execute: mutationAnnotations(true),
+  event_delete_preview: mutationAnnotations(false),
+  event_delete_execute: mutationAnnotations(true)
 });
 
 type HistoryPreviewInput = z.infer<typeof HistoryIngestPreviewInputSchema>;
@@ -216,6 +262,8 @@ export interface MemoryMutationToolApplication {
   executeSourceRevocation(input: RevokeExecuteInput): Promise<MutationCommitReceipt>;
   previewSourceDeletion(input: DeletePreviewInput): Promise<ApplicationPreview>;
   executeSourceDeletion(input: DeleteExecuteInput): Promise<MutationCommitReceipt>;
+  previewEventDeletion(input: z.infer<typeof EventDeletePreviewInputSchema>): Promise<ApplicationPreview>;
+  executeEventDeletion(input: z.infer<typeof EventDeleteExecuteInputSchema>): Promise<MutationCommitReceipt>;
 }
 
 export const registerMemoryMutationTools = (
@@ -320,6 +368,25 @@ export const registerMemoryMutationTools = (
     outputSchema: SourceDeleteExecuteOutputSchema,
     annotations: MEMORY_MUTATION_TOOL_ANNOTATIONS.source_delete_execute
   }, async (input) => safeMutation(async () => receiptOutput(await application.executeSourceDeletion(input))));
+
+  server.registerTool("event_delete_preview", {
+    title: "Preview single-event deletion",
+    description: "Issue a single-use confirmation ticket for deleting one canonical event and the derivations that cite it.",
+    inputSchema: EventDeletePreviewInputSchema,
+    outputSchema: EventDeletePreviewOutputSchema,
+    annotations: MEMORY_MUTATION_TOOL_ANNOTATIONS.event_delete_preview
+  }, async (input) => safeMutation(async () => previewOutput(
+    await application.previewEventDeletion(input),
+    { events: "events", turns: "turns", anchors: "anchors", summaries: "summaries", injections: "injections", audits: "audits" }
+  )));
+
+  server.registerTool("event_delete_execute", {
+    title: "Execute single-event deletion",
+    description: "Consume an exact single-use confirmation and tombstone one canonical event so a later journal rescan cannot resurrect it.",
+    inputSchema: EventDeleteExecuteInputSchema,
+    outputSchema: EventDeleteExecuteOutputSchema,
+    annotations: MEMORY_MUTATION_TOOL_ANNOTATIONS.event_delete_execute
+  }, async (input) => safeMutation(async () => receiptOutput(await application.executeEventDeletion(input))));
 };
 
 const previewOutput = (

@@ -14,7 +14,8 @@ const EmbeddingsConfigSchema = z
     provider: z.string().default("onnx-transformers"),
     model: z.string().default("Xenova/bge-small-en-v1.5"),
     revision: z.string().default(""),
-    modelPath: z.string().default("")
+    modelPath: z.string().default(""),
+    dimensions: z.number().int().positive().optional()
   })
   .strict();
 
