@@ -189,3 +189,11 @@ Report:
 - privacy/workspace-isolation concerns checked,
 - remaining blockers or decisions,
 - whether the worktree was dirty before and after.
+
+## Cursor Cloud specific instructions
+
+- Use Node.js 22.23 or newer. `node:sqlite` in Node 22.14 (SQLite 3.47.2) ignores `DatabaseSync`'s `timeout` and its planner does not report `COVERING INDEX` for `idx_summaries_state_id`, so `tests/operations/tune-command.test.ts` and `tests/storage/schema-migrations.test.ts` fail. The image's `/exec-daemon/node` is 22.14.0 and comes before `/usr/local/bin` on `PATH`. This environment shadows it with `node`, `npm`, and `npx` symlinks in `/usr/local/cargo/bin` (earlier on `PATH`) pointing at `~/.nvm/versions/node/v22.23.3`.
+- There is no dev server and no build step. `npm ci` installs dependencies. Check the product with `npm test`, `npm run typecheck`, and `./bin/memory status --db <path> --person <id>`. Opening a database path creates the SQLite file.
+- `npm run test:golden` needs vendored ONNX fixtures in `tests/fixtures/models/` (gitignored). Without them those tests skip.
+- `tests/daemon/macos-adapters.test.ts` assumes Darwin for launchd, `osascript`, and `pmset` (`process.platform === "darwin"`). On Linux only the `/bin/zsh -n` syntax check can pass; the capability tests stay red. `zsh` is installed so that syntax check runs.
+- `example/` is vendored reference code. Do not install or run those stacks for this repo.
