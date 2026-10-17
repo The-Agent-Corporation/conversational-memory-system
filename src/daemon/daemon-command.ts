@@ -19,7 +19,8 @@ import { MacOSLaunchAgent, type LaunchAgentStatus } from "./macos/launch-agent.j
 import { MacOSNotificationAdapter } from "./macos/notification.js";
 import { MacOSPowerSource } from "./macos/power-source.js";
 import { OpenRouterProposalPlanner } from "../proposals/openrouter-proposal-planner.js";
-import { readSemanticConfig } from "../openrouter/config.js";
+import { readSemanticConfig, semanticPlannerModel, semanticSummaryModel } from "../openrouter/config.js";
+import { ledgerFor } from "../openrouter/ledger.js";
 import { SleepReviewer } from "../sleep/sleep-reviewer.js";
 import { OpenRouterSummarizer } from "../summarization/openrouter-summarizer.js";
 import { DeterministicSummarizer } from "../summarization/summarizer.js";
@@ -338,7 +339,8 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
       };
 
       const semantic = readSemanticConfig(databasePath);
-      const semanticOn = semantic.enabled && semantic.chatModel.trim().length > 0;
+      const summaryModel = semanticSummaryModel(semantic);
+      const plannerModel = semanticPlannerModel(semantic);
       const loop = new DaemonLoop({
         store,
         scheduler,
@@ -369,12 +371,12 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
               clock,
               authority: captured,
               summaryEmbedder,
-              ...(semanticOn ? {
+              ...(summaryModel ? {
                 summarizer: OpenRouterSummarizer.fromEnv({
                   OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
-                  OPENROUTER_MODEL: semantic.chatModel,
+                  OPENROUTER_MODEL: summaryModel,
                   OPENROUTER_BASE_URL: semantic.baseUrl || process.env.OPENROUTER_BASE_URL
-                }, { dailySpendCapUsd: semantic.dailySpendCapUsd }),
+                }, { dailySpendCapUsd: semantic.dailySpendCapUsd, ledger: ledgerFor(store) }),
                 provisionalSummarizer: new DeterministicSummarizer(),
                 summaryIdentity: "span-boundary" as const,
                 summarizePolicy: "on-completion" as const,
@@ -391,16 +393,16 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
               authority: captured,
               traceDiscoveryEnabled: semantic.traceDiscoveryEnabled,
               maxReviewCandidates: semantic.maxReviewCandidates,
-              ...(semanticOn ? {
+              ...(plannerModel ? {
                 reviewerFactory: (staging) => new SleepReviewer(store, {
                   writeStore: staging,
                   traceDiscoveryEnabled: false,
                   maxReviewCandidates: semantic.maxReviewCandidates,
                   boxPlanner: OpenRouterProposalPlanner.fromEnv({
                     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
-                    OPENROUTER_MODEL: semantic.chatModel,
+                    OPENROUTER_MODEL: plannerModel,
                     OPENROUTER_BASE_URL: semantic.baseUrl || process.env.OPENROUTER_BASE_URL
-                  }, { dailySpendCapUsd: semantic.dailySpendCapUsd })
+                  }, { dailySpendCapUsd: semantic.dailySpendCapUsd, ledger: ledgerFor(store) })
                 })
               } : {})
             }).runDue(personId)

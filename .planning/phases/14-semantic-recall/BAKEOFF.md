@@ -38,4 +38,4 @@ The first live run used `openrouter-summarizer-v2`. Five of 12 outputs failed th
 
 The three cases no longer separate the models on quality. On this evidence `anthropic/claude-haiku-5.5` is the fastest, the cheapest, and lowers confidence when the speaker is unsure. `openai/gpt-6-luna-pro` is the weakest fit: it is the slowest of the reliable models, the most expensive, and overconfident on uncertain input.
 
-A model choice should still be checked on real spans. The next step is a cloned-corpus rebuild and the Phase 14 recall probe against `aaron.db`, which is a separate paid step.
+`anthropic/claude-haiku-5.5` is now the default `summaryModel` in `${db}.semantic.json` (ADR 0059). That choice should still be checked on real spans. The next step is a cloned-corpus rebuild and the Phase 14 recall probe against `aaron.db`, which is a separate paid step.

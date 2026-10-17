@@ -1,4 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { once } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +8,8 @@ import { runBootstrapCommand } from "../../src/bootstrap/bootstrap-command.js";
 import { historicalContractionJobId } from "../../src/bootstrap/historical-bootstrapper.js";
 import { PROCESSOR_VERSION } from "../../src/daemon/contraction-runner.js";
 import type { CanonicalEvent } from "../../src/domain/canonical.js";
+import { semanticConfigPath } from "../../src/openrouter/config.js";
+import { SpendCapPausedError } from "../../src/openrouter/types.js";
 import type { SummaryVectorRecord } from "../../src/storage/memory-store.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import { runRebuildDerivationsCommand } from "../../src/operations/rebuild-derivations-command.js";
@@ -268,6 +272,77 @@ describe("rebuild-derivations-command", () => {
     tempDirs.push(dir);
     return join(dir, "memory.db");
   }
+
+  async function withLocalOpenRouter<T>(run: (baseUrl: string, models: string[]) => Promise<T>): Promise<T> {
+    const models: string[] = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk) => { body += chunk; });
+      request.on("end", () => {
+        models.push(JSON.parse(body).model);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({
+            title: "Topic switch",
+            summaryText: "The user switched topics.",
+            confidence: 0.8,
+            detailLevel: "brief",
+            tokenCount: 5
+          }) } }],
+          usage: { prompt_tokens: 10, completion_tokens: 5, cost: 0.001 }
+        }));
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("no port");
+    try {
+      return await run(`http://127.0.0.1:${address.port}/v1`, models);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("semantic mode summarizes with the default Haiku model and records spend in the store ledger", async () => {
+    const databasePath = await makeTempDatabase();
+    await buildPreHygieneCorpus(databasePath, buildCorpus(2));
+
+    await withLocalOpenRouter(async (baseUrl, models) => {
+      await writeFile(semanticConfigPath(databasePath), JSON.stringify({ enabled: true, baseUrl }), "utf8");
+
+      const result = await runRebuildDerivationsCommand({ databasePath, personId: PERSON_ID });
+      expect(result.rebuilt).toBe(true);
+      expect(models.length).toBeGreaterThan(0);
+      expect(new Set(models)).toEqual(new Set(["anthropic/claude-haiku-5.5"]));
+
+      const store = openStore(databasePath);
+      const active = (await store.listSummaries({ personId: PERSON_ID }))
+        .filter((summary) => summary.state !== "superseded");
+      const spent = await store.modelSpendOnDay(new Date().toISOString().slice(0, 10));
+      store.close();
+      expect(active.length).toBeGreaterThan(0);
+      for (const summary of active) expect(summary.model).toBe("openrouter:anthropic/claude-haiku-5.5");
+      expect(spent).toBeCloseTo(models.length * 0.001, 6);
+    });
+  });
+
+  it("semantic mode pauses at the daily spend cap before calling the model", async () => {
+    const databasePath = await makeTempDatabase();
+    await buildPreHygieneCorpus(databasePath, buildCorpus(2));
+
+    await withLocalOpenRouter(async (baseUrl, models) => {
+      await writeFile(
+        semanticConfigPath(databasePath),
+        JSON.stringify({ enabled: true, baseUrl, dailySpendCapUsd: 0 }),
+        "utf8"
+      );
+
+      await expect(runRebuildDerivationsCommand({ databasePath, personId: PERSON_ID }))
+        .rejects.toBeInstanceOf(SpendCapPausedError);
+      expect(models).toEqual([]);
+    });
+  });
 
   it("completes full corpus: every active summary is hygiene-clean and the checkpoint records the current processor version", async () => {
     const databasePath = await makeTempDatabase();

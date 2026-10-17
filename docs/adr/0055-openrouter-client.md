@@ -15,7 +15,7 @@ Summaries, proposal planning, and embeddings each talked to OpenRouter with thei
 - Default base URL is `https://openrouter.ai/api/v1`. `OPENROUTER_BASE_URL` overrides it. A key is required only for `openrouter.ai`.
 - Requests send `HTTP-Referer` and `X-Title`, abort on timeout, and retry 429, 5xx, and 529 with jitter while honoring `Retry-After`. 400, 401, 402, and 404 are not retried.
 - Provider policy defaults to `data_collection: "deny"`.
-- A per-day spend ledger pauses semantic stages with `SpendCapPausedError` once the configured cap is reached. The client does not invent a deterministic substitute.
+- A per-day spend ledger pauses semantic stages with `SpendCapPausedError` once the configured cap is reached. The client does not invent a deterministic substitute. The daemon and `memory rebuild-derivations` pass the store's ledger (`ledgerFor`); without one the cap is not checked.
 - Chat outputs may be cached by stage, prompt version, model, and input hash. Embeddings are not cached.
 - `OpenRouterSummarizer` and `OpenRouterProposalPlanner` call this client.
 
