@@ -6,6 +6,7 @@ import { ContractionRunner, PROCESSOR_VERSION, type ContractionSliceResult } fro
 import type { CanonicalOrderKey, ContractionJob, WriteAuthority } from "../daemon/types.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
 import { readSemanticConfig, semanticSummaryModel } from "../openrouter/config.js";
+import { ledgerFor } from "../openrouter/ledger.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
 import { OpenRouterSummarizer } from "../summarization/openrouter-summarizer.js";
 import { DeterministicSummarizer } from "../summarization/summarizer.js";
@@ -154,7 +155,7 @@ export async function runRebuildDerivationsCommand(
           OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
           OPENROUTER_MODEL: summaryModel,
           OPENROUTER_BASE_URL: semantic.baseUrl || process.env.OPENROUTER_BASE_URL
-        }, { dailySpendCapUsd: semantic.dailySpendCapUsd }),
+        }, { dailySpendCapUsd: semantic.dailySpendCapUsd, ledger: ledgerFor(store) }),
         provisionalSummarizer: new DeterministicSummarizer(),
         summaryIdentity: "span-boundary",
         summarizePolicy: "on-completion",
