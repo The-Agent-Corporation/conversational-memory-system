@@ -5,7 +5,7 @@ import { historicalContractionJobId } from "../bootstrap/historical-bootstrapper
 import { ContractionRunner, PROCESSOR_VERSION, type ContractionSliceResult } from "../daemon/contraction-runner.js";
 import type { CanonicalOrderKey, ContractionJob, WriteAuthority } from "../daemon/types.js";
 import type { CanonicalEvent } from "../domain/canonical.js";
-import { readSemanticConfig } from "../openrouter/config.js";
+import { readSemanticConfig, semanticSummaryModel } from "../openrouter/config.js";
 import { SqliteStore } from "../storage/sqlite-store.js";
 import { OpenRouterSummarizer } from "../summarization/openrouter-summarizer.js";
 import { DeterministicSummarizer } from "../summarization/summarizer.js";
@@ -146,13 +146,13 @@ export async function runRebuildDerivationsCommand(
       operation: "historical-bootstrap"
     };
     const semantic = readSemanticConfig(databasePath);
-    const semanticOn = semantic.enabled && semantic.chatModel.trim().length > 0;
+    const summaryModel = semanticSummaryModel(semantic);
     const runner = new ContractionRunner(store, {
       authority,
-      ...(semanticOn ? {
+      ...(summaryModel ? {
         summarizer: OpenRouterSummarizer.fromEnv({
           OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
-          OPENROUTER_MODEL: semantic.chatModel,
+          OPENROUTER_MODEL: summaryModel,
           OPENROUTER_BASE_URL: semantic.baseUrl || process.env.OPENROUTER_BASE_URL
         }, { dailySpendCapUsd: semantic.dailySpendCapUsd }),
         provisionalSummarizer: new DeterministicSummarizer(),

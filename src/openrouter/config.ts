@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { OpenRouterProviderPolicy } from "./types.js";
 
 export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+export const DEFAULT_SUMMARY_MODEL = "anthropic/claude-haiku-5.5";
 
 const ProviderPolicySchema = z.object({
   only: z.array(z.string().min(1)).optional(),
@@ -15,6 +16,7 @@ const ProviderPolicySchema = z.object({
 
 const SemanticRuntimeConfigSchema = z.object({
   enabled: z.boolean().default(false),
+  summaryModel: z.string().default(DEFAULT_SUMMARY_MODEL),
   chatModel: z.string().default(""),
   embeddingModel: z.string().default(""),
   dimensions: z.number().int().positive().nullable().default(null),
@@ -37,6 +39,18 @@ export function readSemanticConfig(databasePath: string): SemanticRuntimeConfig 
   const path = semanticConfigPath(databasePath);
   if (!existsSync(path)) return SemanticRuntimeConfigSchema.parse({});
   return SemanticRuntimeConfigSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+}
+
+/** Null keeps span summaries deterministic. */
+export function semanticSummaryModel(config: SemanticRuntimeConfig): string | null {
+  const model = config.summaryModel.trim();
+  return config.enabled && model ? model : null;
+}
+
+/** Null keeps box proposal planning deterministic. */
+export function semanticPlannerModel(config: SemanticRuntimeConfig): string | null {
+  const model = config.chatModel.trim();
+  return config.enabled && model ? model : null;
 }
 
 export function writeSemanticConfig(databasePath: string, config: SemanticRuntimeConfig): void {
