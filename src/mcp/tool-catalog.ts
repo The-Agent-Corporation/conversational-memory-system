@@ -21,7 +21,9 @@ export interface MemoryToolApplication {
 /**
  * Register the finite tool catalog once; authority is already captured by the application.
  * Phase 5 fixed six read + ten mutation tools; Phase 7 (07-03, REQ-039) added the seventh
- * read-only `memory_explain` tool, growing the read catalog to seven (17 total).
+ * read-only `memory_explain` tool, growing the read catalog to seven (17 total). ADR 0057
+ * added the opt-in `memory_inject` tool and ADR 0058 the `event_delete_*` mutation pair
+ * (twelve mutations, 20 total).
  */
 export const registerMemoryTools = (
   server: McpServer,
