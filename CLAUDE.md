@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-`AGENTS.md` in this repo holds the longer-form agent contract (product rule, hard constraints, Graphify usage, reporting format). Read it before non-trivial work — but note its architecture map predates the CLI/daemon/MCP/sync/embeddings subsystems and stops at ADR 0039; the map below is current.
+`AGENTS.md` in this repo holds the longer-form agent contract (product rule, hard constraints, Graphify usage, reporting format). Read it before non-trivial work. Both files carry the architecture map; keep them in sync when the layout changes.
 
 ## Commands
 
