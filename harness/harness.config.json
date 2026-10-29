@@ -1,0 +1,7 @@
+{
+  "static": "python3 harness/safe_checks.py static",
+  "unit": "python3 harness/safe_checks.py unit",
+  "unit_count_pattern": "UNIT_EXECUTED (\\d+)",
+  "required_checks": "Factory deterministic checks",
+  "protected_paths": "MISSION.md,FACTORY.md,FACTORY_RULES.md,AGENTS.md,CLAUDE.md,engineering.md,harness/**,.factory/**,factory/**,.github/workflows/**"
+}

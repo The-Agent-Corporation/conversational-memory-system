@@ -353,11 +353,15 @@ export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
   // the anchor loop below.
   const preparedSummaries: PreparedSummary[] = ranked
     .filter((memory) => memory.kind === "summary")
-    .map((summary) => ({
-      normalizedText: normalizedMemoryText(summary.text),
-      boxIds: summary.boxIds,
-      threadIds: new Set(summary.sourceTurnRanges.map((range) => range.threadId))
-    }));
+    .map((summary) => {
+      const normalizedText = normalizedMemoryText(summary.text);
+      return {
+        normalizedText,
+        substringFilter: undefined,
+        boxIds: summary.boxIds,
+        threadIds: new Set(summary.sourceTurnRanges.map((range) => range.threadId))
+      };
+    });
   const seenAnchorTexts = new Set<string>();
 
   return ranked.filter((memory) => {
@@ -377,8 +381,27 @@ export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
 
 interface PreparedSummary {
   normalizedText: string;
+  substringFilter: Uint32Array | null | undefined;
   boxIds: string[];
   threadIds: Set<string>;
+}
+
+// A 1 KiB presence filter avoids repeatedly scanning large bodies for impossible
+// matches. Hash every UTF-16 trigram, matching String.includes' code-unit semantics.
+// Collisions only cause an extra exact search; this filter never establishes coverage.
+function trigramHash(text: string, offset: number): number {
+  return (text.charCodeAt(offset) * 961 + text.charCodeAt(offset + 1) * 31 + text.charCodeAt(offset + 2)) & 8191;
+}
+
+function makeSubstringFilter(text: string): Uint32Array | null {
+  // Small bodies are cheaper to search directly and need no extra allocation.
+  if (text.length < 1024) return null;
+  const filter = new Uint32Array(256);
+  for (let offset = 0; offset + 2 < text.length; offset += 1) {
+    const hash = trigramHash(text, offset);
+    filter[hash >>> 5] |= 1 << (hash & 31);
+  }
+  return filter;
 }
 
 function isAnchorCoveredBySummary(
@@ -387,15 +410,25 @@ function isAnchorCoveredBySummary(
   preparedSummaries: PreparedSummary[]
 ): boolean {
   const anchorThreadIds = new Set(anchor.sourceTurnRanges.map((range) => range.threadId));
+  const prefixHash = anchorText.length >= 3 ? trigramHash(anchorText, 0) : null;
 
   return preparedSummaries.some((summary) => {
     // Cheap guards first: box and thread membership are Set/array lookups over already-computed
     // values, the substring search over (potentially ~800 KB) summary text runs last.
-    return (
-      sharesBox(anchor.boxIds, summary.boxIds) &&
-      sharesThread(anchorThreadIds, summary.threadIds) &&
-      summary.normalizedText.includes(anchorText)
-    );
+    if (!sharesBox(anchor.boxIds, summary.boxIds) || !sharesThread(anchorThreadIds, summary.threadIds)) {
+      return false;
+    }
+    if (prefixHash !== null) {
+      // Build once, only when an eligible comparison can use the filter.
+      if (summary.substringFilter === undefined) {
+        summary.substringFilter = makeSubstringFilter(summary.normalizedText);
+      }
+      if (summary.substringFilter !== null &&
+          (summary.substringFilter[prefixHash >>> 5] & (1 << (prefixHash & 31))) === 0) {
+        return false;
+      }
+    }
+    return summary.normalizedText.includes(anchorText);
   });
 }
 

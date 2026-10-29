@@ -1,0 +1,83 @@
+name: Factory
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: factory-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  portable:
+    name: Factory portable suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+      - run: python3 harness/safe_checks.py static
+      - run: python3 -m unittest discover -s harness -p 'test_*.py' -v
+      - run: python3 harness/safe_checks.py unit-linux
+  macos:
+    name: Factory macOS adapters
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: npm ci
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+      - run: python3 harness/safe_checks.py unit-macos
+      - run: python3 -m unittest discover -s harness -p 'test_*.py' -v
+  performance:
+    name: Factory isolated performance gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+      - run: python3 harness/safe_checks.py unit-performance
+  deterministic:
+    name: Factory deterministic checks
+    if: ${{ always() }}
+    needs: [portable, macos, performance]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all three complete test partitions
+        env:
+          PORTABLE_RESULT: ${{ needs.portable.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          PERFORMANCE_RESULT: ${{ needs.performance.result }}
+        run: test "$PORTABLE_RESULT" = success && test "$MACOS_RESULT" = success && test "$PERFORMANCE_RESULT" = success
