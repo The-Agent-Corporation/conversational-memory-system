@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Credential-free ordinary checks in fresh private user/config/data roots."""
-import json, os, pathlib, subprocess, sys, tempfile
+import json, os, pathlib, platform, subprocess, sys, tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PROFILE = json.loads((ROOT / "harness/checks.json").read_text())
-if len(sys.argv) != 2 or sys.argv[1] not in ("static", "unit"):
-    raise SystemExit("usage: safe_checks.py static|unit")
+if len(sys.argv) != 2 or sys.argv[1] not in ("static", "unit", "unit-linux", "unit-macos"):
+    raise SystemExit("usage: safe_checks.py static|unit|unit-linux|unit-macos")
+mode = sys.argv[1]
+macos_contract = "tests/daemon/macos-adapters.test.ts"
+if mode in ("unit-linux", "unit-macos"):
+    expected_platform = "Linux" if mode == "unit-linux" else "Darwin"
+    if platform.system() != expected_platform or not (ROOT / macos_contract).is_file():
+        raise SystemExit("CI partition requires its declared OS and the macOS contract file")
 if (ROOT / ".env").exists():
     raise SystemExit("refusing checkout with .env; use a clean isolated worktree")
 with tempfile.TemporaryDirectory(prefix="factory-checks-", dir="/tmp") as folder:
@@ -16,7 +22,12 @@ with tempfile.TemporaryDirectory(prefix="factory-checks-", dir="/tmp") as folder
            "LANG": "en_US.UTF-8", "NO_COLOR": "1", "NODE_ENV": "test",
            "VOICEDOCS_PROVIDER": "mock", "VOICEDOCS_TRANSCRIBER": "mock",
            "VOICEDOCS_DATA_DIR": str(p/"data"/"voicedocs"), "VOICEDOCS_NO_SEED": "1"}
-    commands = PROFILE["static"] if sys.argv[1] == "static" else [PROFILE["unit"] + ["--reporter=json", "--outputFile=" + str(p/"tests.json")]]
+    # These two partitions cover the original Vitest include set. The ordinary
+    # local unit command still runs everything. Do not weaken the timing gate:
+    # Linux measures it; macOS executes its OS-specific adapter contracts.
+    partition = (["--exclude=" + macos_contract] if mode == "unit-linux" else
+                 [macos_contract] if mode == "unit-macos" else [])
+    commands = PROFILE["static"] if mode == "static" else [PROFILE["unit"] + partition + ["--reporter=json", "--outputFile=" + str(p/"tests.json")]]
     for command in commands:
         result = subprocess.run(command, cwd=ROOT, env=env, timeout=900)
         if result.returncode:

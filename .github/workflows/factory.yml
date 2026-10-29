@@ -9,11 +9,9 @@ concurrency:
   group: factory-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  deterministic:
-    name: Factory deterministic checks
-    # The ordinary suite includes macOS launchd/power/notification adapter
-    # contracts and a zsh UAT-script syntax check. Keep those tests enabled.
-    runs-on: macos-latest
+  portable:
+    name: Factory portable suite
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -27,4 +25,33 @@ jobs:
       - run: npm ci
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
-      - run: python3 harness/ci.py
+      - run: python3 harness/safe_checks.py static
+      - run: python3 harness/safe_checks.py unit-linux
+  macos:
+    name: Factory macOS adapters
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+      - run: python3 harness/safe_checks.py unit-macos
+  deterministic:
+    name: Factory deterministic checks
+    if: ${{ always() }}
+    needs: [portable, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require both complete test partitions
+        env:
+          PORTABLE_RESULT: ${{ needs.portable.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+        run: test "$PORTABLE_RESULT" = success && test "$MACOS_RESULT" = success
