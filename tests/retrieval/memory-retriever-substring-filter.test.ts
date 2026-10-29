@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { dedupeRankedMemory, type RankedMemory } from "../../src/retrieval/memory-retriever.js";
 import { naiveDedupeReference } from "./memory-retriever-dedupe.test.js";
 
@@ -12,6 +12,32 @@ function memory(kind: "summary" | "anchor", id: string, text: string): RankedMem
 }
 
 describe("large-summary substring rejection preserves exact deduplication", () => {
+  it("avoids trigram scans when no eligible anchor can use the filter", () => {
+    const summary = memory("summary", "summary", "filler ".repeat(200) + "target");
+    const anchor = memory("anchor", "anchor", "target");
+    const cases = [
+      [summary],
+      [{ ...summary, sourceTurnRanges: [] }, anchor],
+      [{ ...summary, boxIds: ["box"] }, { ...anchor, boxIds: ["other"] }],
+      [summary, { ...anchor, sourceTurnRanges: [{ threadId: "other", startSequence: 0, endSequence: 1 }] }],
+      [summary, { ...anchor, text: "x" }]
+    ];
+    for (const ranked of cases) {
+      const scan = vi.spyOn(String.prototype, "charCodeAt");
+      let result: RankedMemory[];
+      let scanned: number;
+      try {
+        result = dedupeRankedMemory(ranked);
+        scanned = scan.mock.calls.length;
+      } finally {
+        scan.mockRestore();
+      }
+      expect(result).toEqual(naiveDedupeReference(ranked));
+      // At most the anchor's three-character prefix; never scan the large body.
+      expect(scanned).toBeLessThanOrEqual(3);
+    }
+  });
+
   it("keeps absent anchors even when their prefix resembles a present substring", () => {
     const summary = memory("summary", "summary", "aaz ".repeat(400));
     const absent = memory("anchor", "absent", "ab[");

@@ -357,7 +357,7 @@ export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
       const normalizedText = normalizedMemoryText(summary.text);
       return {
         normalizedText,
-        substringFilter: makeSubstringFilter(normalizedText),
+        substringFilter: undefined,
         boxIds: summary.boxIds,
         threadIds: new Set(summary.sourceTurnRanges.map((range) => range.threadId))
       };
@@ -381,7 +381,7 @@ export function dedupeRankedMemory(ranked: RankedMemory[]): RankedMemory[] {
 
 interface PreparedSummary {
   normalizedText: string;
-  substringFilter: Uint32Array | null;
+  substringFilter: Uint32Array | null | undefined;
   boxIds: string[];
   threadIds: Set<string>;
 }
@@ -415,13 +415,20 @@ function isAnchorCoveredBySummary(
   return preparedSummaries.some((summary) => {
     // Cheap guards first: box and thread membership are Set/array lookups over already-computed
     // values, the substring search over (potentially ~800 KB) summary text runs last.
-    return (
-      sharesBox(anchor.boxIds, summary.boxIds) &&
-      sharesThread(anchorThreadIds, summary.threadIds) &&
-      (prefixHash === null || summary.substringFilter === null ||
-        (summary.substringFilter[prefixHash >>> 5] & (1 << (prefixHash & 31))) !== 0) &&
-      summary.normalizedText.includes(anchorText)
-    );
+    if (!sharesBox(anchor.boxIds, summary.boxIds) || !sharesThread(anchorThreadIds, summary.threadIds)) {
+      return false;
+    }
+    if (prefixHash !== null) {
+      // Build once, only when an eligible comparison can use the filter.
+      if (summary.substringFilter === undefined) {
+        summary.substringFilter = makeSubstringFilter(summary.normalizedText);
+      }
+      if (summary.substringFilter !== null &&
+          (summary.substringFilter[prefixHash >>> 5] & (1 << (prefixHash & 31))) === 0) {
+        return false;
+      }
+    }
+    return summary.normalizedText.includes(anchorText);
   });
 }
 

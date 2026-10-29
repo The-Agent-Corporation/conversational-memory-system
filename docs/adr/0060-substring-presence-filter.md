@@ -18,6 +18,8 @@ bitset recording hashed three-code-unit substrings. Before an exact search, test
 the first trigram of the normalized anchor. An absent bit proves no match exists;
 a present bit still requires the original exact `String.includes` check, plus the
 existing box and thread guards. Hash collisions only add exact searches.
+Construct the filter lazily after those guards pass and only for anchors with
+at least three code units; summaries with no eligible comparison incur no scan.
 
 Short summaries and anchors shorter than three code units retain direct matching.
 The bitset is ephemeral and local to one deduplication call, with no persistence,
@@ -27,7 +29,7 @@ surrogate pairs and isolated surrogates.
 
 ## Consequences
 
-Preparation adds a linear scan and 1 KiB per large summary. Inputs that saturate
+The first eligible comparison adds a linear scan and 1 KiB per large summary. Inputs that saturate
 the filter still use exact matching and may see little benefit. The unchanged
 benchmark establishes performance on its measured runner, not on every machine.
 
