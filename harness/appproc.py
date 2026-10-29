@@ -36,9 +36,11 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -102,6 +104,8 @@ class HttpApp:
         self.port = _free_port()
         self.base = f"http://127.0.0.1:{self.port}"
         self.proc: subprocess.Popen | None = None
+        self._output = None
+        self._closed = False
         self.env_overrides = env or {}
 
     def __enter__(self) -> "HttpApp":
@@ -114,72 +118,55 @@ class HttpApp:
         if merged:
             env = {**os.environ, **{k: str(v).replace("{port}", str(self.port))
                                     for k, v in merged.items()}}
-        self.proc = subprocess.Popen(
-            _argv(cmd), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace", env=env,
-        )
-        self._await_health()
+        # A file cannot apply pipe backpressure to a chatty server. It is private,
+        # removed on close, and only the bounded tail is exposed on startup failure.
+        self.proc = None
+        self._closed = False
+        self._output = tempfile.TemporaryFile()
+        try:
+            self.proc = subprocess.Popen(
+                _argv(cmd), cwd=ROOT, stdout=self._output, stderr=subprocess.STDOUT,
+                env=env, start_new_session=os.name != "nt",
+            )
+            self._await_health()
+        except BaseException:
+            self.__exit__()
+            raise
         print(f"APP_STARTED port={self.port}", flush=True)
         return self
 
     def __exit__(self, *exc) -> None:
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-        self._free_the_port()
-
-    def _free_the_port(self) -> None:
-        """Kill whatever is still listening, even if this object did not start it.
-
-        Killing `self.proc` frees the port only when the process on it is the one
-        this object spawned. A journey may restart the app, and that replacement is
-        untracked: the original dies, the agent's copy keeps the port, `__exit__`
-        terminates a corpse, and the next lap gets `[Errno 10048] address already in
-        use` from a factory that thinks it tore everything down.
-
-        Measured after a morning of gate runs: four orphaned interpreters holding
-        four ports, on the exact class of leak the teardown comment already warned
-        about.
-
-        Best effort by design. This runs during teardown, on every path including a
-        failure, and a port that cannot be freed must not turn a reported failure
-        into a traceback about cleanup.
-        """
-        if not self.port:
+        # Port numbers are not ownership evidence. Only stop the process tree we
+        # launched; a replacement started outside that tree belongs to its caller.
+        if self._closed:
             return
         try:
-            if os.name == "nt":
-                out = subprocess.run(
-                    ["netstat", "-ano"], capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=30,
-                ).stdout
-                pids = {
-                    line.split()[-1]
-                    for line in out.splitlines()
-                    if f":{self.port} " in line and "LISTENING" in line
-                }
-                for pid in pids:
-                    if pid.isdigit() and pid != "0" and (
-                        not self.proc or str(self.proc.pid) != pid
-                    ):
-                        subprocess.run(["taskkill", "/PID", pid, "/F"],
-                                       capture_output=True, timeout=30)
-            else:
-                out = subprocess.run(
-                    ["lsof", "-ti", f"tcp:{self.port}"], capture_output=True,
-                    text=True, timeout=30,
-                ).stdout
-                for pid in out.split():
-                    if pid.isdigit() and (not self.proc or str(self.proc.pid) != pid):
-                        subprocess.run(["kill", "-9", pid], capture_output=True, timeout=30)
-        except (OSError, subprocess.SubprocessError):
-            # Named, not swallowed: a port left held is a real cost on the next lap,
-            # and silence here is how it becomes a mystery instead of a line in a log.
-            print(f"PORT_NOT_FREED {self.port} - something may still be listening",
-                  flush=True)
+            if self.proc:
+                if os.name == "nt":
+                    if self.proc.poll() is None:
+                        subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
+                                       capture_output=True, timeout=30, check=True)
+                else:
+                    try:
+                        os.killpg(self.proc.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    self.proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                finally:
+                    if os.name != "nt":
+                        try:
+                            os.killpg(self.proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    self.proc.wait(timeout=10)
+            self._closed = True
+        finally:
+            if self._output:
+                self._output.close()
+                self._output = None
 
     def _await_health(self) -> None:
         path = self.cfg.get("health_path", "/health")
@@ -188,7 +175,11 @@ class HttpApp:
         last = "never answered"
         while time.time() < deadline:
             if self.proc and self.proc.poll() is not None:
-                out = (self.proc.stdout.read() if self.proc.stdout else "") or ""
+                out = ""
+                if self._output:
+                    size = self._output.seek(0, os.SEEK_END)
+                    self._output.seek(max(0, size - 2500))
+                    out = self._output.read().decode("utf-8", errors="replace")
                 raise AppDidNotStart(
                     f"the app exited with {self.proc.returncode} before answering:\n{out[-2500:]}"
                 )

@@ -233,14 +233,34 @@ def harness_inputs(root: Path, name: str) -> dict:
     # so the project declares both once in its harness configuration.
     if name not in MERGING_WORKFLOWS:
         return {}
+    policy_file = "harness/harness.config.json"
+    requirement = (f"Merge policy required: {policy_file} must be a readable JSON object "
+                   "declaring required_checks and protected_paths as nonempty comma-separated "
+                   "strings (or explicit \"none\").")
     try:
-        config = json.loads((root / "harness/harness.config.json").read_text(encoding="utf-8-sig"))
+        config = json.loads((root / policy_file).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
-        return {}
+        raise ValueError(requirement) from None
     if not isinstance(config, dict):
-        return {}
-    return {key: config[key] for key in MERGE_POLICY_KEYS
-            if isinstance(config.get(key), str) and config[key].strip()}
+        raise ValueError(requirement)
+    policy = {}
+    for key in MERGE_POLICY_KEYS:
+        value = config.get(key)
+        invalid = not isinstance(value, str) or not value.strip()
+        if not invalid:
+            # Match the native policy grammar; whitespace around list items is allowed.
+            items = [re.sub(r"^[\s\ufeff]+|[\s\ufeff]+$", "", item)
+                     for item in value.split(",")]
+            invalid = bool(re.search(r"[\x00-\x08\x0e-\x1f\x7f-\x9f]", value)) or any(
+                not item or re.search(r"[\x00-\x1f\x7f-\x9f]", item)
+                or (key == "required_checks" and len(items) > 1 and item.lower() == "none")
+                or (key == "protected_paths" and item == "/") for item in items)
+        if invalid:
+            label = "check names" if key == "required_checks" else "path patterns"
+            raise ValueError(f"Invalid merge policy: {policy_file} {key} must be a nonempty "
+                             f"comma-separated string of {label}, or explicit \"none\".")
+        policy[key] = value
+    return policy
 
 
 def workflow_defaults(root: Path, name: str) -> dict:
@@ -583,6 +603,8 @@ def dispatch_bound_trigger(root: Path, settings: dict, source: Path, config_path
         raw = checked([sys.executable, str(helper), "create", "--project-root", str(root.resolve()),
                        "--output", str(invocation)], root)
         prepared = json.loads(raw)
+        if not isinstance(prepared, dict) or not isinstance(prepared.get("invocation"), str):
+            raise ValueError("Runtime binding helper returned an invalid invocation")
         uuid.UUID(prepared["invocation"])
         _private_path(invocation, directory=True)
         paths = {}

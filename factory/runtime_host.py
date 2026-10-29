@@ -232,14 +232,14 @@ class Environments:
                     raise ValueError("project setup failed (output withheld)")
                 setup.close()
                 item["processes"].remove(setup)
-            actual = tree_digest(source)
+            selected = source_files(source, cfg["include"])
+            actual = digest(selected)
             argv = command(cfg["command"], variables)
             identity = "factory-v1:" + hashlib.sha256(json.dumps(
                 {"source": actual, "argv": argv, "env": env}, sort_keys=True).encode()).hexdigest()
             env["FACTORY_RUNTIME_CANDIDATE"] = identity
-            for path in source.rglob("*"):
-                if path.is_file():
-                    path.chmod(stat.S_IREAD)
+            for path in selected.values():
+                path.chmod(stat.S_IREAD)
             proc = ProcessTree(argv, source, env)
             item["processes"].append(proc)
             item.update(candidate=identity, digest=actual, proc=proc, shape=cfg["shape"],
@@ -289,11 +289,11 @@ class Environments:
 
     def identity(self, slot):
         item = self.active.get(slot)
-        if not item or tree_digest(item["source"]) != item["digest"]:
+        if not item or digest(source_files(item["source"], self.config["include"])) != item["digest"]:
             raise ValueError("missing or changed candidate snapshot")
         if item["shape"] == "http":
             self.probe(item)
-            if tree_digest(item["source"]) != item["digest"]:
+            if digest(source_files(item["source"], self.config["include"])) != item["digest"]:
                 raise ValueError("candidate changed during probe")
         result = {"version": 1, "slot": slot, "candidate": item["candidate"],
                 "source_digest": item["digest"], "input_digest": item["original"],
@@ -413,7 +413,8 @@ def request(action, data, connection=None):
     req = Request(connection["url"] + "/" + action, data=json.dumps(data).encode(),
                   headers={"Authorization": "Bearer " + connection["token"],
                            "Content-Type": "application/json"})
-    with HTTP.open(req, timeout=310) as response:
+    # Start can spend 300 seconds on setup and another 300 on readiness.
+    with HTTP.open(req, timeout=620 if action == "start" else 310) as response:
         return json.load(response)
 
 
