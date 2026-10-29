@@ -25,7 +25,7 @@ progress:
 
 # Project State
 
-> Frozen: GSD was retired on 2026-08-09, so this file stops at the Phase 12 closing state (2026-08-04). Later work (Phase 13 planning, the Phase 14 bakeoff, ADRs 0055–0059) is recorded in `git log` and `docs/adr/`.
+> Frozen: GSD was retired on 2026-08-09, so this file stops at the Phase 12 closing state (2026-08-04). Later work (Phase 13 planning, the Phase 14 bakeoff, ADRs 0055–0059) is recorded in `.planning/phases/13-*/` and `.planning/phases/14-*/`, `git log`, and `docs/adr/`.
 
 **Current phase:** 12
 **Current plan:** 7 (12-07, wave 8, complete — the phase's last plan by wave order)
@@ -203,6 +203,8 @@ progress:
 - [Phase 11]: `probe-suspicious` hits are inspected individually before counting, per the recorded target — the two Q2 `[SILENT]` summaries were confirmed to mention the marker 4 and 2 times respectively, never at a line start, always backtick-quoted in a markdown table cell or design-prose bullet, and are correctly `conversational` to the product. Expected residue, not a defect.
 
 ## Current Position
+
+> Historical: this section was last updated on 2026-07-28, during Phase 11. The frontmatter and the top of this file hold the later Phase 12 closing state.
 
 Phase: 11 (derivation-input-hygiene) — EXECUTING
 Plan: 11-30 complete (GAP-11-F detection half closed). Remaining Phase 11 work: **Plan 11-31** (git history rewrite, runs after SC7 sign-off) and **Plan 11-14** (owner SC7 sign-off).
