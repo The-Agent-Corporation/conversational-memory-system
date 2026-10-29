@@ -475,6 +475,8 @@ def _private_path(path: Path, *, directory: bool = False) -> None:
 
 def runtime_binding_options(root: Path, data: dict) -> dict | None:
     """Opt-in caller-owned scenarios; the pinned workflow remains unchanged."""
+    if not isinstance(data, dict):
+        raise ValueError("schedule.json must contain a JSON object")
     value = data.get("runtime_binding")
     if value is None:
         return None
@@ -1120,8 +1122,6 @@ def schedule(root: Path, args: list[str]) -> int:
             return 0
         # Refuse redirects before intake as well as before global continuation.
         verify_registry_environment(root)
-        if action == "fire" and not config_path.is_file():
-            raise ValueError("No trigger binding. Run factory schedule install first")
         # A windowless timer tick (pythonw) has no console, so its output goes to a log.
         log = ((shared_root(root) / ".factory/schedule.log").open("a", encoding="utf-8")
                if windowless() else None)
@@ -1138,23 +1138,31 @@ def schedule(root: Path, args: list[str]) -> int:
             else:
                 # Ticks run in parallel (a long wake must not hold back the next launch), so
                 # each phase admits one tick at a time; a tick that finds a phase busy skips it.
-                with single_flight(shared_root(root) / ".factory/fire.lock") as held:
-                    if not held:
-                        write("Another tick is still launching; this one skips the launch.\n")
-                    elif launch_decision(root, settings, source, write):
-                        schedule_file = shared_root(root) / SCHEDULE
-                        try:
+                try:
+                    if not config_path.is_file():
+                        raise ValueError("No trigger binding. Run factory schedule install first")
+                    with single_flight(shared_root(root) / ".factory/fire.lock") as held:
+                        if not held:
+                            write("Another tick is still launching; this one skips the launch.\n")
+                        else:
+                            schedule_file = shared_root(root) / SCHEDULE
                             data = json.loads(schedule_file.read_text(encoding="utf-8")) if schedule_file.exists() else {}
-                            options = runtime_binding_options(root, data)
-                            if options:
-                                fired = dispatch_bound_trigger(root, settings, source, config_path, options, write)
-                            else:
-                                fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
-                                                capture=False, timeout=None, output=log).returncode
-                        except ValueError as error:
-                            # Refused admissions must not block existing durable waits.
-                            write(f"Launch refused: {error}\n")
-                            fired = 1
+                            if not isinstance(data, dict):
+                                raise ValueError("schedule.json must contain a JSON object")
+                            if launch_decision(root, settings, source, write):
+                                options = runtime_binding_options(root, data)
+                                if options:
+                                    fired = dispatch_bound_trigger(root, settings, source, config_path, options, write)
+                                else:
+                                    fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
+                                                    capture=False, timeout=None, output=log).returncode
+                except Exception as error:
+                    # Admission and continuation are independent: even an unexpected
+                    # launch error must leave existing durable waits able to wake.
+                    # STOP, registry trust checks, wake failures and operator interrupts
+                    # remain outside this launch-only recovery boundary.
+                    write(f"Launch refused: {error}\n")
+                    fired = 1
             if log:
                 log.flush()
             # Resume due durable waits (CI pauses, usage-limit resumes) in the same tick.

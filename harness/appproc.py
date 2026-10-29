@@ -111,7 +111,8 @@ class HttpApp:
     def __enter__(self) -> "HttpApp":
         if os.name != "nt" and (not callable(getattr(os, "waitid", None))
                                 or not hasattr(os, "WNOWAIT")):
-            raise AppDidNotStart("owned HTTP cleanup requires POSIX waitid/WNOWAIT support")
+            raise AppDidNotStart("owned HTTP cleanup requires POSIX waitid/WNOWAIT support "
+                                "(on macOS, Python 3.13 or later)")
         cmd = (self.cfg.get("start") or "").replace("{port}", str(self.port))
         if not cmd:
             raise AppDidNotStart("driver=http but http.start is empty in harness.config.json")

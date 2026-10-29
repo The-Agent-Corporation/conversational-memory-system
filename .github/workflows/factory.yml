@@ -44,11 +44,12 @@ jobs:
           cache: npm
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.13'
       - run: npm ci
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
       - run: python3 harness/safe_checks.py unit-macos
+      - run: python3 -m unittest discover -s harness -p 'test_*.py' -v
   performance:
     name: Factory isolated performance gate
     runs-on: ubuntu-latest

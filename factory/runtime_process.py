@@ -18,7 +18,8 @@ class ProcessTree:
     def __init__(self, argv, cwd, env):
         if os.name != "nt" and (not callable(getattr(os, "waitid", None))
                                 or not hasattr(os, "WNOWAIT")):
-            raise RuntimeError("owned runtime cleanup requires POSIX waitid/WNOWAIT support")
+            raise RuntimeError("owned runtime cleanup requires POSIX waitid/WNOWAIT support "
+                               "(on macOS, Python 3.13 or later)")
         self.job = None
         self.closed = False
         self.proc = subprocess.Popen(
