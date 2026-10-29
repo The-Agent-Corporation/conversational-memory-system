@@ -10,7 +10,7 @@
     "npm",
     "test",
     "--",
-    "--maxWorkers=2",
+    "--maxWorkers=1",
     "--minWorkers=1"
   ]
 }
