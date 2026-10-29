@@ -28,7 +28,7 @@ jobs:
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
       - run: python3 harness/safe_checks.py static
-      - run: python3 -m unittest discover -s harness -p 'test_*.py' -v
+      - run: python3 -W error::ResourceWarning -m unittest discover -s harness -p 'test_*.py' -v
       - run: python3 harness/safe_checks.py unit-linux
   macos:
     name: Factory macOS adapters
@@ -49,7 +49,7 @@ jobs:
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
       - run: python3 harness/safe_checks.py unit-macos
-      - run: python3 -m unittest discover -s harness -p 'test_*.py' -v
+      - run: python3 -W error::ResourceWarning -m unittest discover -s harness -p 'test_*.py' -v
   performance:
     name: Factory isolated performance gate
     runs-on: ubuntu-latest
