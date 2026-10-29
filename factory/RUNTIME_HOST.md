@@ -19,6 +19,20 @@ fails closed. After this owner reaps its leader, cleanup retries only observe th
 group and never send another termination signal. A cleanup failure attempts the
 remaining owned processes and slots, retaining failed ownership records for retry.
 
+If cleanup cannot verify process-group membership, the host keeps the owner and
+environment directory and refuses to replace that slot. Restore reliable `/proc`
+or `/bin/ps` observation and retry `teardown` for the affected slot; restart that
+slot only after teardown succeeds. After reaping the leader, retries only observe
+membership and never signal the numeric group again. Restarting the host or
+discarding ownership records does not establish verified cleanup.
+
+If a reliably observed member persists after its leader was reaped, passive retries
+will not terminate it. Keep the owner and directory, stop further admissions for
+that slot, and have the operator investigate the individual processes and confirm
+independently that they have stopped before retrying teardown. Never signal a bare
+numeric process group after its reserving leader has been reaped; the ID may have
+been reused. Automatic identity-safe member termination is not implemented.
+
 ## Foreground lifetime
 
 ```text
@@ -37,12 +51,23 @@ setup, readiness and final identity. Setup and readiness retain their individual
 300-second maximums. The loopback client supplies an absolute same-host monotonic
 deadline and allows another 60 seconds for cleanup; expired queued requests cannot
 start with a fresh budget. Cancellation/deadline checks run between filesystem
-operations and before launching project code or returning success. A lost successful
-start response triggers cleanup of that newly started slot.
+operations and before launching project code or returning success. Readiness and
+final identity HTTP probes use nonblocking socket operations checked against that
+same deadline and cancellation event, including during trickled headers or bodies.
+Each HTTP response has a half-second total budget and a 64 KiB body limit; socket
+waits check cancellation at intervals of at most 50 ms without probe threads.
+A detected failure to deliver a successful start response triggers cleanup of
+that newly started slot. A successful socket write does not prove the caller
+received the response; undetected delivery loss is not an acknowledgement protocol.
 
 This is not a hard filesystem wall-clock bound: a blocked synchronous filesystem
 call cannot be interrupted by these checks, and cleanup may itself fail. The owner
 reports incomplete cleanup instead of success and keeps failed state for retry.
+The foreground wrapper waits up to 30 seconds for owner exit; a start request has
+60 seconds of cleanup headroom. Sequential multi-slot cleanup can exceed either
+caller wait. A client timeout means the cleanup outcome is unknown, not that the
+owner stopped or cleanup completed. Preserve ownership and inspect the retained
+host/slots before recovery; do not launch replacement workers on a timeout alone.
 
 `--runtime-host` cannot accompany `--detach`, `-d`, or `--resume`, including equals
 forms. Native durable ownership/terminal notification is not integrated. A paused
@@ -110,16 +135,36 @@ revision selected by that delivery; do not obtain it from the old candidate root
 python factory/runtime_resource.py prepare --config /private/runtime.json --destination /private/candidate --expected-revision <delivered-sha>
 ```
 
-The portable Python command reads `include` from the same runtime configuration,
-invokes Git directly, and archives only those permitted committed application
-paths. Tracked evaluator, holdout and other repository files outside that list
-never enter the resource. The command records the source revision, tree, include
-list and resource digest in the owned root. It
+The portable Python command reads `include` from the same runtime configuration
+and materializes only those permitted paths directly from verified committed Git
+blobs. Git archive attributes cannot omit or transform selected source. Before
+replacing an owned resource, the command verifies the staged path set, bytes and
+POSIX modes; filename aliases on the destination filesystem fail closed. Colon
+components are refused for portable Windows path and alternate-stream safety.
+Tracked evaluator, holdout and other repository files outside that list never
+enter the resource. The command records the source revision, tree, include list
+and resource digest in the owned root. It
 refuses modified tracked source, a revision other than the helper's own checkout
 HEAD, forbidden/escaping/missing/linked includes, broad or relative destinations,
 and any existing directory it did not create.
 It never deletes an unowned directory. No `rm`, `find`, shell pipe or platform
 archive program is part of the normal path.
+
+Serialize preparation for each destination. Replacement first renames the old
+owned directory into a sibling `.factory-resource-backup-*/previous`, then installs
+the validated staging directory, and deletes the backup only after installation
+succeeds. A caught installation failure restores the old directory when possible;
+failed rollback retains it and reports its recovery path. These two renames are
+not an atomic exchange: readers can briefly see no destination, and abrupt process
+or machine loss can require manual recovery. Before preparing again after an
+interruption, inspect sibling backup directories. The backup marker's
+`resource_root` identifies the original destination; the backup is recovery data,
+not an active binding at its temporary path. With preparation stopped and the
+destination absent, restore that `previous` directory to its original path. If a
+destination already exists, verify its binding and bytes before choosing a
+generation or removing backups; do not overwrite it blindly. A failure while
+deleting the backup after installation leaves the new destination installed and
+reports incomplete backup cleanup.
 
 The helper and the workflow working directory must resolve to the same delivering
 Git checkout. An absolute helper path into an old checkout is refused even when
@@ -159,6 +204,12 @@ the configured `include` set. Setup-created files under an included path are
 selected unless a forbidden directory component causes source selection to fail.
 Directories outside every included path are not selected and remain outside the
 source identity claim.
+Resource and runtime digests cover selected file names and bytes, not permission
+bits or empty-directory layout. Preparation verifies committed modes and selected
+directories, but later mode/layout drift is outside the digest claim. Started
+snapshot files are made read-only (0400), so executable bits preserved in a prepared
+resource do not reach the started snapshot. Launch selected code through the
+configured Python/Node interpreter; direct executable-file launch is unsupported.
 
 The app receives a small OS environment plus configured `env`. Provider credentials,
 control credentials and arbitrary parent variables are not inherited. HOME and
@@ -196,7 +247,10 @@ cases must use distinct slots. This owner serializes requests.
 `start`. `teardown` is idempotent and terminates descendants before deleting files.
 Authenticated malformed/failed requests clean all active slots, fail closed, and
 return a generic error without echoing commands, secrets or evaluator contents.
-Unauthenticated requests return 403 without disturbing running apps.
+Unauthenticated requests return 403 without disturbing running apps. A slow
+authenticated request body exceeding its read budget also follows this host-wide
+cleanup policy: even `/identity` or `/teardown` for one slot cleans every active
+slot. Use separate hosts when that failure domain is inappropriate.
 
 `start` and `describe` return JSON with `version`, `slot`, `candidate`,
 `source_digest` (post-setup/mutation included bytes), `input_digest` (included
@@ -206,6 +260,9 @@ candidate string for the producer's `candidate_command`. The local control API
 uses POST `/setup`, `/start`, `/identity`, `/teardown` with these CLI fields as JSON
 and `Authorization: Bearer <private token>`; `/identity` returns full typed JSON.
 The control URL is IPv4 loopback only. Requests are bounded; redirects are refused.
+Accepted request lines, headers and bodies share one two-second read budget,
+including trickled input. Reads check parent cancellation at most every 50 ms,
+so a stalled client cannot indefinitely delay owned-process cleanup.
 
 For PR3227's external environment contract, set `environment.ownership` to
 `external`, map setup/start/teardown to the commands above, and set
@@ -323,6 +380,10 @@ termination are covered by the independent owner. Do not claim host-machine-loss
 recovery or hostile-process containment.
 
 ## Mutation evidence
+
+The generic mutation `apply` command requires an external disposable copy and
+refuses its own source checkout and Git-backed destinations; this accident guard
+is not a filesystem sandbox.
 
 ```text
 python harness/mutations/run.py score-runtime --result /private/native-return.json --candidate <attempt-identity>

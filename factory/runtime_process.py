@@ -34,7 +34,10 @@ def _linux_group_states(pgid: int) -> list[str]:
         if not process.name.isdigit():
             continue
         try:
-            state, group = _stat_state_group((process / 'stat').read_text())
+            # Linux comm is arbitrary bytes, not necessarily UTF-8. Preserve
+            # those bytes while validating only the state and numeric fields.
+            state, group = _stat_state_group((process / 'stat').read_text(
+                encoding='utf-8', errors='surrogateescape'))
             if group != pgid:
                 continue
             states.append(state)
@@ -51,7 +54,8 @@ def _linux_group_states(pgid: int) -> list[str]:
                 raise RuntimeError('cannot verify process group membership')
             for task in tasks:
                 try:
-                    task_state, task_group = _stat_state_group((task / 'stat').read_text())
+                    task_state, task_group = _stat_state_group((task / 'stat').read_text(
+                        encoding='utf-8', errors='surrogateescape'))
                 except (FileNotFoundError, ProcessLookupError):
                     continue
                 if task_group == pgid:
@@ -86,11 +90,14 @@ def group_has_live_members(pgid: int) -> bool:
             states = []
             for row in result.stdout.splitlines():
                 columns = row.split()
-                if (len(columns) != 2 or not columns[0].isdigit()
-                        or not columns[1][0].isascii() or not columns[1][0].isalpha()):
+                if len(columns) != 2 or not columns[0].isdigit():
                     raise ValueError('invalid process state')
-                if int(columns[0]) == pgid:
-                    states.append(columns[1][0])
+                if int(columns[0]) != pgid:
+                    continue
+                # macOS can report transient unknown states for unrelated groups.
+                if not columns[1][0].isascii() or not columns[1][0].isalpha():
+                    raise ValueError('invalid process state')
+                states.append(columns[1][0])
         if states:
             return any(state != 'Z' for state in states)
         # A process may exit during the scan. Missing rows alone are insufficient.
@@ -104,7 +111,7 @@ def group_has_live_members(pgid: int) -> bool:
 
 
 class ProcessTree:
-    def __init__(self, argv, cwd, env):
+    def __init__(self, argv, cwd, env, *, on_owner_created=None, output=None):
         if os.name != "nt" and (not callable(getattr(os, "waitid", None))
                                 or not hasattr(os, "WNOWAIT")):
             raise RuntimeError("owned runtime cleanup requires POSIX waitid/WNOWAIT support "
@@ -112,11 +119,18 @@ class ProcessTree:
         self.job = None
         self.closed = False
         self._reaped_by_cleanup = False
-        self.proc = subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "worker"],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=os.name != "nt", close_fds=True)
+        self.proc = None
         try:
+            # Register retryable ownership before any child can exist. A failed
+            # callback cannot leave an untracked process behind.
+            if on_owner_created is not None:
+                on_owner_created(self)
+            self.proc = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "worker"],
+                stdin=subprocess.PIPE,
+                stdout=output if output is not None else subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if output is not None else subprocess.DEVNULL,
+                start_new_session=os.name != "nt", close_fds=True)
             if os.name == "nt":
                 import ctypes as c
                 from ctypes import wintypes as w
@@ -148,7 +162,7 @@ class ProcessTree:
             self.proc.stdin.close()
         except BaseException as failure:
             try:
-                if os.name == "nt" and self.proc.poll() is None:
+                if os.name == "nt" and self.proc is not None and self.proc.poll() is None:
                     self.proc.kill()  # assignment may have failed before joining the job
                 self.close()
             except BaseException as cleanup_error:
@@ -179,7 +193,7 @@ class ProcessTree:
             failure = error
             raise
         finally:
-            if self.proc.stdin and not self.proc.stdin.closed:
+            if self.proc is not None and self.proc.stdin and not self.proc.stdin.closed:
                 try:
                     self.proc.stdin.close()
                 except BaseException as cleanup_error:
@@ -189,6 +203,9 @@ class ProcessTree:
 
     def _close_owned(self):
         if self.closed:
+            return
+        if self.proc is None:
+            self.closed = True
             return
         if self.job:
             import ctypes as c

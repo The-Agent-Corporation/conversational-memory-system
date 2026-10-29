@@ -16,10 +16,11 @@ class GroupObservationTests(unittest.TestCase):
             root = Path(directory)
             for pid, text in enumerate(contents, 100):
                 (root / str(pid)).mkdir()
-                (root / str(pid) / 'stat').write_text(text)
+                body = text if isinstance(text, bytes) else text.encode('utf-8')
+                (root / str(pid) / 'stat').write_bytes(body)
                 task = root / str(pid) / 'task' / str(pid)
                 task.mkdir(parents=True)
-                (task / 'stat').write_text(text)
+                (task / 'stat').write_bytes(body)
             with patch.object(runtime_process, '_PROC_ROOT', root, create=True), \
                     patch.object(runtime_process.sys, 'platform', 'linux'), \
                     patch('runtime_process.os.killpg', return_value=None) as signal:
@@ -29,6 +30,33 @@ class GroupObservationTests(unittest.TestCase):
 
     def test_zombie_only_proc_group_is_not_live(self):
         self.assertFalse(self.observe(['100 (odd ) name) Z 1 432 432 0']))
+
+    def test_non_utf8_comm_does_not_obscure_owned_group(self):
+        for state, expected in ((b'Z', False), (b'S', True)):
+            with self.subTest(state=state):
+                self.assertEqual(self.observe([
+                    b'100 (unrelated\xff) S 1 999 999 0',
+                    b'101 (owned\xfe) name) ' + state + b' 1 432 432 0',
+                ]), expected)
+
+    def test_non_utf8_task_comm_preserves_live_thread_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            process = root / '100'
+            task = process / 'task' / '101'
+            task.mkdir(parents=True)
+            (process / 'stat').write_bytes(b'100 (leader) Z 1 432 432 0')
+            (task / 'stat').write_bytes(b'101 (worker\xff) S 1 432 432 0')
+            with patch.object(runtime_process, '_PROC_ROOT', root), \
+                    patch.object(runtime_process.sys, 'platform', 'linux'), \
+                    patch('runtime_process.os.killpg', return_value=None) as signal:
+                self.assertTrue(runtime_process.group_has_live_members(432))
+                self.assertTrue(all(call.args[1] == 0 for call in signal.call_args_list))
+
+    def test_non_ascii_membership_fields_remain_unknown(self):
+        for body in (b'100 (name) \xff 1 432', b'100 (name) Z 1 43\xff'):
+            with self.subTest(body=body), self.assertRaisesRegex(RuntimeError, 'membership'):
+                self.observe([body])
 
     def test_live_member_alongside_zombies_is_live(self):
         self.assertTrue(self.observe(['100 (dead) Z 1 432 432 0', '101 (live) S 1 432 432 0']))
@@ -75,6 +103,13 @@ class GroupObservationTests(unittest.TestCase):
                     patch('runtime_process.subprocess.run', return_value=subprocess.CompletedProcess([], 0, output, '')):
                 self.assertEqual(runtime_process.group_has_live_members(432), expected)
 
+    def test_unrelated_unknown_ps_state_does_not_obscure_owned_group(self):
+        for output, expected in (('999 ?Es\n432 Z\n', False), ('999 ?E\n432 S\n', True)):
+            with self.subTest(output=output), patch.object(runtime_process.sys, 'platform', 'darwin'), \
+                    patch('runtime_process.os.killpg', return_value=None), \
+                    patch('runtime_process.subprocess.run', return_value=subprocess.CompletedProcess([], 0, output, '')):
+                self.assertEqual(runtime_process.group_has_live_members(432), expected)
+
     def test_failed_or_malformed_ps_remains_unknown(self):
         for error in (subprocess.CalledProcessError(1, ['/bin/ps'], stderr='failure'),
                       subprocess.TimeoutExpired(['/bin/ps'], 5)):
@@ -88,6 +123,7 @@ class GroupObservationTests(unittest.TestCase):
                 self.assertIs(inspect.call_args.kwargs['check'], True)
                 self.assertGreater(inspect.call_args.kwargs['timeout'], 0)
         for result in (subprocess.CompletedProcess([], 0, '432\n', ''),
+                       subprocess.CompletedProcess([], 0, '432 ?Es\n', ''),
                        subprocess.CompletedProcess([], 0, '', '')):
             with self.subTest(result=result), patch.object(runtime_process.sys, 'platform', 'darwin'), \
                     patch('runtime_process.os.killpg', return_value=None), \
