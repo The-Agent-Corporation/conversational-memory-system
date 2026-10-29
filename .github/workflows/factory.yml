@@ -44,14 +44,32 @@ jobs:
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
       - run: python3 harness/safe_checks.py unit-macos
+  performance:
+    name: Factory isolated performance gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
+      - run: python3 harness/safe_checks.py unit-performance
   deterministic:
     name: Factory deterministic checks
     if: ${{ always() }}
-    needs: [portable, macos]
+    needs: [portable, macos, performance]
     runs-on: ubuntu-latest
     steps:
-      - name: Require both complete test partitions
+      - name: Require all three complete test partitions
         env:
           PORTABLE_RESULT: ${{ needs.portable.result }}
           MACOS_RESULT: ${{ needs.macos.result }}
-        run: test "$PORTABLE_RESULT" = success && test "$MACOS_RESULT" = success
+          PERFORMANCE_RESULT: ${{ needs.performance.result }}
+        run: test "$PORTABLE_RESULT" = success && test "$MACOS_RESULT" = success && test "$PERFORMANCE_RESULT" = success
