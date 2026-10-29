@@ -1,0 +1,16 @@
+{
+  "static": [
+    [
+      "npm",
+      "run",
+      "typecheck"
+    ]
+  ],
+  "unit": [
+    "npm",
+    "test",
+    "--",
+    "--maxWorkers=2",
+    "--minWorkers=1"
+  ]
+}

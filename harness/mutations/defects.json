@@ -1,0 +1,23 @@
+{
+  "description": "Bounded fixture-only runtime calibration. Not a full mutation score or browser coverage claim. Use operator binding helper --mutation; no operator source edits.",
+  "copy": [
+    "package.json",
+    "package-lock.json",
+    "src",
+    "server",
+    "shared",
+    "packages",
+    "extension",
+    "harness",
+    ".factory"
+  ],
+  "defects": [
+    {
+      "id": "runtime-contract-defect",
+      "file": "src/storage/sqlite-store.ts",
+      "find": "async listSummaries(filter?: SummaryFilter): Promise<Summary[]> {",
+      "replace": "async listSummaries(filter?: SummaryFilter): Promise<Summary[]> { return [];",
+      "why": "Lost summaries must fail durable retrieval/persistence checks."
+    }
+  ]
+}

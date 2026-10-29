@@ -1,0 +1,14 @@
+{
+  "binding_helper": "/Users/aaronwhaley/Agent-Corporation/factory/project-runtimes/conversational-memory-system/bindings.py",
+  "binding_interface": "create --project-root <delivered-repository> --output <new-private-directory>",
+  "runtime_contract": "harness/END-TO-END.md",
+  "holdout_contract": ".factory/holdout/HOLDOUT.md",
+  "fresh_environment_per": [
+    "runtime",
+    "holdout",
+    "retry",
+    "mutation"
+  ],
+  "native_verdict_required": true,
+  "activation": "observation only until calibration, CI mapping and supervised pilot"
+}
