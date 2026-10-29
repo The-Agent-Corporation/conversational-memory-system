@@ -109,6 +109,71 @@ class HttpOwnershipTests(unittest.TestCase):
         finally:
             self.cleanup_process(app.proc)
 
+    def test_cleanup_never_signals_a_reaped_process_group(self):
+        app = HttpApp({"http": {"start": self.script("import time; time.sleep(60)\n"), "boot_timeout_s": 0}})
+        late_signals = []
+        killpg = os.killpg
+
+        def signal_reserved_group(pid, signum):
+            if signum and app.proc.returncode is not None:
+                late_signals.append(signum)
+                raise AssertionError("process-group identity was already released")
+            return killpg(pid, signum)
+
+        try:
+            with patch('appproc.os.killpg', side_effect=signal_reserved_group):
+                with self.assertRaises(AppDidNotStart):
+                    app.__enter__()
+            self.assertEqual(late_signals, [])
+        finally:
+            self.cleanup_process(app.proc)
+
+    def test_early_exit_remains_reserved_until_cleanup(self):
+        app = HttpApp({"http": {"start": self.script("raise SystemExit(7)\n"), "boot_timeout_s": 5}})
+        late_signals = []
+        killpg = os.killpg
+
+        def signal_reserved_group(pid, signum):
+            if signum and app.proc.returncode is not None:
+                late_signals.append(signum)
+                raise AssertionError("health polling reaped the process-group owner")
+            return killpg(pid, signum)
+
+        try:
+            with patch('appproc.os.killpg', side_effect=signal_reserved_group):
+                with self.assertRaisesRegex(AppDidNotStart, 'exited with 7'):
+                    app.__enter__()
+            self.assertEqual(late_signals, [])
+        finally:
+            self.cleanup_process(app.proc)
+
+    def test_reaped_owner_refuses_further_group_signals(self):
+        app = HttpApp({"http": {}})
+        app.proc = subprocess.Popen([sys.executable, '-c', 'pass'], start_new_session=True)
+        app.proc.wait(timeout=5)
+        with patch('appproc.os.killpg', side_effect=AssertionError('unreserved group signaled')):
+            with self.assertRaisesRegex(RuntimeError, 'reaped'):
+                app.__exit__()
+
+    def test_missing_waitid_refuses_before_spawning(self):
+        app = HttpApp({"http": {"start": self.script('pass\n')}})
+        with patch('appproc.os.waitid', None), \
+                patch('appproc.subprocess.Popen', side_effect=AssertionError('unsupported host spawned')):
+            with self.assertRaisesRegex(AppDidNotStart, 'waitid'):
+                app.__enter__()
+
+    def test_cleanup_failure_preserves_the_startup_error(self):
+        app = HttpApp({"http": {"start": self.script("import time; time.sleep(60)\n"), "boot_timeout_s": 0}})
+        try:
+            with patch.object(app, '__exit__', side_effect=OSError('synthetic cleanup failure')):
+                with self.assertRaises(AppDidNotStart) as failure:
+                    app.__enter__()
+            self.assertTrue(any('cleanup' in note for note in failure.exception.__notes__))
+        finally:
+            self.cleanup_process(app.proc)
+            if app._output:
+                app._output.close()
+
     def test_teardown_stops_owned_listener_descendants(self):
         command = self.script("import subprocess,sys\n"
             "child=subprocess.Popen([sys.executable, '-m', 'http.server', sys.argv[1], '--bind', '127.0.0.1'])\n"

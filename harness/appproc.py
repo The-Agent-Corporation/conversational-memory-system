@@ -109,6 +109,9 @@ class HttpApp:
         self.env_overrides = env or {}
 
     def __enter__(self) -> "HttpApp":
+        if os.name != "nt" and (not callable(getattr(os, "waitid", None))
+                                or not hasattr(os, "WNOWAIT")):
+            raise AppDidNotStart("owned HTTP cleanup requires POSIX waitid/WNOWAIT support")
         cmd = (self.cfg.get("start") or "").replace("{port}", str(self.port))
         if not cmd:
             raise AppDidNotStart("driver=http but http.start is empty in harness.config.json")
@@ -129,8 +132,11 @@ class HttpApp:
                 env=env, start_new_session=os.name != "nt",
             )
             self._await_health()
-        except BaseException:
-            self.__exit__()
+        except BaseException as failure:
+            try:
+                self.__exit__()
+            except BaseException as cleanup_error:
+                failure.add_note(f"HTTP app cleanup failed: {cleanup_error}")
             raise
         print(f"APP_STARTED port={self.port}", flush=True)
         return self
@@ -146,27 +152,59 @@ class HttpApp:
                     if self.proc.poll() is None:
                         subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
                                        capture_output=True, timeout=30, check=True)
+                    self.proc.wait(timeout=10)
                 else:
-                    try:
-                        os.killpg(self.proc.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                try:
-                    self.proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    self.proc.kill()
-                finally:
-                    if os.name != "nt":
-                        try:
-                            os.killpg(self.proc.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                    self.proc.wait(timeout=10)
+                    self._stop_owned_group()
             self._closed = True
         finally:
             if self._output:
                 self._output.close()
                 self._output = None
+
+    def _exit_status(self) -> int | None:
+        if os.name == "nt":
+            return self.proc.poll()
+        if self.proc.returncode is not None:
+            raise RuntimeError("HTTP process owner was reaped; refusing unreserved group cleanup")
+        try:
+            state = os.waitid(os.P_PID, self.proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        except ChildProcessError:
+            raise RuntimeError("HTTP process owner was reaped outside its cleanup") from None
+        if state is None:
+            return None
+        return state.si_status if state.si_code == os.CLD_EXITED else -state.si_status
+
+    def _signal_owned_group(self, signum) -> None:
+        # WNOWAIT keeps the leader's identity reserved until the last signal.
+        self._exit_status()
+        try:
+            os.killpg(self.proc.pid, signum)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # macOS may report EPERM for an exited, unreaped leader alone.
+            # This is not cleanup proof; group absence is checked after reaping.
+            if self._exit_status() is None:
+                raise
+
+    def _stop_owned_group(self) -> None:
+        self._signal_owned_group(signal.SIGTERM)
+        deadline = time.monotonic() + 10
+        while self._exit_status() is None and time.monotonic() < deadline:
+            time.sleep(.05)
+        self._signal_owned_group(signal.SIGKILL)
+        self.proc.wait(timeout=10)
+        # Queries after reaping may refuse success, but must never signal again.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(self.proc.pid, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError:
+                pass
+            time.sleep(.05)
+        raise RuntimeError("Owned HTTP process group did not exit; cleanup is unverified")
 
     def _await_health(self) -> None:
         path = self.cfg.get("health_path", "/health")
@@ -174,14 +212,15 @@ class HttpApp:
         deadline = time.time() + int(self.cfg.get("boot_timeout_s", 45))
         last = "never answered"
         while time.time() < deadline:
-            if self.proc and self.proc.poll() is not None:
+            exited = self._exit_status() if self.proc else None
+            if exited is not None:
                 out = ""
                 if self._output:
                     size = self._output.seek(0, os.SEEK_END)
                     self._output.seek(max(0, size - 2500))
                     out = self._output.read().decode("utf-8", errors="replace")
                 raise AppDidNotStart(
-                    f"the app exited with {self.proc.returncode} before answering:\n{out[-2500:]}"
+                    f"the app exited with {exited} before answering:\n{out[-2500:]}"
                 )
             try:
                 status, body, _ = self.get(path)

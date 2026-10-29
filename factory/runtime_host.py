@@ -227,8 +227,7 @@ class Environments:
             if cfg.get("setup"):
                 setup = ProcessTree(command(cfg["setup"], variables), source, env)
                 item["processes"].append(setup)
-                self.wait_exit(setup, timeout)
-                if setup.proc.returncode != 0:
+                if self.wait_exit(setup, timeout) != 0:
                     raise ValueError("project setup failed (output withheld)")
                 setup.close()
                 item["processes"].remove(setup)
@@ -247,7 +246,7 @@ class Environments:
             if cfg["shape"] == "http":
                 deadline = time.monotonic() + timeout
                 while True:
-                    if self.stopping.is_set() or proc.proc.poll() is not None:
+                    if self.stopping.is_set() or proc.poll() is not None:
                         raise ValueError("app stopped before readiness")
                     try:
                         self.probe(item)
@@ -257,22 +256,25 @@ class Environments:
                             raise ValueError("app readiness/identity refused") from None
                         self.stopping.wait(.05)
             else:
-                self.wait_exit(proc, timeout)
-                item["exit_code"] = proc.proc.returncode
+                item["exit_code"] = self.wait_exit(proc, timeout)
                 proc.close()  # includes descendants of finite commands
             return self.identity(slot)
-        except BaseException:
-            self.teardown(slot)
+        except BaseException as failure:
+            try:
+                self.teardown(slot)
+            except BaseException as cleanup_error:
+                failure.add_note(f"Runtime environment cleanup failed: {cleanup_error}")
             raise
 
     def wait_exit(self, proc, timeout):
         deadline = time.monotonic() + timeout
-        while proc.proc.poll() is None:
+        while (status := proc.poll()) is None:
             if self.stopping.wait(.05) or time.monotonic() >= deadline:
                 raise ValueError("project command cancelled or timed out")
+        return status
 
     def probe(self, item):
-        if item["proc"].proc.poll() is not None:
+        if item["proc"].poll() is not None:
             raise ValueError("owned app is dead")
         for key in ("health_path", "identity_path"):
             path = self.config.get(key)
@@ -284,7 +286,7 @@ class Environments:
                 body = response.read(65537).decode("utf-8")
             if key == "identity_path" and body.strip() != item["candidate"]:
                 raise ValueError("wrong target identity")
-        if item["proc"].proc.poll() is not None:
+        if item["proc"].poll() is not None:
             raise ValueError("owned app died during probe")
 
     def identity(self, slot):
