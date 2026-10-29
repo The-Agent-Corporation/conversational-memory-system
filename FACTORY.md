@@ -25,3 +25,7 @@ Runtime binding helper: `/Users/aaronwhaley/Agent-Corporation/factory/project-ru
 Activation remains observation-only until native healthy/defect/wrong-identity/holdout calibration, exact GitHub check mapping and a supervised coding pilot pass. No merge or deploy is implied.
 
 Limits: Live memory corpus, actual Claude/Codex/Hermes history, daemon/LaunchAgents, relay/keychain, external models and ONNX golden coverage without its pinned fixtures.
+
+HTTP harness fixtures require POSIX `waitid`/`WNOWAIT` and refuse Windows before launching project code. Windows HTTP fixture execution remains unqualified; the separate runtime ProcessTree Job Object does not qualify HttpApp. Cleanup verifies that no live group members remain; unreaped zombies are already stopped, and unknown membership fails closed.
+
+Scheduled fire revalidates the current merge policy before admission. An invalid declaration or changed effective installed policy refuses the launch with a reinstall diagnostic; explicit schedule overrides retain their install-time meaning. Existing durable runs can still wake after that refusal.
