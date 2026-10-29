@@ -1143,13 +1143,18 @@ def schedule(root: Path, args: list[str]) -> int:
                         write("Another tick is still launching; this one skips the launch.\n")
                     elif launch_decision(root, settings, source, write):
                         schedule_file = shared_root(root) / SCHEDULE
-                        data = json.loads(schedule_file.read_text(encoding="utf-8")) if schedule_file.exists() else {}
-                        options = runtime_binding_options(root, data)
-                        if options:
-                            fired = dispatch_bound_trigger(root, settings, source, config_path, options, write)
-                        else:
-                            fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
-                                            capture=False, timeout=None, output=log).returncode
+                        try:
+                            data = json.loads(schedule_file.read_text(encoding="utf-8")) if schedule_file.exists() else {}
+                            options = runtime_binding_options(root, data)
+                            if options:
+                                fired = dispatch_bound_trigger(root, settings, source, config_path, options, write)
+                            else:
+                                fired = execute([*native, "trigger", "fire", "--config", str(config_path)], root,
+                                                capture=False, timeout=None, output=log).returncode
+                        except ValueError as error:
+                            # Refused admissions must not block existing durable waits.
+                            write(f"Launch refused: {error}\n")
+                            fired = 1
             if log:
                 log.flush()
             # Resume due durable waits (CI pauses, usage-limit resumes) in the same tick.

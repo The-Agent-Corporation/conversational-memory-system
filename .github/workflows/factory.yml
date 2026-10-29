@@ -28,7 +28,7 @@ jobs:
         env:
           SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
       - run: python3 harness/safe_checks.py static
-      - run: python3 -m unittest discover -s harness -p 'test_factory*.py' -v
+      - run: python3 -m unittest discover -s harness -p 'test_*.py' -v
       - run: python3 harness/safe_checks.py unit-linux
   macos:
     name: Factory macOS adapters
