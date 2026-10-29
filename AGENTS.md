@@ -1,6 +1,6 @@
 # Conversational Memory System Agent Instructions
 
-This repo is **conversational-memory-system**: a host-neutral personal memory layer for any agent host (Claude Code, Codex, OpenClaw, Hermes). Each host is a *source*; the durable object is the canonical event timeline, enriched with summarization, anchors, boxes, traces, sleep review, proposals, retrieval, injection, and resume flows. Hermes/Roscoe is the first live consumer, not the home.
+This repo is **conversational-memory-system**: a host-neutral personal memory layer for any agent host (Claude Code, Codex, OpenClaw, Hermes) or journal (Cordis). Each is a *source*; the durable object is the canonical event timeline, enriched with summarization, anchors, boxes, traces, sleep review, proposals, retrieval, injection, and resume flows. Hermes/Roscoe is the first live consumer, not the home.
 
 These instructions apply to autonomous coding agents working in this repo. `CLAUDE.md` carries the same architecture map plus commands and code conventions; keep the two in sync when the layout changes.
 
@@ -22,29 +22,30 @@ Core:
 
 Ingest and derivation:
 
-- `src/imports/` — discovery + importer pair per host (`claude-`, `codex-`, `openclaw-`, `hermes-`), through `secret-redactor.ts` and `quarantine-service.ts`; source revoke/delete commands.
+- `src/imports/` — discovery + importer pair per host (`claude-`, `codex-`, `openclaw-`, `hermes-`, `cordis-`), through `secret-redactor.ts` and `quarantine-service.ts`; source revoke/delete and single-event delete commands (event tombstones keep append-only sources from re-importing, ADR 0058).
 - `src/bootstrap/` — guided `init`, resumable historical bootstrap, status.
 - `src/compaction/` — pre-compaction summaries and budget-aware packing.
 - `src/summarization/` — summarizer interface with OpenRouter/runtime selection.
 - `src/anchors/`, `src/boxes/`, `src/traces/`, `src/proposals/`, `src/sleep/`, `src/topic/`, `src/resume/` — deterministic derivation subsystems, each with an optional OpenRouter-backed planner. The deterministic path must always work offline.
 - `src/retrieval/` — memory retrieval, query service, subject expansion, source deduplication.
-- `src/embeddings/` — `embedder-resolver.ts` chooses `DeterministicEmbedder` (hash, default) vs `transformer-embedder.ts` (ONNX, opt-in via the `${dbPath}.embeddings.json` sidecar); vector codec and model vendoring.
+- `src/openrouter/` — shared OpenRouter client, spend ledger, and semantic-mode config in the `${dbPath}.semantic.json` sidecar (ADR 0055/0056/0059). Off by default; when enabled, `summaryModel` (default `anthropic/claude-haiku-5.5`) summarizes completed spans and `chatModel` drives only the box proposal planner.
+- `src/embeddings/` — `embedder-resolver.ts` chooses `DeterministicEmbedder` (hash, default), `transformer-embedder.ts` (ONNX), or `openrouter-embedder.ts`, the latter two opt-in via the `${dbPath}.embeddings.json` sidecar; vector codec and model vendoring.
 
 Surfaces:
 
 - `src/cli/` — `command-registry.ts` is a closed static subcommand → dynamic-import allow-list behind `bin/memory`.
-- `src/mcp/` — generic MCP server: closed catalog of 7 read + 10 mutation tools (`tool-catalog.ts` → `tools/`), with authority, confirmation, disclosure labels, response envelopes, continuation cursors.
+- `src/mcp/` — generic MCP server: closed catalog of 7 read + 12 mutation tools plus the profile-opt-in `memory_inject` (ADR 0057) (`tool-catalog.ts` → `tools/`), with authority, confirmation, disclosure labels, response envelopes, continuation cursors.
 - `src/daemon/` — continuous local runner: lease-based single writer, watch controller, contraction and proposal schedulers, macOS notification path; all checkpointed to resume rather than restart.
 - `src/sync/` + `src/relay/` — zero-knowledge multi-device sync (ADR 0047). Relay stores opaque ciphertext only; keys stay client-side (`sync/crypto` libsodium, `sync/secrets` macOS Keychain).
-- `src/operations/`, `src/audit/` — tune, embeddings enable/backfill, `explain`, and audit-log surfaces (REQ-039).
+- `src/operations/`, `src/audit/` — tune, embeddings enable/backfill, rebuild-derivations, prune commands, `explain`, and audit-log surfaces (REQ-039).
 - `src/integrations/hermes/`, `src/adapters/` — Hermes CLI bridge and host adapter surface.
 
 Supporting:
 
-- `tests/` — Vitest coverage mirroring the subsystem layout (96 test files); most tests drive `InMemoryStore`.
-- `docs/adr/` — architecture decision records, currently through ADR 0047.
+- `tests/` — Vitest coverage mirroring the subsystem layout (129 test files); most tests drive `InMemoryStore`.
+- `docs/adr/` — architecture decision records, currently through ADR 0059.
 - `docs/integrations/` — Roscoe/Hermes, Codex history, universal history import, local MCP clients.
-- `.planning/` — GSD state, roadmap (v1.0 = Phases 1–7 complete; v1.1 Phases 8–14 in progress), REQ-### requirements, per-phase artifacts.
+- `.planning/` — roadmap (v1.0 = Phases 1–7 complete; v1.1 Phases 8–14), REQ-### requirements, per-phase artifacts. GSD was retired on 2026-08-09, so `STATE.md` is frozen at the Phase 12 closing state (2026-08-04); check `git log` and the newest ADRs for current state.
 - `docs/superpowers/`, `tasks/`, `workflows/`, `queue.md`, `PROJECT.md` — legacy/project management notes.
 - `example/` — vendored reference memory systems; not production code.
 
@@ -111,8 +112,9 @@ Operator CLI (`memory <cmd>`, or the matching `npm run memory:*` script):
 ```bash
 memory init | status | discover | import | bootstrap | daemon | mcp
 memory explain | audit-log | tune | embeddings | backfill-embeddings
+memory rebuild-derivations | prune-superseded | prune-unhygienic-anchors
 memory backup | restore | export
-memory quarantine | source:revoke | source:delete
+memory quarantine | source:revoke | source:delete | event:delete
 ```
 
 Hermes integration commands:
