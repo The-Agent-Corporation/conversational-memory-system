@@ -11,7 +11,9 @@ concurrency:
 jobs:
   deterministic:
     name: Factory deterministic checks
-    runs-on: ubuntu-latest
+    # The ordinary suite includes macOS launchd/power/notification adapter
+    # contracts and a zsh UAT-script syntax check. Keep those tests enabled.
+    runs-on: macos-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -23,4 +25,6 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm ci
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: '1'
       - run: python3 harness/ci.py
