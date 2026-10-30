@@ -29,3 +29,5 @@ harness/.results/
 *.pem
 secrets.json
 credentials.json
+.factory/shared-admission.json
+.factory/schedule-install-pending.json
