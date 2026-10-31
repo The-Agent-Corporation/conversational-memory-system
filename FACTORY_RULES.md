@@ -1,6 +1,13 @@
 # Factory rules
 
-Existing .planning/STATE.md and ROADMAP.md GSD requirements and plans remain the product work authority. A factory issue must map to that work; it cannot replace the worklist.
+AGENTS.md, CLAUDE.md and current docs/adr/ decisions define product authority.
+GSD was retired on 2026-08-09; .planning/STATE.md is frozen historical evidence,
+and old roadmap phases or unchecked queue entries do not establish current work.
+Before starting a coding run, bind a currently authorized issue or assignment to
+the actual source and current decisions, with explicit scope, acceptance criteria,
+dependencies and ownership. If no current assignment is established, keep intake
+held and request Aaron's selection. A factory issue records that assignment; it
+does not revive the retired worklist or create product scope.
 
 Aaron owns scope and exact-head merge decisions. Archon runs the shared factory. Port records controls and evidence. One active run per project; respect existing claims. This setup does not authorize automatic source merges or deployment.
 

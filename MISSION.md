@@ -4,4 +4,7 @@ Keep a host-neutral canonical memory timeline with explicit provenance, person/s
 
 Product authority: AGENTS.md, CLAUDE.md and docs/adr/.
 
-Existing .planning/STATE.md and ROADMAP.md GSD requirements and plans remain the product work authority. A factory issue must map to that work; it cannot replace the worklist.
+GSD was retired on 2026-08-09. Treat .planning/STATE.md, older roadmap phases
+and legacy queue documents as historical context. Factory intake requires a
+current authorized issue or assignment consistent with the actual source and
+current decisions. Until that assignment is established, keep coding intake held.
