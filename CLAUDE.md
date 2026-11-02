@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm test                     # vitest run (129 test files)
+npm test                     # vitest run (130 tracked tests/**/*.test.ts files)
 npm run typecheck            # tsc --noEmit
 npx vitest run tests/retrieval/memory-retriever.test.ts   # single file
 npx vitest run -t "packs within budget"                   # single test by name
@@ -49,7 +49,14 @@ A host-neutral personal memory layer. Any agent host (Claude Code, Codex, OpenCl
 - Determinism: clocks and IDs are injected (`clock`, `now` params) so behavior is reproducible; no external LLM call may be required for a test to pass.
 - Proposals, box changes, and sleep-review conclusions move through explicit reviewed status transitions — never auto-approve or silently mutate.
 - Redact secrets as `[REDACTED]`; never persist raw keys, tokens, or client documents.
-- Each subsystem has an ADR under `docs/adr/` (0001–0059). Read the relevant one before changing a subsystem's behavior, and add a new ADR for a new decision.
+- Each subsystem has an ADR under `docs/adr/` (0001–0060). Read the relevant one before changing a subsystem's behavior, and add a new ADR for a new decision.
+
+## Factory contract
+
+This repo runs under a supervised factory. `FACTORY.md` is the contract (what CI and the runtime verifier check, and what activation does and does not imply); `FACTORY_RULES.md` holds the operating rules. `python3 harness/ci.py` runs the ordinary static and unit checks (the full suite and typecheck); the GitHub check is **Factory deterministic checks**.
+
+- Protected paths — `MISSION.md`, `FACTORY.md`, `FACTORY_RULES.md`, `AGENTS.md`, `CLAUDE.md`, `engineering.md`, `harness/`, `.factory/`, `factory/`, `.github/workflows/` — change only with Aaron's explicit approval for that edit. Aaron owns scope and merge decisions; nothing here authorizes a merge or deploy.
+- Verification limits: the live memory corpus, actual Claude/Codex/Hermes history, daemon/LaunchAgents, relay/keychain, external models, and ONNX golden coverage without its pinned fixtures are not exercised. An unavailable environment is inconclusive, never a pass; a skipped test is not coverage; a tracked test-file count is not a claim that tests ran.
 
 ## Planning workflow
 
