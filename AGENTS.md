@@ -42,12 +42,21 @@ Surfaces:
 
 Supporting:
 
-- `tests/` — Vitest coverage mirroring the subsystem layout (129 test files); most tests drive `InMemoryStore`.
-- `docs/adr/` — architecture decision records, currently through ADR 0059.
+- `tests/` — Vitest coverage mirroring the subsystem layout (130 tracked `tests/**/*.test.ts` files); most tests drive `InMemoryStore`.
+- `docs/adr/` — architecture decision records, currently through ADR 0060.
 - `docs/integrations/` — Roscoe/Hermes, Codex history, universal history import, local MCP clients.
 - `.planning/` — roadmap (v1.0 = Phases 1–7 complete; v1.1 Phases 8–14), REQ-### requirements, per-phase artifacts. GSD was retired on 2026-08-09, so `STATE.md` is frozen at the Phase 12 closing state (2026-08-04); check `git log` and the newest ADRs for current state.
 - `docs/superpowers/`, `tasks/`, `workflows/`, `queue.md`, `PROJECT.md` — legacy/project management notes.
 - `example/` — vendored reference memory systems; not production code.
+
+## Factory contract
+
+This repo runs under a supervised factory. Read `FACTORY.md` (the contract: CI partitions, runtime verifier binding, activation status) and `FACTORY_RULES.md` (operating rules) before a factory run.
+
+- Ordinary checks: `python3 harness/ci.py` (typecheck plus the full unit suite). GitHub check name: **Factory deterministic checks**.
+- Protected policy/evidence paths: `MISSION.md`, `FACTORY.md`, `FACTORY_RULES.md`, `AGENTS.md`, `CLAUDE.md`, `engineering.md`, `harness/`, `.factory/`, `factory/`, `.github/workflows/`. Change them only with Aaron's explicit approval for that specific edit.
+- Aaron owns scope and exact-head merge decisions. A factory run needs a currently authorized issue or assignment; old roadmap phases and the frozen `.planning/STATE.md` do not establish current work. Nothing here authorizes merge or deploy.
+- Verification limits: the live memory corpus, actual Claude/Codex/Hermes history, daemon/LaunchAgents, relay/keychain, external models, and ONNX golden coverage without its pinned fixtures are not exercised. An unavailable environment is inconclusive, never a passing assertion; a skipped test is not coverage; a tracked test-file count does not claim tests executed.
 
 ## Graphify repo map
 
