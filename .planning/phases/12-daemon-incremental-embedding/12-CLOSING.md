@@ -115,3 +115,14 @@ trace discovery runs)". Against the live corpus:
   never captured under the plan that owned it.
 - The daemon is **stopped**. LaunchAgent unloaded, `daemon_lease` empty, no stray processes.
 - GAP-11-F's 151 contaminated corpus rows are untouched.
+
+## Addendum 2026-11-03: owner decisions
+
+- ADR 0052 decision 4 (the daemon probes embedder health and degrades to writing no vectors rather
+  than refusing to start) is **confirmed by the owner**.
+- ADR 0052 decision 5 (the A3 reading of SC4: per-device self-report through `memory status`) is
+  **confirmed by the owner**.
+- **Phase 12 signed off by the owner on 2026-11-03** (issue #15), on the evidence above. GSD is
+  retired, so this addendum stands in for `/gsd:verify-work 12`, and Phase 12 is ticked in
+  `.planning/ROADMAP.md`. The SC2 rescan item stays owned by Phase 13 as recorded above, and the
+  daemon remains stopped until Phase 13 plan 13-01 (issue #13) lands.

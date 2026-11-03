@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted, with two readings marked **pending owner confirmation** (decisions 4 and 5).
+Accepted. Decisions 4 and 5, originally marked pending owner confirmation, were **confirmed by the owner
+on 2026-11-03** (issue #15).
 
 ## Context
 
@@ -110,7 +111,7 @@ Two further rules of the stage:
   summary id alongside its text, never an error message quoting the input. Same discipline as
   `backfill-embeddings-command.ts:125-133`.
 
-### 4. The daemon probes; it does not hard-error — **pending owner confirmation**
+### 4. The daemon probes; it does not hard-error — **confirmed by owner 2026-11-03**
 
 `12-CONTEXT.md` locks two things: an enabled-but-broken embedder must hard-error, and there must
 never be a silent fallback to the hash embedder.
@@ -129,7 +130,11 @@ mixed-provider vector store is hard-errored by design.
 to start when an enabled embedder is broken, on the grounds that a silently vector-less daemon is a
 failure an operator may not notice. It is flagged here for the owner rather than decided silently.
 
-### 5. SC4's "detectable relative to its peers" — the A3 reading, **pending owner confirmation**
+**Owner confirmation (2026-11-03, issue #15):** the probe-and-degrade reading stands. The refuse-to-start
+alternative was considered and not chosen, because losing memory formation costs more than missing
+vectors, which the repair pass heals and `memory status` reports.
+
+### 5. SC4's "detectable relative to its peers" — the A3 reading, **confirmed by owner 2026-11-03**
 
 ROADMAP SC4 requires stale-model vectors to be "detectable relative to peers". Taken literally, peer
 comparison would need a sync-carried field naming each device's embedder identity. **That is not
@@ -143,8 +148,12 @@ output sees the divergence. The mechanical half is testable and tested — the r
 the pinned revision `ea104dacec62c0de699686887e3f920caeb4f3e3`, and a revision-less key could not
 distinguish a stale model from a current one. Plan 12-07 amends the ROADMAP text to match.
 
-Recorded **pending owner confirmation**, because `12-RESEARCH.md` Open Question 4 would otherwise be
+Originally recorded pending owner confirmation, because `12-RESEARCH.md` Open Question 4 would otherwise be
 answered only by omission.
+
+**Owner confirmation (2026-11-03, issue #15):** the A3 reading is accepted. SC4 is satisfied by each
+device reporting its own `(provider, model, revision)` and completeness through `memory status`; no
+sync-carried embedder identity will be added.
 
 ### 6. Model identity: one composed `provider` + `repo@revision` key
 
