@@ -115,3 +115,12 @@ trace discovery runs)". Against the live corpus:
   never captured under the plan that owned it.
 - The daemon is **stopped**. LaunchAgent unloaded, `daemon_lease` empty, no stray processes.
 - GAP-11-F's 151 contaminated corpus rows are untouched.
+
+## Addendum 2026-11-03: owner decisions
+
+- ADR 0052 decision 4 (the daemon probes embedder health and degrades to writing no vectors rather
+  than refusing to start) is **confirmed by the owner**.
+- ADR 0052 decision 5 (the A3 reading of SC4: per-device self-report through `memory status`) is
+  **confirmed by the owner**.
+- Phase 12 sign-off itself is still a separate owner decision tracked in issue #15. This addendum
+  records the two ADR decisions only; it does not tick Phase 12 in `.planning/ROADMAP.md`.
