@@ -19,7 +19,7 @@ Build one local-first, person-scoped conversation timeline from explicitly appro
 - [x] **Phase 9: Embedding Model + Embedder** — Resolve the hash-vs-ONNX decision; ship a pinned, deterministic embedder with the hash embedder remaining the default. (completed 2026-07-21)
 - [x] **Phase 10: Embedding Backfill** — Resumable, idempotent, checkpointed backfill of vectors for all 135,366 existing summaries. (completed 2026-07-21)
 - [x] **Phase 11: Derivation Input Hygiene** — Collapse tool-call runs into activity descriptions and exclude harness-injected scaffolding from derivations, keeping the canonical timeline intact. (complete: all 31 plans executed; SC7 signed off PASS 2026-07-28, as recorded in the frozen `STATE.md`)
-- [ ] **Phase 12: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
+- [x] **Phase 12: Daemon Incremental Embedding** — Embed newly contracted summaries per device, per tick, never synced.
 - [ ] **Phase 13: Forward-Only Vector Trace Discovery** — Replace shared-term all-pairs trace discovery with forward-only nearest-neighbor discovery, preserving the review flow.
 - [ ] **Phase 14: Semantic Recall** — Swap MemoryRetriever candidate selection to a vector top-K pre-filter ahead of unchanged boundary filtering.
 - [ ] **Phase 15: Deletion-Invalidation Closure + Operator Surface** — Close the embedding-deletion correctness gap and surface backfill/model health to operators.

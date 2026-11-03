@@ -122,5 +122,7 @@ trace discovery runs)". Against the live corpus:
   than refusing to start) is **confirmed by the owner**.
 - ADR 0052 decision 5 (the A3 reading of SC4: per-device self-report through `memory status`) is
   **confirmed by the owner**.
-- Phase 12 sign-off itself is still a separate owner decision tracked in issue #15. This addendum
-  records the two ADR decisions only; it does not tick Phase 12 in `.planning/ROADMAP.md`.
+- **Phase 12 signed off by the owner on 2026-11-03** (issue #15), on the evidence above. GSD is
+  retired, so this addendum stands in for `/gsd:verify-work 12`, and Phase 12 is ticked in
+  `.planning/ROADMAP.md`. The SC2 rescan item stays owned by Phase 13 as recorded above, and the
+  daemon remains stopped until Phase 13 plan 13-01 (issue #13) lands.
