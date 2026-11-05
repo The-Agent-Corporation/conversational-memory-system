@@ -1,8 +1,6 @@
 /**
- * Phase 0 characterization of the Hermes client paths.
- *
- * Each finding is skipped here so this PR stays green. The skip is removed in
- * Phase 1, which is where the behavior is fixed.
+ * Hermes is an ordinary client. These findings were quarantined on Phase 0
+ * and run here because Phase 1 enforces them.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -101,9 +99,7 @@ const injection = (overrides: Partial<InjectionPacket> = {}): InjectionPacket =>
   ...overrides
 });
 
-// Quarantined. Finding: Hermes unscoped retrieval returns another person's summary.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING Hermes unscoped retrieval: search returns another person's summary", async () => {
+it("FINDING Hermes unscoped retrieval: search returns another person's summary", async () => {
   const store = new InMemoryStore();
   await store.saveSummary(summary());
   const adapter = openAdapter(store);
@@ -131,9 +127,7 @@ const searchAnotherPerson = async (): Promise<InMemoryStore> => {
   return store;
 };
 
-// Quarantined. Finding: unscoped search strengthens another person's summary.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING injection strengthening: unscoped search increments another person's retrieval count and strength", async () => {
+it("FINDING injection strengthening: unscoped search increments another person's retrieval count and strength", async () => {
   const store = await searchAnotherPerson();
   const activeAfter = (await store.listSummaries()).find((item) => item.id === "summary_active");
 
@@ -141,9 +135,7 @@ it.skip("FINDING injection strengthening: unscoped search increments another per
   expect(activeAfter?.strength, "FINDING injection strengthening").toBe(0.4);
 });
 
-// Quarantined. Finding: unscoped search revives another person's stale summary.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING injection revival: unscoped search promotes another person's stale summary to revived", async () => {
+it("FINDING injection revival: unscoped search promotes another person's stale summary to revived", async () => {
   const store = await searchAnotherPerson();
   const staleAfter = (await store.listSummaries()).find((item) => item.id === "summary_stale");
 
@@ -151,17 +143,13 @@ it.skip("FINDING injection revival: unscoped search promotes another person's st
   expect(staleAfter?.retrievalCount, "FINDING injection revival").toBe(0);
 });
 
-// Quarantined. Finding: unscoped search persists an injection packet for another person.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING injection save: unscoped search persists an injection packet", async () => {
+it("FINDING injection save: unscoped search persists an injection packet", async () => {
   const store = await searchAnotherPerson();
 
   expect(await store.listInjections("session_a"), "FINDING injection save").toEqual([]);
 });
 
-// Quarantined. Finding: Hermes resume returns another person's summary by id.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING Hermes resume command: a cross-person summary id is not found", async () => {
+it("FINDING Hermes resume command: a cross-person summary id is not found", async () => {
   bindHermesIdentity();
   tempDir = await mkdtemp(join(tmpdir(), "cms-hermes-auth-"));
   const databasePath = join(tempDir, "memory.sqlite");
@@ -183,9 +171,7 @@ it.skip("FINDING Hermes resume command: a cross-person summary id is not found",
   }
 });
 
-// Quarantined. Finding: Hermes resume follows a forged injection_packet raw range.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING Hermes resume command: a forged injection_packet raw range is not resumed", async () => {
+it("FINDING Hermes resume command: a forged injection_packet raw range is not resumed", async () => {
   bindHermesIdentity();
   tempDir = await mkdtemp(join(tmpdir(), "cms-hermes-auth-"));
   const databasePath = join(tempDir, "memory.sqlite");

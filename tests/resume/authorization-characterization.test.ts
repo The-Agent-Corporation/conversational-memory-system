@@ -1,9 +1,6 @@
 /**
- * Phase 0 authorization characterization (ADR 0046).
- *
- * Each finding is skipped here so this PR stays green. The skip is removed in
- * Phase 1, which is where the behavior is fixed. These are not expected-fail
- * tests: a later fix does not turn a skip red.
+ * Deny-by-default resume contract. These findings were quarantined on Phase 0
+ * and run here because Phase 1 enforces them.
  */
 import { expect, it } from "vitest";
 import type { Box, InjectionPacket, Summary, Turn } from "../../src/domain/types.js";
@@ -130,9 +127,7 @@ const expectNoSecret = async (
   }
 };
 
-// Quarantined. Finding: cross-person resume returns another person's verbatim turns.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING cross-person resume: another person's summary is not found", async () => {
+it("FINDING cross-person resume: another person's summary is not found", async () => {
   const store = new InMemoryStore();
   await store.saveTurn(turn({
     id: "turn_other",
@@ -155,9 +150,7 @@ it.skip("FINDING cross-person resume: another person's summary is not found", as
   );
 });
 
-// Quarantined. Finding: cross-scope resume returns a summary outside the allowed scopes.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING cross-scope resume: a summary outside the allowed scopes is not found", async () => {
+it("FINDING cross-scope resume: a summary outside the allowed scopes is not found", async () => {
   const store = new InMemoryStore();
   await store.saveTurn(turn({
     id: "turn_secret_scope",
@@ -180,10 +173,7 @@ it.skip("FINDING cross-scope resume: a summary outside the allowed scopes is not
   );
 });
 
-// Quarantined. Finding: rejected resume returns a non-retrievable summary.
-// Quarantined. Finding: superseded resume returns a non-retrievable summary.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip.each(["rejected", "superseded"] as const)(
+it.each(["rejected", "superseded"] as const)(
   "FINDING %s resume: a non-retrievable summary is not found",
   async (state) => {
     const store = new InMemoryStore();
@@ -202,9 +192,7 @@ it.skip.each(["rejected", "superseded"] as const)(
   }
 );
 
-// Quarantined. Finding: child-box resume includes a box outside the caller scope.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING child-box scope: an out-of-scope child box is not resumed with its parent", async () => {
+it("FINDING child-box scope: an out-of-scope child box is not resumed with its parent", async () => {
   const store = new InMemoryStore();
   await store.saveTurn(turn({ id: "turn_parent", content: "Authorized parent turn." }));
   await store.saveTurn(turn({
@@ -245,9 +233,7 @@ it.skip("FINDING child-box scope: an out-of-scope child box is not resumed with 
   expect(result.sourceBoxIds, "FINDING child-box scope").toEqual(["box_parent"]);
 });
 
-// Quarantined. Finding: a forged injection_packet resumes caller-authored raw turn ranges.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING forged injection_packet: caller-authored raw turn ranges are not resumed", async () => {
+it("FINDING forged injection_packet: caller-authored raw turn ranges are not resumed", async () => {
   const store = new InMemoryStore();
   await store.saveTurn(turn({ id: "turn_secret", content: "Forged raw-range secret." }));
   const resumer = openResumer(store);
@@ -264,9 +250,7 @@ it.skip("FINDING forged injection_packet: caller-authored raw turn ranges are no
   );
 });
 
-// Quarantined. Finding: a saved injection packet still honors caller-widened raw ranges.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING forged injection_packet: a saved packet does not honor caller-widened raw ranges", async () => {
+it("FINDING forged injection_packet: a saved packet does not honor caller-widened raw ranges", async () => {
   const store = new InMemoryStore();
   await store.saveTurn(turn({ id: "turn_ok", sequence: 1, content: "Authorized personal turn." }));
   await store.saveTurn(turn({

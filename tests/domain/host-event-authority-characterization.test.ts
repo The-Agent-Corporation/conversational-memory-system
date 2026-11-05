@@ -1,6 +1,6 @@
 /**
- * Phase 0 characterization: a host event is a source record, not an authority claim.
- * The finding is skipped here and enabled in Phase 1.
+ * A host event is a source record, not an authority claim. This finding was
+ * quarantined on Phase 0 and runs here because Phase 1 enforces it.
  */
 import { expect, it } from "vitest";
 import { HostEventSchema } from "../../src/domain/events.js";
@@ -18,9 +18,7 @@ const event = {
   metadata: {}
 };
 
-// Quarantined. Finding: the host event schema accepts a caller-supplied personId.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING host event schema accepts a caller-supplied personId instead of rejecting it", () => {
+it("FINDING host event schema accepts a caller-supplied personId instead of rejecting it", () => {
   const parsed = HostEventSchema.safeParse({
     ...event,
     personId: "person_attacker",

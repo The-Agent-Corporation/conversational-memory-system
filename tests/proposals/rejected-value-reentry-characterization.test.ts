@@ -1,6 +1,6 @@
 /**
- * Phase 0 characterization: a rejected value comes back when the next candidate
- * has a different id. Each finding is skipped here and enabled in Phase 1.
+ * A rejected value must not come back under a new id. These findings were
+ * quarantined on Phase 0 and run here because Phase 1 enforces them.
  */
 import { expect, it } from "vitest";
 import { DeterministicBoxProposalPlanner } from "../../src/boxes/box-proposal-planner.js";
@@ -90,9 +90,7 @@ const summaries = (): Summary[] => [
   })
 ];
 
-// Quarantined. Finding: a rejected box value re-enters under a new box id.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING rejected box value re-enters under a new box id", async () => {
+it("FINDING rejected box value re-enters under a new box id", async () => {
   const planner = new DeterministicBoxProposalPlanner();
   const result = await planner.proposeBoxes({
     reviewedAt: "2026-05-07T12:00:00.000Z",
@@ -110,9 +108,7 @@ it.skip("FINDING rejected box value re-enters under a new box id", async () => {
   ).toEqual([]);
 });
 
-// Quarantined. Finding: a rejected proposal value re-enters under a new proposal id.
-// https://github.com/The-Agent-Corporation/conversational-memory-system/pull/21
-it.skip("FINDING rejected proposal value re-enters under a new proposal id", async () => {
+it("FINDING rejected proposal value re-enters under a new proposal id", async () => {
   const planner = new DeterministicBoxProposalPlanner();
   const result = await planner.proposeBoxes({
     reviewedAt: "2026-05-07T12:00:00.000Z",
