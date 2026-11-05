@@ -16,6 +16,10 @@ import {
   type MemoryResumeApplication
 } from "./tools/resume-tools.js";
 import {
+  registerMemoryReinforceTool,
+  type MemoryReinforceApplication
+} from "./tools/reinforce-tools.js";
+import {
   registerMemoryReadTools,
   type MemoryReadToolApplication
 } from "./tools/read-tools.js";
@@ -26,6 +30,7 @@ export interface MemoryToolApplication {
   readonly inject: MemoryInjectApplication;
   readonly appendTurn: MemoryAppendTurnApplication;
   readonly resume: MemoryResumeApplication;
+  readonly reinforce: MemoryReinforceApplication;
 }
 
 /**
@@ -34,7 +39,7 @@ export interface MemoryToolApplication {
  * read-only `memory_explain` tool, growing the read catalog to seven (17 total). ADR 0057
  * added the opt-in `memory_inject` tool and ADR 0058 the `event_delete_*` mutation pair
  * (twelve mutations). ADR 0063 added `memory_append_turn` and ADR 0064 added the
- * read-only `memory_resume` tool (22 total).
+ * read-only `memory_resume` tool. ADR 0066 added the explicit `memory_reinforce` signal (23 total).
  */
 export const registerMemoryTools = (
   server: McpServer,
@@ -44,5 +49,6 @@ export const registerMemoryTools = (
   registerMemoryInjectTool(server, application.inject);
   registerMemoryAppendTurnTool(server, application.appendTurn);
   registerMemoryResumeTool(server, application.resume);
+  registerMemoryReinforceTool(server, application.reinforce);
   registerMemoryMutationTools(server, application.mutations);
 };

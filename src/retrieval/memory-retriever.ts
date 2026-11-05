@@ -3,6 +3,7 @@ import type { Anchor, Box, InjectionPacket, MemoryTrace, Summary, TurnRange } fr
 import { cosineSimilarity, isAsymmetricEmbedder, type Embedder } from "../embeddings/embedder.js";
 import type { InjectionRequest } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { mutationAuditId } from "../storage/mutation-audit.js";
 import { RETRIEVAL_CANDIDATE_STATES, REVIVABLE_MEMORY_STATE, isRetrievableState } from "./retrievable-state.js";
 
 export interface RankedMemory {
@@ -43,7 +44,7 @@ export class MemoryRetriever {
     ]);
     const vectorSelection = await this.selectVectorCandidates(request, listedSummaries);
     const allSummaries = vectorSelection.summaries;
-    const { summaries, anchors, traces, boxes, allowedScopeIds, revivableSummaries } = applyRetrievalBoundary(
+    const { summaries, anchors, traces, boxes, allowedScopeIds } = applyRetrievalBoundary(
       request,
       allSummaries,
       allAnchors,
@@ -92,8 +93,23 @@ export class MemoryRetriever {
     };
 
     await this.store.saveInjection(packet);
-    await this.recordSelectedSummaryAccess(summaries, selected, createdAt);
-    await this.promoteRevivableSummaries(revivableSummaries, request.currentTopicSummary, selected, rankingOptions, createdAt);
+    const scopes = allowedScopeIds ?? [];
+    for (const scopeId of scopes) {
+      await this.store.recordMutationAudit({
+        id: mutationAuditId({
+          personId: request.personId ?? "unspecified",
+          scopeId,
+          action: "inject",
+          targetId: packet.id,
+          occurredAt: createdAt
+        }),
+        personId: request.personId ?? "unspecified",
+        scopeId,
+        action: "inject",
+        targetId: packet.id,
+        occurredAt: createdAt
+      });
+    }
     return packet;
   }
 
@@ -120,70 +136,6 @@ export class MemoryRetriever {
     return { summaries, vectorScores };
   }
 
-  private async recordSelectedSummaryAccess(
-    summaries: Summary[],
-    selected: RankedMemory[],
-    accessedAt: string
-  ): Promise<void> {
-    const selectedSummaryIds = new Set(
-      selected.flatMap((memory) => memory.summaryIds)
-    );
-
-    for (const summary of summaries) {
-      if (!selectedSummaryIds.has(summary.id)) {
-        continue;
-      }
-
-      await this.store.saveSummary({
-        ...summary,
-        lastAccessedAt: accessedAt,
-        retrievedAt: accessedAt,
-        retrievalCount: summary.retrievalCount + 1,
-        strength: strengthen(summary.strength),
-        // A selected summary is retrievable by construction (isRetrievableState gates it before
-        // ranking), so no state promotion can occur here. Deferred revival of REVIVABLE_MEMORY_STATE
-        // ("stale") summaries is handled separately by promoteRevivableSummaries.
-        state: summary.state
-      });
-    }
-  }
-
-  /**
-   * Deferred revival (GAP-11-A / ADR 0049): a "stale" summary is never itself retrievable, but
-   * one that would have ranked into THIS packet is promoted to "revived" so it becomes
-   * retrievable on the NEXT query. It never enters `ranked`, `selected`, `packet.selectedMemory`,
-   * or `packet.sourceSummaryIds` for the packet that triggered its promotion.
-   */
-  private async promoteRevivableSummaries(
-    revivableSummaries: Summary[],
-    currentTopicSummary: string,
-    selected: RankedMemory[],
-    rankingOptions: { embedder?: Embedder; topicEmbedding: Summary["embedding"] },
-    accessedAt: string
-  ): Promise<void> {
-    if (revivableSummaries.length === 0 || selected.length === 0) {
-      return;
-    }
-
-    const topicWords = significantWords(currentTopicSummary);
-    const selectedFloor = Math.min(...selected.map((memory) => memory.score));
-
-    for (const summary of revivableSummaries) {
-      const score = rankSummary(topicWords, summary, rankingOptions).score;
-      if (score <= 0 || score < selectedFloor) {
-        continue;
-      }
-
-      await this.store.saveSummary({
-        ...summary,
-        state: "revived",
-        lastAccessedAt: accessedAt,
-        retrievedAt: accessedAt,
-        retrievalCount: summary.retrievalCount + 1,
-        strength: strengthen(summary.strength)
-      });
-    }
-  }
 }
 
 export function applyRetrievalBoundary(
@@ -450,10 +402,6 @@ function buildMemoryStub(memory: RankedMemory, maxTokens: number): RankedMemory 
     tokenCount: maxTokens,
     scoringMethod: memory.scoringMethod
   };
-}
-
-function strengthen(strength: number): number {
-  return Math.min(1, Number((strength + 0.05).toFixed(2)));
 }
 
 export function rankMemories(

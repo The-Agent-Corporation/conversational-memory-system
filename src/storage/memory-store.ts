@@ -44,6 +44,7 @@ import type {
   SupersededSummaryPruneReceipt,
   UnhygienicAnchorPruneReceipt
 } from "./mcp-mutation-contracts.js";
+import type { MutationAuditRecord, RejectedValueFingerprint } from "./mutation-audit.js";
 import type { ModelOutputCacheEntry, ModelUsageEntry } from "../openrouter/types.js";
 import type {
   AcceptedSyncOperation,
@@ -272,6 +273,11 @@ export interface MemoryStore {
   listInjections(hostSessionId: string): Promise<InjectionPacket[]>;
   deleteInjectionsReferencingSummaryIds(summaryIds: string[]): Promise<void>;
   saveProposal(proposal: MemoryProposal): Promise<void>;
+  recordMutationAudit(record: MutationAuditRecord): Promise<void>;
+  listMutationAudits(personId: string): Promise<MutationAuditRecord[]>;
+  recordRejectedValueFingerprint(record: RejectedValueFingerprint): Promise<void>;
+  hasRejectedValueFingerprint(personId: string, scopeId: string, valueHash: string): Promise<boolean>;
+  listRejectedValueFingerprints(personId: string): Promise<RejectedValueFingerprint[]>;
   getProposal(id: string): Promise<MemoryProposal | null>;
   listProposals(filter?: ProposalFilter): Promise<MemoryProposal[]>;
   saveTrace(trace: MemoryTrace): Promise<void>;
