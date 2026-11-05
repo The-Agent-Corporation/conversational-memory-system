@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
+import { HostNameSchema } from "../domain/events.js";
 import { createProfileAuthority, type ProfileAuthority } from "./authority.js";
 
 const AbsolutePathSchema = z.string().min(1).refine(isAbsolute, "path must be absolute");
@@ -18,7 +19,8 @@ const ProfileConfigSchema = z.object({
   ingestScopeId: IdentifierSchema,
   sourceRoots: z.record(z.string().trim().min(1).max(64), AbsolutePathSchema),
   scopeAliases: z.record(IdentifierSchema, SafeAliasSchema),
-  allowInjection: z.boolean().optional().default(false)
+  allowInjection: z.boolean().optional().default(false),
+  allowedHosts: z.array(HostNameSchema).min(1).max(32).optional()
 }).strict().superRefine((profile, context) => {
   if (!profile.allowedScopeIds.includes(profile.ingestScopeId)) {
     context.addIssue({
@@ -75,6 +77,7 @@ export const loadMemoryMcpProfile = async (
       Object.entries(profile.sourceRoots).map(([name, path]) => [name, resolve(path)])
     ),
     scopeAliases: profile.scopeAliases,
-    allowInjection: profile.allowInjection
+    allowInjection: profile.allowInjection,
+    allowedHosts: profile.allowedHosts ?? null
   });
 };

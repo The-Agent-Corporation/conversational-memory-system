@@ -109,6 +109,7 @@ describe("MCP profile loader contract", () => {
 
     expect(Object.keys(authority).sort()).toEqual([
       "allowInjection",
+      "allowedHosts",
       "allowedScopeIds",
       "databasePath",
       "fingerprint",

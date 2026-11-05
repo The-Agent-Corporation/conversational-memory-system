@@ -645,7 +645,8 @@ const testAuthority = () => ({
   ingestScopeId: "scope-alpha",
   sourceRoots: { synthetic: "/synthetic/configured" },
   scopeAliases: { "scope-alpha": "context-one" },
-  fingerprint: "synthetic-authority-fingerprint"
+  fingerprint: "synthetic-authority-fingerprint",
+  allowedHosts: null
 });
 
 const codexApplicationHarness = async () => {
