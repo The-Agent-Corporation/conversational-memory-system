@@ -4,11 +4,12 @@
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import type { InjectionPacket, Summary, Turn } from "../../src/domain/types.js";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import { resumeHermesMemory } from "../../src/integrations/hermes/resume-command.js";
+import { writeHermesMcpProfile } from "../../src/integrations/hermes/profile-file.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
@@ -159,8 +160,15 @@ it("FINDING Hermes resume command: a cross-person summary id is not found", asyn
   store.close();
 
   try {
-    const result = await resumeHermesMemory({
+    const profile = await writeHermesMcpProfile({
+      directory: dirname(databasePath),
       databasePath,
+      personId: "person_a",
+      scopeId: "personal"
+    });
+    const result = await resumeHermesMemory({
+      configPath: profile.configPath,
+      profileName: profile.profileName,
       input: JSON.stringify({ summary_id: "summary_other" })
     });
     expect.fail(`FINDING Hermes cross-person resume: command returned ${JSON.stringify(result.turns.map((sourceTurn) => sourceTurn.content))}; denied must be not found`);
@@ -180,8 +188,15 @@ it("FINDING Hermes resume command: a forged injection_packet raw range is not re
   store.close();
 
   try {
-    const result = await resumeHermesMemory({
+    const profile = await writeHermesMcpProfile({
+      directory: dirname(databasePath),
       databasePath,
+      personId: "person_a",
+      scopeId: "personal"
+    });
+    const result = await resumeHermesMemory({
+      configPath: profile.configPath,
+      profileName: profile.profileName,
       input: JSON.stringify({ injection_packet: injection() })
     });
     expect(result.turns.map((sourceTurn) => sourceTurn.content), "FINDING Hermes forged injection_packet").not.toContain(

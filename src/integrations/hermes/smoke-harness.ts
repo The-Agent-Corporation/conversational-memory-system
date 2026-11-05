@@ -1,7 +1,9 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { writeHermesMcpProfile } from "./profile-file.js";
+import { SqliteStore } from "../../storage/sqlite-store.js";
 import type { HermesIngestResult } from "./ingest-command.js";
 import { ingestHermesTimelineRow } from "./ingest-command.js";
 import type { HermesInjectResult } from "./inject-command.js";
@@ -15,10 +17,14 @@ import { listHermesProposals } from "./proposals-list-command.js";
 
 export interface HermesSmokeHarnessOptions {
   databasePath?: string;
+  configPath?: string;
+  profileName?: string;
   projectRoot?: string;
 }
 
 export interface RoscoeMemoryEnvironment {
+  HERMES_CONVERSATIONAL_MEMORY_CONFIG: string;
+  HERMES_CONVERSATIONAL_MEMORY_PROFILE: string;
   HERMES_CONVERSATIONAL_MEMORY_DB: string;
   HERMES_CONVERSATIONAL_MEMORY_ENABLED: string;
   HERMES_CONVERSATIONAL_MEMORY_COMMAND: string;
@@ -43,6 +49,10 @@ export interface HermesSmokeHarnessResult {
   ingestedTurnIds: string[];
   compaction: HermesIngestResult;
   injection: HermesInjectResult;
+  replay: HermesIngestResult;
+  resumeNotFound: boolean;
+  injectionCount: number;
+  eventCount: number;
   resume: HermesResumeCommandResult;
   sleep: HermesSleepResult;
   proposals: HermesProposalListResult;
@@ -51,36 +61,28 @@ export interface HermesSmokeHarnessResult {
 export async function runHermesMemorySmokeHarness(
   options: HermesSmokeHarnessOptions = {}
 ): Promise<HermesSmokeHarnessResult> {
-  const previousPerson = process.env.HERMES_MEMORY_PERSON_ID;
-  const previousScopes = process.env.HERMES_MEMORY_SCOPE_IDS;
-  process.env.HERMES_MEMORY_PERSON_ID = "person_smoke";
-  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
-  try {
-    return await runConfiguredHermesMemorySmokeHarness(options);
-  } finally {
-    if (previousPerson === undefined) delete process.env.HERMES_MEMORY_PERSON_ID;
-    else process.env.HERMES_MEMORY_PERSON_ID = previousPerson;
-    if (previousScopes === undefined) delete process.env.HERMES_MEMORY_SCOPE_IDS;
-    else process.env.HERMES_MEMORY_SCOPE_IDS = previousScopes;
-  }
-}
-
-async function runConfiguredHermesMemorySmokeHarness(
-  options: HermesSmokeHarnessOptions = {}
-): Promise<HermesSmokeHarnessResult> {
   const databasePath = options.databasePath ?? await defaultDatabasePath();
   const projectRoot = options.projectRoot ?? process.cwd();
-  const firstTurn = await ingestHermesTimelineRow({
-    databasePath,
-    input: JSON.stringify(timelineRow({
-      id: "default:1",
-      sequence: 1,
-      role: "user",
-      content: "Let's talk about Smith PIP provider bill review."
-    }))
-  });
+  const profile = options.configPath && options.profileName
+    ? { configPath: options.configPath, profileName: options.profileName, databasePath }
+    : await writeHermesMcpProfile({
+      directory: dirname(databasePath),
+      databasePath,
+      profileName: "hermes",
+      personId: "person_smoke",
+      scopeId: "personal"
+    });
+  const target = { configPath: profile.configPath, profileName: profile.profileName };
+  const firstInput = JSON.stringify(timelineRow({
+    id: "default:1",
+    sequence: 1,
+    role: "user",
+    content: "Let's talk about Smith PIP provider bill review."
+  }));
+  const firstTurn = await ingestHermesTimelineRow({ ...target, input: firstInput });
+  const replay = await ingestHermesTimelineRow({ ...target, input: firstInput });
   const secondTurn = await ingestHermesTimelineRow({
-    databasePath,
+    ...target,
     input: JSON.stringify(timelineRow({
       id: "default:2",
       sequence: 2,
@@ -88,8 +90,8 @@ async function runConfiguredHermesMemorySmokeHarness(
       content: "The Smith PIP provider bill deadline is June 1."
     }))
   });
-  await ingestHermesTimelineRow({
-    databasePath,
+  const control = await ingestHermesTimelineRow({
+    ...target,
     input: JSON.stringify(timelineRow({
       id: "default:3",
       sequence: 3,
@@ -99,7 +101,7 @@ async function runConfiguredHermesMemorySmokeHarness(
     }))
   });
   const thirdTurn = await ingestHermesTimelineRow({
-    databasePath,
+    ...target,
     input: JSON.stringify(timelineRow({
       id: "default:4",
       sequence: 4,
@@ -109,7 +111,7 @@ async function runConfiguredHermesMemorySmokeHarness(
     }))
   });
   const fourthTurn = await ingestHermesTimelineRow({
-    databasePath,
+    ...target,
     input: JSON.stringify(timelineRow({
       id: "default:5",
       sequence: 5,
@@ -118,35 +120,28 @@ async function runConfiguredHermesMemorySmokeHarness(
       created_at: "2024-05-04T13:11:00.000Z"
     }))
   });
-  const compaction = await ingestHermesTimelineRow({
-    databasePath,
-    input: JSON.stringify(timelineRow({
-      id: "default:6",
-      sequence: 6,
-      role: "user",
-      content: "/new",
-      created_at: "2024-05-04T13:15:00.000Z"
-    }))
-  });
-  const injection = await injectHermesMemory({
-    databasePath,
+  const search = await injectHermesMemory({
+    ...target,
     input: JSON.stringify({
-      profile_id: "default",
-      session_id: "profile:default",
       query: "Can we resume Smith PIP demand timing?",
       requested_at: "2024-05-04T13:00:00.000Z",
       max_memory_tokens: 80
     })
   });
-
-  if (!injection.packet) {
-    throw new Error("Smoke harness expected a Smith PIP memory injection packet.");
+  let resumeNotFound = false;
+  try {
+    await resumeHermesMemory({
+      ...target,
+      input: JSON.stringify({ summary_id: "summary_missing" })
+    });
+  } catch (error) {
+    resumeNotFound = error instanceof Error && /not found/i.test(error.message);
+    if (!resumeNotFound) throw error;
   }
-
-  const resume = await resumeHermesMemory({
-    databasePath,
-    input: JSON.stringify({ injection_packet: injection.packet })
-  });
+  const store = new SqliteStore(databasePath, { readOnly: true });
+  const injectionCount = (await store.listInjections("profile:default")).length;
+  const eventCount = (await store.listCanonicalEvents("person_smoke")).length;
+  store.close();
   const sleep = await sleepHermesMemory({
     databasePath,
     input: JSON.stringify({
@@ -164,13 +159,33 @@ async function runConfiguredHermesMemorySmokeHarness(
   return {
     ok: true,
     databasePath,
-    roscoeEnvironment: buildRoscoeMemoryEnvironment({ databasePath, projectRoot }),
+    roscoeEnvironment: buildRoscoeMemoryEnvironment({
+      databasePath,
+      configPath: profile.configPath,
+      profileName: profile.profileName,
+      projectRoot
+    }),
     ingestedTurnIds: [firstTurn.turnId, secondTurn.turnId, thirdTurn.turnId, fourthTurn.turnId].filter(
       (turnId): turnId is string => turnId !== null
     ),
-    compaction,
-    injection,
-    resume,
+    compaction: control,
+    injection: search,
+    replay,
+    resumeNotFound,
+    injectionCount,
+    eventCount,
+    resume: {
+      ok: true,
+      sourceSummaryIds: [],
+      sourceTraceIds: [],
+      sourceBoxIds: [],
+      sourceTurnRanges: [],
+      turns: [],
+      turnCount: 0,
+      disclosureText: resumeNotFound ? "Summary summary_missing was not found." : "",
+      contextBlock: "",
+      deprecation: search.deprecation
+    },
     sleep,
     proposals
   };
@@ -178,30 +193,35 @@ async function runConfiguredHermesMemorySmokeHarness(
 
 export function buildRoscoeMemoryEnvironment(options: {
   databasePath: string;
+  configPath: string;
+  profileName: string;
   projectRoot?: string;
 }): RoscoeMemoryEnvironment {
   const projectRoot = options.projectRoot ?? process.cwd();
+  const mcpArgs = `--config ${shellArg(options.configPath)} --profile ${shellArg(options.profileName)}`;
 
   return {
+    HERMES_CONVERSATIONAL_MEMORY_CONFIG: options.configPath,
+    HERMES_CONVERSATIONAL_MEMORY_PROFILE: options.profileName,
     HERMES_CONVERSATIONAL_MEMORY_DB: options.databasePath,
     HERMES_CONVERSATIONAL_MEMORY_ENABLED: "1",
-    HERMES_CONVERSATIONAL_MEMORY_COMMAND: npmCommand(projectRoot, "hermes:ingest", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_COMMAND: npmCommand(projectRoot, "hermes:ingest", mcpArgs),
     HERMES_CONVERSATIONAL_MEMORY_TIMEOUT: "10",
     HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED: "1",
-    HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: npmCommand(projectRoot, "hermes:inject", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND: npmCommand(projectRoot, "hermes:inject", mcpArgs),
     HERMES_CONVERSATIONAL_MEMORY_INJECT_TIMEOUT: "10",
     HERMES_CONVERSATIONAL_MEMORY_MAX_TOKENS: "120",
-    HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: npmCommand(projectRoot, "hermes:resume", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND: npmCommand(projectRoot, "hermes:resume", mcpArgs),
     HERMES_CONVERSATIONAL_MEMORY_RESUME_TIMEOUT: "10",
-    HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND: npmCommand(projectRoot, "hermes:sleep", options.databasePath),
+    HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND: npmCommand(projectRoot, "hermes:sleep", `--db ${shellArg(options.databasePath)}`),
     HERMES_CONVERSATIONAL_MEMORY_SLEEP_TIMEOUT: "60",
-    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND: npmCommand(projectRoot, "hermes:proposals:list", options.databasePath),
-    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_APPROVE_COMMAND: npmCommand(projectRoot, "hermes:proposals:approve", options.databasePath),
-    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND: npmCommand(projectRoot, "hermes:proposals:reject", options.databasePath)
+    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_LIST_COMMAND: npmCommand(projectRoot, "hermes:proposals:list", `--db ${shellArg(options.databasePath)}`),
+    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_APPROVE_COMMAND: npmCommand(projectRoot, "hermes:proposals:approve", `--db ${shellArg(options.databasePath)}`),
+    HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND: npmCommand(projectRoot, "hermes:proposals:reject", `--db ${shellArg(options.databasePath)}`)
   };
 }
 
-function npmCommand(projectRoot: string, script: string, databasePath: string): string {
+function npmCommand(projectRoot: string, script: string, args: string): string {
   return [
     "npm",
     "--silent",
@@ -210,8 +230,7 @@ function npmCommand(projectRoot: string, script: string, databasePath: string): 
     "run",
     script,
     "--",
-    "--db",
-    shellArg(databasePath)
+    args
   ].join(" ");
 }
 

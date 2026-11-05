@@ -15,21 +15,15 @@ export interface HermesMemoryIdentityInput {
   allowedScopeIds?: readonly string[];
 }
 
-const PERSON_ENV = "HERMES_MEMORY_PERSON_ID";
-const SCOPE_ENV = "HERMES_MEMORY_SCOPE_IDS";
-
 export function resolveHermesMemoryIdentity(
   input: HermesMemoryIdentityInput = {}
 ): HermesMemoryIdentity {
-  const personId = input.personId?.trim() || process.env[PERSON_ENV]?.trim() || "";
-  const configuredScopes = input.allowedScopeIds
-    ?? process.env[SCOPE_ENV]?.split(",").map((scopeId) => scopeId.trim()).filter(Boolean)
-    ?? [];
-  const allowedScopeIds = [...new Set(configuredScopes)];
+  const personId = input.personId?.trim() ?? "";
+  const allowedScopeIds = [...new Set((input.allowedScopeIds ?? []).map((scopeId) => scopeId.trim()).filter(Boolean))];
 
   if (!personId || allowedScopeIds.length !== 1) {
     throw new Error(
-      "Hermes memory identity is not configured. Set one personId and exactly one scope via HERMES_MEMORY_PERSON_ID and HERMES_MEMORY_SCOPE_IDS."
+      "An explicit personId and exactly one scope are required. HERMES_MEMORY_* environment flags are not accepted."
     );
   }
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AnchorDetector } from "../../src/anchors/anchor-detector.js";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import type { Summary } from "../../src/domain/types.js";
@@ -46,15 +46,19 @@ const summary = (overrides: Partial<Summary> = {}): Summary => ({
   ...overrides
 });
 
-describe("HermesMemoryAdapter", () => {
-  beforeEach(() => {
-    process.env.HERMES_MEMORY_PERSON_ID = "person_default";
-    process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
-  });
+const hermesAdapter = (
+  store: InMemoryStore,
+  options: Omit<ConstructorParameters<typeof HermesMemoryAdapter>[1], "personId" | "allowedScopeIds"> = {}
+): HermesMemoryAdapter => new HermesMemoryAdapter(store, {
+  personId: "person_default",
+  allowedScopeIds: ["personal"],
+  ...options
+});
 
+describe("HermesMemoryAdapter", () => {
   it("processes Hermes rows through ingest, anchors, topic monitoring, and pre-compaction", async () => {
     const store = new InMemoryStore();
-    const adapter = new HermesMemoryAdapter(store);
+    const adapter = hermesAdapter(store);
 
     await adapter.processTimelineRow(row());
     await adapter.processTimelineRow(row({
@@ -106,7 +110,7 @@ describe("HermesMemoryAdapter", () => {
   describe("anchor gate eventKind forwarding (GAP-11-G)", () => {
     it("forwards the host event's eventKind to the anchor gate", async () => {
       const store = new InMemoryStore();
-      const adapter = new HermesMemoryAdapter(store);
+      const adapter = hermesAdapter(store);
       const spy = vi.spyOn(AnchorDetector.prototype, "detectForTurn");
 
       try {
@@ -122,7 +126,7 @@ describe("HermesMemoryAdapter", () => {
 
     it("keeps live-bridge anchor behavior unchanged: conversational mints, role tool does not", async () => {
       const store = new InMemoryStore();
-      const adapter = new HermesMemoryAdapter(store);
+      const adapter = hermesAdapter(store);
 
       const conversational = await adapter.processTimelineRow(
         row({ content: "The Smith PIP demand deadline is June 1." })
@@ -143,7 +147,7 @@ describe("HermesMemoryAdapter", () => {
 
   it("compacts the active topic when Hermes sends a new-conversation command", async () => {
     const store = new InMemoryStore();
-    const adapter = new HermesMemoryAdapter(store);
+    const adapter = hermesAdapter(store);
 
     await adapter.processTimelineRow(row());
     await adapter.processTimelineRow(row({
@@ -171,7 +175,7 @@ describe("HermesMemoryAdapter", () => {
 
   it("prepares injection from the current Hermes topic", async () => {
     const store = new InMemoryStore();
-    const adapter = new HermesMemoryAdapter(store);
+    const adapter = hermesAdapter(store);
 
     await adapter.processTimelineRow(row());
     await adapter.processTimelineRow(row({
@@ -207,7 +211,7 @@ describe("HermesMemoryAdapter", () => {
 
   it("expands a summary into source Hermes timeline turns on request", async () => {
     const store = new InMemoryStore();
-    const adapter = new HermesMemoryAdapter(store);
+    const adapter = hermesAdapter(store);
 
     await adapter.processTimelineRow(row());
     await adapter.processTimelineRow(row({
@@ -235,7 +239,7 @@ describe("HermesMemoryAdapter", () => {
   it("passes an explicit memory token budget into current-topic injection", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(summary());
-    const adapter = new HermesMemoryAdapter(store);
+    const adapter = hermesAdapter(store);
 
     await adapter.processTimelineRow(row({
       id: "1",
@@ -256,7 +260,7 @@ describe("HermesMemoryAdapter", () => {
   it("searches memory explicitly without relying on the current topic monitor", async () => {
     const store = new InMemoryStore();
     await store.saveSummary(summary());
-    const adapter = new HermesMemoryAdapter(store);
+    const adapter = hermesAdapter(store);
 
     const packet = await adapter.searchMemory({
       profileId: "default",
@@ -286,7 +290,7 @@ describe("HermesMemoryAdapter", () => {
         };
       }
     };
-    const adapter = new HermesMemoryAdapter(store, { summarizer });
+    const adapter = hermesAdapter(store, { summarizer });
 
     await adapter.processTimelineRow(row());
     await adapter.processTimelineRow(row({
@@ -328,7 +332,7 @@ describe("HermesMemoryAdapter", () => {
         };
       }
     };
-    const adapter = new HermesMemoryAdapter(store, { embedder });
+    const adapter = hermesAdapter(store, { embedder });
 
     await adapter.processTimelineRow(row());
     await adapter.processTimelineRow(row({

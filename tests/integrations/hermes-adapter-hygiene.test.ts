@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import type { HermesTimelineRow } from "../../src/integrations/hermes/contract.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
@@ -24,14 +24,15 @@ const row = (overrides: Partial<HermesTimelineRow> = {}): HermesTimelineRow => (
 });
 
 describe("HermesMemoryAdapter derivation hygiene (live bridge)", () => {
-  beforeEach(() => {
-    process.env.HERMES_MEMORY_PERSON_ID = "person_default";
-    process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
+  const hermesAdapter = (store: InMemoryStore, options = {}) => new HermesMemoryAdapter(store, {
+    personId: "person_default",
+    allowedScopeIds: ["personal"],
+    ...options
   });
 
   it("does not open or close a topic span for tool rows, but still ingests them", async () => {
     const store = new InMemoryStore();
-    const adapter = new HermesMemoryAdapter(store, { summarizer: new DeterministicSummarizer() });
+    const adapter = hermesAdapter(store, { summarizer: new DeterministicSummarizer() });
 
     const first = await adapter.processTimelineRow(row({
       id: "1",
@@ -83,7 +84,7 @@ describe("HermesMemoryAdapter derivation hygiene (live bridge)", () => {
 
   it("does not open or close a topic span for a harness-injected [SYSTEM: ...] row", async () => {
     const store = new InMemoryStore();
-    const adapter = new HermesMemoryAdapter(store, { summarizer: new DeterministicSummarizer() });
+    const adapter = hermesAdapter(store, { summarizer: new DeterministicSummarizer() });
 
     await adapter.processTimelineRow(row({
       id: "1",
@@ -108,7 +109,7 @@ describe("HermesMemoryAdapter derivation hygiene (live bridge)", () => {
 
   it("still closes the span on a control_signal row (e.g. /new)", async () => {
     const store = new InMemoryStore();
-    const adapter = new HermesMemoryAdapter(store, { summarizer: new DeterministicSummarizer() });
+    const adapter = hermesAdapter(store, { summarizer: new DeterministicSummarizer() });
 
     await adapter.processTimelineRow(row({
       id: "1",
