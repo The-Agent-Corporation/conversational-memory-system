@@ -20,6 +20,9 @@ export interface OfflineLocalMcpSmokeResult {
 }
 
 export async function runOfflineLocalMcpSmoke(directory?: string): Promise<OfflineLocalMcpSmokeResult> {
+  if (directory === "") {
+    throw new Error("Refusing to write an offline smoke profile into an empty directory path.");
+  }
   const root = directory ?? await mkdtemp(join(tmpdir(), "cms-offline-mcp-"));
   if (directory) {
     await mkdir(root, { recursive: true });

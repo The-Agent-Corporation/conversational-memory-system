@@ -47,6 +47,7 @@ export async function quarantineUnownedLegacyRows(
     if (!backup.isFile() || backup.size < 1) {
       throw new Error("The confirmed backup must be a non-empty file. Refusing to quarantine unowned rows.");
     }
+    assertExistingDatabase(parsed.databasePath);
   }
 
   const store = new SqliteStore(parsed.databasePath, { readOnly: parsed.apply !== true });
@@ -111,6 +112,18 @@ export async function quarantineUnownedLegacyRows(
     };
   } finally {
     store.close();
+  }
+}
+
+function assertExistingDatabase(databasePath: string): void {
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(databasePath);
+  } catch {
+    throw new Error(`Database path does not exist or is unreadable: ${databasePath}. Refusing to quarantine unowned rows.`);
+  }
+  if (!stat.isFile()) {
+    throw new Error(`Database path is not a regular file: ${databasePath}. Refusing to quarantine unowned rows.`);
   }
 }
 

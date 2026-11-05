@@ -40,4 +40,13 @@ describe("offline local MCP smoke", () => {
     expect(await readFile(profilePath, "utf8")).toBe("{\"keep\":true}\n");
     await expect(stat(join(tempDir, "memory.sqlite"))).rejects.toThrow();
   });
+
+  it("rejects an empty directory argument before resolving the working directory", async () => {
+    const cwd = process.cwd();
+    const targets = ["memory.sqlite", "profiles.json", "sources"].map((name) => join(cwd, name));
+    const before = await Promise.all(targets.map(async (path) => stat(path).then((value) => value.mtimeMs).catch(() => null)));
+    await expect(runOfflineLocalMcpSmoke("")).rejects.toThrow(/empty directory path/);
+    const after = await Promise.all(targets.map(async (path) => stat(path).then((value) => value.mtimeMs).catch(() => null)));
+    expect(after).toEqual(before);
+  });
 });

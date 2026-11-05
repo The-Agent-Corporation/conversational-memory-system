@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -242,6 +242,33 @@ describe("quarantine-unowned command", () => {
     const databasePath = join(tempDir, "missing.sqlite");
     await expect(quarantineUnownedLegacyRows({ databasePath })).rejects.toThrow();
     await expect(stat(databasePath)).rejects.toThrow();
+  });
+
+  it("apply mode refuses a missing database instead of creating one", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "cms-unowned-"));
+    const databasePath = join(tempDir, "missing.sqlite");
+    const backupPath = join(tempDir, "backup.bin");
+    await writeFile(backupPath, "backup-bytes");
+    await expect(quarantineUnownedLegacyRows({
+      databasePath,
+      apply: true,
+      confirmBackupPath: backupPath
+    })).rejects.toThrow(/does not exist or is unreadable/);
+    await expect(stat(databasePath)).rejects.toThrow();
+  });
+
+  it("apply mode refuses a directory where a database file was expected", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "cms-unowned-"));
+    const databasePath = join(tempDir, "not-a-database");
+    await mkdir(databasePath);
+    const backupPath = join(tempDir, "backup.bin");
+    await writeFile(backupPath, "backup-bytes");
+    await expect(quarantineUnownedLegacyRows({
+      databasePath,
+      apply: true,
+      confirmBackupPath: backupPath
+    })).rejects.toThrow(/not a regular file/);
+    expect((await stat(databasePath)).isDirectory()).toBe(true);
   });
 
   it("quarantines a requested summary without parsing unrelated rows", async () => {
