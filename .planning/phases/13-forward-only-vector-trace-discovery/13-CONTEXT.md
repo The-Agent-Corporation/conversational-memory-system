@@ -1,5 +1,7 @@
 # Phase 13 — Forward-Only Vector Trace Discovery: Context and Locked Decisions
 
+> **ADR number (GitHub issue #12, rechecked 2026-11-05):** These locked decisions are recorded later as **ADR 0061** (`docs/adr/0061-forward-only-vector-trace-discovery.md`). `docs/adr/0055-openrouter-client.md` is the Shared OpenRouter Client ADR and is not this record. 0061 still has no file after ADRs 0062–0066. Do not retarget Phase 13 to 0067. See `13-ADR-NUMBER.md`.
+
 **Created:** 2026-08-04, after the Phase 12 closing state was recorded
 (`.planning/phases/12-daemon-incremental-embedding/12-CLOSING.md`). The decisions below were made
 by the owner in session before planning. They are **LOCKED inputs to the planner, not open

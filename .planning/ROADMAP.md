@@ -469,7 +469,7 @@ Plans:
   4. Running the trace-discovery step twice with exactly one new summary added between runs leaves every pre-existing trace assignment unchanged — no nightly churn, no collapse into an unbounded mega-trace.
   5. Trace-discovery cost per daemon cycle stays flat as new summaries arrive at growing corpus size, rather than growing with total corpus size.
 
-**Plans**: 12 plans (`13-01` through `13-12`) in [the Phase 13 directory](phases/13-forward-only-vector-trace-discovery/), across 8 waves. The [final plan-check pass](phases/13-forward-only-vector-trace-discovery/13-PLAN-CHECK.md#third-pass--n1n2n3n4-2026-08-04) records planning approval, not implementation completion. Phase 13 remains open in [#11](https://github.com/The-Agent-Corporation/conversational-memory-system/issues/11); the ADR-number collision remains tracked in [#12](https://github.com/The-Agent-Corporation/conversational-memory-system/issues/12).
+**Plans**: 12 plans (`13-01` through `13-12`) in [the Phase 13 directory](phases/13-forward-only-vector-trace-discovery/), across 8 waves. The [final plan-check pass](phases/13-forward-only-vector-trace-discovery/13-PLAN-CHECK.md#third-pass--n1n2n3n4-2026-08-04) records planning approval, not implementation completion. Phase 13 remains open in [#11](https://github.com/The-Agent-Corporation/conversational-memory-system/issues/11). The ADR-number collision in [#12](https://github.com/The-Agent-Corporation/conversational-memory-system/issues/12) is reconciled in [13-ADR-NUMBER.md](phases/13-forward-only-vector-trace-discovery/13-ADR-NUMBER.md): the Phase 13 record is ADR 0061, not the occupied OpenRouter ADR 0055.
 
 ### Phase 14: Semantic Recall
 

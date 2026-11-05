@@ -1,6 +1,6 @@
 # Phase 13: Forward-Only Vector Trace Discovery — Research
 
-> **ADR number mapping (GitHub issue #12, reconciled 2026-11-05):** Historical references below to "ADR 0055" are the Phase 13 decision record this review reserved. That number is occupied by `docs/adr/0055-openrouter-client.md` (Shared OpenRouter Client). The Phase 13 record is **ADR 0061** (`docs/adr/0061-forward-only-vector-trace-discovery.md`). Active plans `13-01` through `13-12` now cite ADR 0061. This review text is otherwise unchanged.
+> **ADR number mapping (GitHub issue #12, rechecked 2026-11-05):** Historical references below to "ADR 0055" are the Phase 13 decision record this review reserved. That number is occupied by `docs/adr/0055-openrouter-client.md` (Shared OpenRouter Client) and must not be overwritten. The Phase 13 record is **ADR 0061** (`docs/adr/0061-forward-only-vector-trace-discovery.md`). Recheck after `docs/adr/0062`–`0066` existed: 0061 still has no file, so it stays this number. Do not retarget Phase 13 to 0067. Active plans `13-01` through `13-12` cite ADR 0061. This review text is otherwise unchanged. See `13-ADR-NUMBER.md`.
 
 
 **Researched:** 2026-08-04
