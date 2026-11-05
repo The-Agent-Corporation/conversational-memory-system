@@ -85,6 +85,8 @@ import {
   CommitSourceRevocationInputSchema,
   CommitSupersededSummaryPruneInputSchema,
   CommitUnhygienicAnchorPruneInputSchema,
+  CommitLegacyUnownedQuarantineInputSchema,
+  LegacyUnownedQuarantineReceiptSchema,
   SupersededSummaryPruneReceiptSchema,
   UnhygienicAnchorPruneReceiptSchema,
   proposalDecisionStateMatches,
@@ -94,6 +96,10 @@ import {
   type CommitSourceRevocationInput,
   type CommitSupersededSummaryPruneInput,
   type CommitUnhygienicAnchorPruneInput,
+  type CommitLegacyUnownedQuarantineInput,
+  type LegacyUnownedQuarantineReceipt,
+  type LegacyUnownedKind,
+  type LegacyUnownedSkipReason,
   type MutationCommitReceipt,
   type SupersededSummaryPruneReceipt,
   type SupersededSummaryPruneSkipReason,
@@ -101,6 +107,7 @@ import {
   type UnhygienicAnchorPruneSkipReason
 } from "./mcp-mutation-contracts.js";
 import { classifyEvent, HYGIENE_RULE_VERSION } from "../topic/derivation-hygiene.js";
+import { buildLegacyUnownedQuarantineRecord, isLegacyUnowned } from "../operations/legacy-unowned.js";
 import {
   AcceptedSyncOperationSchema,
   CommitLocalSyncOperationInputSchema,
@@ -1098,6 +1105,75 @@ export class InMemoryStore implements MemoryStore {
       freedPayloadBytes,
       skipped,
       ruleVersion: HYGIENE_RULE_VERSION,
+      committedAt: this.clock.now()
+    }));
+  }
+
+  async commitLegacyUnownedQuarantine(
+    input: CommitLegacyUnownedQuarantineInput
+  ): Promise<LegacyUnownedQuarantineReceipt> {
+    const parsed = CommitLegacyUnownedQuarantineInputSchema.parse(input);
+    const skipped: Array<{ kind: LegacyUnownedKind; id: string; reason: LegacyUnownedSkipReason }> = [];
+    const planned: Array<{ kind: LegacyUnownedKind; id: string; record: ReturnType<typeof buildLegacyUnownedQuarantineRecord> }> = [];
+    const consider = <T extends { id: string; personId?: string }>(
+      kind: LegacyUnownedKind,
+      rows: readonly T[],
+      ids: readonly string[]
+    ): void => {
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      for (const id of [...new Set(ids)]) {
+        const row = byId.get(id);
+        if (!row) {
+          skipped.push({ kind, id, reason: "not_found" });
+          continue;
+        }
+        if (!isLegacyUnowned(row)) {
+          skipped.push({ kind, id, reason: "already_owned" });
+          continue;
+        }
+        planned.push({
+          kind,
+          id,
+          record: buildLegacyUnownedQuarantineRecord({
+            kind,
+            id,
+            payload: row,
+            now: parsed.requestedAt
+          })
+        });
+      }
+    };
+    consider("summary", this.summaries, parsed.summaryIds);
+    consider("box", this.boxes, parsed.boxIds);
+    consider("trace", this.traces, parsed.traceIds);
+    consider("anchor", this.anchors, parsed.anchorIds);
+
+    const quarantinedSummaryIds = planned.filter((item) => item.kind === "summary").map((item) => item.id);
+    const quarantinedBoxIds = planned.filter((item) => item.kind === "box").map((item) => item.id);
+    const quarantinedTraceIds = planned.filter((item) => item.kind === "trace").map((item) => item.id);
+    const quarantinedAnchorIds = planned.filter((item) => item.kind === "anchor").map((item) => item.id);
+    if (planned.length > 0) {
+      const summaryIds = new Set(quarantinedSummaryIds);
+      for (const item of planned) this.upsertById(this.quarantineRecords, structuredClone(item.record));
+      this.removeByIds(this.summaries, quarantinedSummaryIds);
+      this.removeByIds(this.boxes, quarantinedBoxIds);
+      this.removeByIds(this.traces, quarantinedTraceIds);
+      this.removeByIds(this.anchors, quarantinedAnchorIds);
+      this.summaryVectors.splice(
+        0,
+        this.summaryVectors.length,
+        ...this.summaryVectors.filter((vector) => !summaryIds.has(vector.summaryId))
+      );
+    }
+
+    return structuredClone(LegacyUnownedQuarantineReceiptSchema.parse({
+      operation: "legacy_unowned_quarantine",
+      marker: "legacy-unowned",
+      quarantinedSummaryIds,
+      quarantinedBoxIds,
+      quarantinedTraceIds,
+      quarantinedAnchorIds,
+      skipped,
       committedAt: this.clock.now()
     }));
   }

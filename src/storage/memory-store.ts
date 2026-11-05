@@ -37,6 +37,8 @@ import type {
   CommitSupersededSummaryPruneInput,
   CommitEventDeletionInput,
   CommitUnhygienicAnchorPruneInput,
+  CommitLegacyUnownedQuarantineInput,
+  LegacyUnownedQuarantineReceipt,
   MutationCommitReceipt,
   SourceDeletionEffects,
   SupersededSummaryPruneReceipt,
@@ -248,6 +250,13 @@ export interface MemoryStore {
    * canonical events, turns, summaries, boxes, traces, proposals, or injections.
    */
   commitUnhygienicAnchorPrune(input: CommitUnhygienicAnchorPruneInput): Promise<UnhygienicAnchorPruneReceipt>;
+  /**
+   * Removes summaries, boxes, traces, and anchors that have no personId and writes a
+   * quarantine record under the non-person marker `legacy-unowned` (ADR 0065).
+   * Eligibility is recomputed inside the commit. An owned row is skipped. The marker
+   * is not assigned as ownership.
+   */
+  commitLegacyUnownedQuarantine(input: CommitLegacyUnownedQuarantineInput): Promise<LegacyUnownedQuarantineReceipt>;
   /** Cheap, ascending-id cursor over one person's anchor ids (Plan 11-16 dry-run/resume support); mirrors `listSupersededSummaryIds` minus the state predicate. */
   listAnchorIds(personId: string, options: { limit: number; afterId?: string }): Promise<string[]>;
   /** Cheap aggregate count/class-breakdown/byte footprint of one person's anchors by derivation class (Plan 11-16) -- never a per-row parse loop for reporting. */

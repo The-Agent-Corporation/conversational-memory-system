@@ -91,6 +91,8 @@ import {
   CommitSourceRevocationInputSchema,
   CommitSupersededSummaryPruneInputSchema,
   CommitUnhygienicAnchorPruneInputSchema,
+  CommitLegacyUnownedQuarantineInputSchema,
+  LegacyUnownedQuarantineReceiptSchema,
   SupersededSummaryPruneReceiptSchema,
   UnhygienicAnchorPruneReceiptSchema,
   proposalDecisionStateMatches,
@@ -100,6 +102,10 @@ import {
   type CommitSourceRevocationInput,
   type CommitSupersededSummaryPruneInput,
   type CommitUnhygienicAnchorPruneInput,
+  type CommitLegacyUnownedQuarantineInput,
+  type LegacyUnownedQuarantineReceipt,
+  type LegacyUnownedKind,
+  type LegacyUnownedSkipReason,
   type MutationCommitReceipt,
   type SupersededSummaryPruneReceipt,
   type SupersededSummaryPruneSkipReason,
@@ -107,6 +113,7 @@ import {
   type UnhygienicAnchorPruneSkipReason
 } from "./mcp-mutation-contracts.js";
 import { classifyEvent, HYGIENE_RULE_VERSION } from "../topic/derivation-hygiene.js";
+import { buildLegacyUnownedQuarantineRecord, isLegacyUnowned } from "../operations/legacy-unowned.js";
 import {
   AcceptedSyncOperationSchema,
   CommitLocalSyncOperationInputSchema,
@@ -1527,6 +1534,76 @@ export class SqliteStore implements MemoryStore {
     }
   }
 
+  async commitLegacyUnownedQuarantine(
+    input: CommitLegacyUnownedQuarantineInput
+  ): Promise<LegacyUnownedQuarantineReceipt> {
+    const parsed = CommitLegacyUnownedQuarantineInputSchema.parse(input);
+    this.database.exec("begin immediate");
+    try {
+      const skipped: Array<{ kind: LegacyUnownedKind; id: string; reason: LegacyUnownedSkipReason }> = [];
+      const quarantinedSummaryIds: string[] = [];
+      const quarantinedBoxIds: string[] = [];
+      const quarantinedTraceIds: string[] = [];
+      const quarantinedAnchorIds: string[] = [];
+      const insertQuarantine = this.database.prepare(
+        `insert into quarantine_records (id, person_id, candidate_id, state, payload)
+         values (?, ?, ?, ?, ?)
+         on conflict(id) do update set state = excluded.state, payload = excluded.payload`
+      );
+      const deleteSummaryVector = this.database.prepare("delete from summary_vectors where summary_id = ?");
+      const quarantine = (
+        kind: LegacyUnownedKind,
+        table: "summaries" | "boxes" | "traces" | "anchors",
+        rows: ReadonlyArray<{ id: string; personId?: string }>,
+        ids: readonly string[],
+        collected: string[]
+      ): void => {
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        const remove = this.database.prepare(`delete from ${table} where id = ?`);
+        for (const id of [...new Set(ids)]) {
+          const row = byId.get(id);
+          if (!row) {
+            skipped.push({ kind, id, reason: "not_found" });
+            continue;
+          }
+          if (!isLegacyUnowned(row)) {
+            skipped.push({ kind, id, reason: "already_owned" });
+            continue;
+          }
+          const record = buildLegacyUnownedQuarantineRecord({
+            kind,
+            id,
+            payload: row,
+            now: parsed.requestedAt
+          });
+          if (kind === "summary") deleteSummaryVector.run(id);
+          insertQuarantine.run(record.id, record.personId, record.candidateId, record.state, JSON.stringify(record));
+          remove.run(id);
+          collected.push(id);
+        }
+      };
+      quarantine("summary", "summaries", this.listPayloadsByIds("summaries", SummarySchema, parsed.summaryIds), parsed.summaryIds, quarantinedSummaryIds);
+      quarantine("box", "boxes", this.listPayloadsByIds("boxes", BoxSchema, parsed.boxIds), parsed.boxIds, quarantinedBoxIds);
+      quarantine("trace", "traces", this.listPayloadsByIds("traces", MemoryTraceSchema, parsed.traceIds), parsed.traceIds, quarantinedTraceIds);
+      quarantine("anchor", "anchors", this.listPayloadsByIds("anchors", AnchorSchema, parsed.anchorIds), parsed.anchorIds, quarantinedAnchorIds);
+      const receipt = LegacyUnownedQuarantineReceiptSchema.parse({
+        operation: "legacy_unowned_quarantine",
+        marker: "legacy-unowned",
+        quarantinedSummaryIds,
+        quarantinedBoxIds,
+        quarantinedTraceIds,
+        quarantinedAnchorIds,
+        skipped,
+        committedAt: this.clock.now()
+      });
+      this.database.exec("commit");
+      return receipt;
+    } catch (error) {
+      this.database.exec("rollback");
+      throw error;
+    }
+  }
+
   /**
    * Cheap, ascending-id cursor over one person's anchor ids (Plan 11-16 dry-run/resume support).
    * Mirrors `listSupersededSummaryIds` exactly: `json_extract(payload,'$.personId') = ?` plus an
@@ -2900,7 +2977,7 @@ export class SqliteStore implements MemoryStore {
   }
 
   private listPayloads<T>(
-    tableName: "summaries" | "boxes" | "anchors",
+    tableName: "summaries" | "boxes" | "traces" | "anchors",
     schema: { parse(value: unknown): T }
   ): T[] {
     const rows = this.database
@@ -2908,6 +2985,27 @@ export class SqliteStore implements MemoryStore {
       .all() as PayloadRow[];
 
     return rows.map((row) => schema.parse(JSON.parse(row.payload)));
+  }
+
+  /** Requested rows only, in chunks of 500 bound parameters. */
+  private listPayloadsByIds<T>(
+    tableName: "summaries" | "boxes" | "traces" | "anchors",
+    schema: { parse(value: unknown): T },
+    ids: readonly string[]
+  ): T[] {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
+    const chunkSize = 500;
+    const parsed: T[] = [];
+    for (let offset = 0; offset < unique.length; offset += chunkSize) {
+      const chunk = unique.slice(offset, offset + chunkSize);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.database
+        .prepare(`select payload from ${tableName} where id in (${placeholders})`)
+        .all(...chunk) as PayloadRow[];
+      for (const row of rows) parsed.push(schema.parse(JSON.parse(row.payload)));
+    }
+    return parsed;
   }
 
   private getPayload<T>(
