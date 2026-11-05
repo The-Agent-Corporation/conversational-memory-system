@@ -1,5 +1,8 @@
 # Phase 13: Forward-Only Vector Trace Discovery — Research
 
+> **ADR number mapping (GitHub issue #12, reconciled 2026-11-05):** Historical references below to "ADR 0055" are the Phase 13 decision record this review reserved. That number is occupied by `docs/adr/0055-openrouter-client.md` (Shared OpenRouter Client). The Phase 13 record is **ADR 0061** (`docs/adr/0061-forward-only-vector-trace-discovery.md`). Active plans `13-01` through `13-12` now cite ADR 0061. This review text is otherwise unchanged.
+
+
 **Researched:** 2026-08-04
 **Domain:** Internal architecture — derivation subsystem replacement (traces), daemon bounded work, SQLite query cost
 **Confidence:** HIGH for the code path and what tests pin (read directly, cited file:line). MEDIUM for the query-plan hypotheses in §4, which are reasoned from the DDL and not measured in this session. Live-corpus numbers are quoted from `13-CONTEXT.md` and were **not** re-measured, per instruction.
