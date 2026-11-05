@@ -8,6 +8,10 @@ import {
   type MemoryInjectApplication
 } from "./tools/inject-tools.js";
 import {
+  registerMemoryAppendTurnTool,
+  type MemoryAppendTurnApplication
+} from "./tools/append-turn-tools.js";
+import {
   registerMemoryReadTools,
   type MemoryReadToolApplication
 } from "./tools/read-tools.js";
@@ -16,6 +20,7 @@ export interface MemoryToolApplication {
   readonly reads: MemoryReadToolApplication;
   readonly mutations: MemoryMutationToolApplication;
   readonly inject: MemoryInjectApplication;
+  readonly appendTurn: MemoryAppendTurnApplication;
 }
 
 /**
@@ -23,7 +28,7 @@ export interface MemoryToolApplication {
  * Phase 5 fixed six read + ten mutation tools; Phase 7 (07-03, REQ-039) added the seventh
  * read-only `memory_explain` tool, growing the read catalog to seven (17 total). ADR 0057
  * added the opt-in `memory_inject` tool and ADR 0058 the `event_delete_*` mutation pair
- * (twelve mutations, 20 total).
+ * (twelve mutations). ADR 0063 added the idempotent `memory_append_turn` tool (21 total).
  */
 export const registerMemoryTools = (
   server: McpServer,
@@ -31,5 +36,6 @@ export const registerMemoryTools = (
 ): void => {
   registerMemoryReadTools(server, application.reads);
   registerMemoryInjectTool(server, application.inject);
+  registerMemoryAppendTurnTool(server, application.appendTurn);
   registerMemoryMutationTools(server, application.mutations);
 };

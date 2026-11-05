@@ -74,6 +74,7 @@ export const REQUIRED_MCP_TOOL_CONTRACTS: readonly ToolContract[] = [
   "memory_explain"
 ].map((name) => ({ name, annotations: annotations(true, false) })).concat([
   { name: "memory_inject", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
+  { name: "memory_append_turn", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "history_ingest_preview", annotations: annotations(false, false) },
   { name: "history_ingest_execute", annotations: annotations(false, false) },
   { name: "proposal_approve_preview", annotations: annotations(false, false) },
@@ -100,10 +101,10 @@ describe("MCP explicit tool catalog contract", () => {
   });
   it("reserves six reads and ten preview or execute mutations with unique task-specific names", () => {
     const names = REQUIRED_MCP_TOOL_CONTRACTS.map((tool) => tool.name);
-    expect(names).toHaveLength(20);
-    expect(new Set(names).size).toBe(20);
+    expect(names).toHaveLength(21);
+    expect(new Set(names).size).toBe(21);
     expect(names.filter((name) => !name.includes("preview") && !name.includes("execute")))
-      .toHaveLength(8);
+      .toHaveLength(9);
     expect(names).not.toContain("memory_action");
     expect(names).not.toContain("memory_crud");
   });
@@ -230,10 +231,10 @@ describe("MCP explicit tool catalog contract", () => {
   });
   it("05-07 Task 2 exposes all ten mutation contracts with exact annotations", () => {
     expect(MEMORY_MUTATION_TOOL_NAMES).toEqual(
-      REQUIRED_MCP_TOOL_CONTRACTS.slice(8).map((tool) => tool.name)
+      REQUIRED_MCP_TOOL_CONTRACTS.slice(9).map((tool) => tool.name)
     );
     expect(MEMORY_MUTATION_TOOL_ANNOTATIONS).toEqual(
-      Object.fromEntries(REQUIRED_MCP_TOOL_CONTRACTS.slice(8).map((tool) => [tool.name, tool.annotations]))
+      Object.fromEntries(REQUIRED_MCP_TOOL_CONTRACTS.slice(9).map((tool) => [tool.name, tool.annotations]))
     );
   });
   it("05-08 Task 1 composes the complete catalog without duplicate or umbrella tools", async () => {
@@ -255,7 +256,7 @@ describe("MCP explicit tool catalog contract", () => {
     expect(catalog.tools.map((tool) => tool.annotations)).toEqual(
       REQUIRED_MCP_TOOL_CONTRACTS.map((tool) => tool.annotations)
     );
-    expect(new Set(catalog.tools.map((tool) => tool.name)).size).toBe(20);
+    expect(new Set(catalog.tools.map((tool) => tool.name)).size).toBe(21);
   });
 
   it("05-08 Task 1 keeps every capability available while daemon status is offline", async () => {

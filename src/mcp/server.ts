@@ -10,6 +10,7 @@ import { ScopedProposalReviewer } from "../proposals/scoped-proposal-reviewer.js
 import { ExplainService } from "../audit/explain-service.js";
 import type { Embedder } from "../embeddings/embedder.js";
 import { probeEmbedderHealth, resolveEmbedder } from "../embeddings/embedder-resolver.js";
+import { LiveTurnAppendService } from "./live-turn-append.js";
 import { MemoryRetriever } from "../retrieval/memory-retriever.js";
 import { MemoryQueryService } from "../retrieval/memory-query-service.js";
 import { SubjectExpansionService } from "../retrieval/subject-expansion-service.js";
@@ -111,6 +112,16 @@ export const createMemoryMcpServer = async (
               packetId: packet?.id ?? null,
               disclosure: "Assistive memory only; verify against current sources."
             };
+          } finally {
+            writeStore.close();
+          }
+        }
+      },
+      appendTurn: {
+        appendTurn: async (input) => {
+          const writeStore = new SqliteStore(authority.databasePath, { busyTimeoutMs: options.busyTimeoutMs ?? 5_000 });
+          try {
+            return await new LiveTurnAppendService(writeStore, authority, now).append(input);
           } finally {
             writeStore.close();
           }

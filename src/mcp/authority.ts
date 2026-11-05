@@ -9,11 +9,14 @@ export interface ProfileAuthority {
   readonly sourceRoots: Readonly<Record<string, string>>;
   readonly scopeAliases: Readonly<Record<string, string>>;
   readonly allowInjection?: boolean;
+  /** When set, live-turn append accepts only these host names. Null means any validated host name. */
+  readonly allowedHosts: readonly string[] | null;
   readonly fingerprint: string;
 }
 
-export interface ProfileAuthorityInput extends Omit<ProfileAuthority, "fingerprint" | "allowInjection"> {
+export interface ProfileAuthorityInput extends Omit<ProfileAuthority, "fingerprint" | "allowInjection" | "allowedHosts"> {
   allowInjection?: boolean;
+  allowedHosts?: readonly string[] | null;
 }
 
 const sortedRecord = (value: Record<string, string>): Record<string, string> =>
@@ -21,6 +24,9 @@ const sortedRecord = (value: Record<string, string>): Record<string, string> =>
 
 export const createProfileAuthority = (input: ProfileAuthorityInput): ProfileAuthority => {
   const allowedScopeIds = Object.freeze([...new Set(input.allowedScopeIds)].sort());
+  const allowedHosts = input.allowedHosts == null
+    ? null
+    : Object.freeze([...new Set(input.allowedHosts)].sort());
   const sourceRoots = Object.freeze(sortedRecord({ ...input.sourceRoots }));
   const scopeAliases = Object.freeze(sortedRecord({ ...input.scopeAliases }));
   const fingerprintPayload = JSON.stringify({
@@ -32,7 +38,8 @@ export const createProfileAuthority = (input: ProfileAuthorityInput): ProfileAut
     ingestScopeId: input.ingestScopeId,
     sourceRoots,
     scopeAliases,
-    allowInjection: input.allowInjection === true
+    allowInjection: input.allowInjection === true,
+    allowedHosts
   });
 
   return Object.freeze({
@@ -44,6 +51,7 @@ export const createProfileAuthority = (input: ProfileAuthorityInput): ProfileAut
     sourceRoots,
     scopeAliases,
     allowInjection: input.allowInjection === true,
+    allowedHosts,
     fingerprint: createHash("sha256").update(fingerprintPayload).digest("hex")
   });
 };
