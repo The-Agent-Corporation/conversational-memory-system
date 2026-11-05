@@ -8,7 +8,7 @@ Remove the `personal-memory` entry from the host's MCP configuration and restart
 
 ## Restore a database
 
-`memory quarantine-unowned --apply` removes summaries, boxes, traces, and anchors that have no `personId`. It refuses to run unless `--confirm-backup` names a non-empty file.
+`memory quarantine-unowned --apply` removes summaries, boxes, traces, and anchors that have no `personId`. It refuses to run unless `--confirm-backup` names a non-empty file other than the database itself. A symbolic link or hard link to that database is the same file and is refused.
 
 To undo that removal:
 

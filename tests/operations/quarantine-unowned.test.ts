@@ -1,3 +1,4 @@
+import { linkSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -269,6 +270,39 @@ describe("quarantine-unowned command", () => {
       confirmBackupPath: backupPath
     })).rejects.toThrow(/not a regular file/);
     expect((await stat(databasePath)).isDirectory()).toBe(true);
+  });
+
+  it("apply mode refuses a backup that is the database or a link to it", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "cms-unowned-"));
+    const databasePath = join(tempDir, "memory.sqlite");
+    const store = new SqliteStore(databasePath);
+    await store.saveSummary(withoutOwner(summary({ id: "summary_unowned", summaryText: "legacy row" })));
+    store.close();
+    const symlinkPath = join(tempDir, "db-symlink");
+    const hardlinkPath = join(tempDir, "db-hardlink");
+    symlinkSync(databasePath, symlinkPath);
+    linkSync(databasePath, hardlinkPath);
+
+    for (const confirmBackupPath of [
+      databasePath,
+      join(tempDir, ".", "memory.sqlite"),
+      symlinkPath,
+      hardlinkPath
+    ]) {
+      await expect(quarantineUnownedLegacyRows({
+        databasePath: symlinkPath,
+        apply: true,
+        confirmBackupPath,
+        now: NOW
+      })).rejects.toThrow(/database file or a link to it/);
+    }
+
+    const after = new SqliteStore(databasePath, { readOnly: true });
+    try {
+      expect((await after.listSummaries()).map((item) => item.id)).toEqual(["summary_unowned"]);
+    } finally {
+      after.close();
+    }
   });
 
   it("quarantines a requested summary without parsing unrelated rows", async () => {

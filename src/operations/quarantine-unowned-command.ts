@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -48,6 +48,7 @@ export async function quarantineUnownedLegacyRows(
       throw new Error("The confirmed backup must be a non-empty file. Refusing to quarantine unowned rows.");
     }
     assertExistingDatabase(parsed.databasePath);
+    assertBackupIsNotDatabase(parsed.databasePath, parsed.confirmBackupPath);
   }
 
   const store = new SqliteStore(parsed.databasePath, { readOnly: parsed.apply !== true });
@@ -112,6 +113,18 @@ export async function quarantineUnownedLegacyRows(
     };
   } finally {
     store.close();
+  }
+}
+
+function assertBackupIsNotDatabase(databasePath: string, backupPath: string): void {
+  const databaseReal = realpathSync(databasePath);
+  const backupReal = realpathSync(backupPath);
+  const databaseStat = statSync(databaseReal, { bigint: true });
+  const backupStat = statSync(backupReal, { bigint: true });
+  const samePath = databaseReal === backupReal;
+  const sameFile = databaseStat.dev === backupStat.dev && databaseStat.ino === backupStat.ino;
+  if (samePath || sameFile) {
+    throw new Error(`The confirmed backup is the database file or a link to it (${backupReal}). Refusing to quarantine unowned rows.`);
   }
 }
 

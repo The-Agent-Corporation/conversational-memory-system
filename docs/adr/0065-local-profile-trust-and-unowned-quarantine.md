@@ -12,7 +12,7 @@ A local MCP profile selects the database, person, and allowed scopes for one chi
 
 The profile file is local trust. Whoever can read the file and start the process can use that person and those scopes. It is not remote authentication, and it does not prove the operator's identity to another machine.
 
-Rows among summaries, boxes, traces, and anchors with no `personId` are quarantined by `memory quarantine-unowned`. The quarantine `personId` is the marker `legacy-unowned`. That marker is not a person and must not be configured as a profile person. The original row is removed. Its text is redacted and stored on the quarantine record. Owned rows are left unchanged. Dry-run is the default. `--apply` also requires a non-empty backup file.
+Rows among summaries, boxes, traces, and anchors with no `personId` are quarantined by `memory quarantine-unowned`. The quarantine `personId` is the marker `legacy-unowned`. That marker is not a person and must not be configured as a profile person. The original row is removed. Its text is redacted and stored on the quarantine record. Owned rows are left unchanged. Dry-run is the default. `--apply` also requires a non-empty backup file that is not the database or a link to it.
 
 ## Consequences
 
