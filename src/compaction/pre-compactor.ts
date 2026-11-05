@@ -43,8 +43,18 @@ export class PreCompactor {
     const draft = await this.summarizer.summarize({ span, sourceTurns: hygieneTurns });
     const embedding = this.embedder ? await this.embedder.embed(draft.summaryText) : null;
 
+    const personIds = [...new Set(turnsInSpan.flatMap((turn) => {
+      const personId = turn.metadata.personId;
+      return typeof personId === "string" && personId.length > 0 ? [personId] : [];
+    }))];
+    const scopeIds = [...new Set(turnsInSpan.flatMap((turn) => {
+      const scopeId = turn.metadata.scopeId;
+      return typeof scopeId === "string" && scopeId.length > 0 ? [scopeId] : [];
+    }))].sort();
     const summary: Summary = {
       id: summaryIdForSpan(span),
+      ...(personIds.length === 1 ? { personId: personIds[0] } : {}),
+      ...(scopeIds.length > 0 ? { scopeIds } : {}),
       summaryText: draft.summaryText,
       sourceTurnRanges: [span.sourceTurnRange],
       sourceSummaryIds: [],

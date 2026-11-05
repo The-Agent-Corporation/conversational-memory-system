@@ -1166,6 +1166,10 @@ export class InMemoryStore implements MemoryStore {
     this.upsertById(this.injections, structuredClone(InjectionPacketSchema.parse(packet)));
   }
 
+  async getInjection(id: string): Promise<InjectionPacket | null> {
+    return structuredClone(this.injections.find((packet) => packet.id === id) ?? null);
+  }
+
   async listInjections(hostSessionId: string): Promise<InjectionPacket[]> {
     return this.injections
       .filter((packet) => packet.hostSessionId === hostSessionId)

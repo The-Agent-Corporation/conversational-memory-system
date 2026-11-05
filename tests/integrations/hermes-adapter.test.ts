@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AnchorDetector } from "../../src/anchors/anchor-detector.js";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import type { Summary } from "../../src/domain/types.js";
@@ -22,6 +22,8 @@ const row = (overrides: Partial<HermesTimelineRow> = {}): HermesTimelineRow => (
 
 const summary = (overrides: Partial<Summary> = {}): Summary => ({
   id: "summary_seeded",
+  personId: "person_default",
+  scopeIds: ["personal"],
   summaryText: "Smith PIP demand strategy coverage timing provider bill review wage loss benefits and deadline planning.",
   sourceTurnRanges: [{ threadId: "hermes-session", startSequence: 1, endSequence: 2 }],
   sourceSummaryIds: [],
@@ -45,6 +47,11 @@ const summary = (overrides: Partial<Summary> = {}): Summary => ({
 });
 
 describe("HermesMemoryAdapter", () => {
+  beforeEach(() => {
+    process.env.HERMES_MEMORY_PERSON_ID = "person_default";
+    process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
+  });
+
   it("processes Hermes rows through ingest, anchors, topic monitoring, and pre-compaction", async () => {
     const store = new InMemoryStore();
     const adapter = new HermesMemoryAdapter(store);

@@ -24,7 +24,7 @@ import type {
 } from "../traces/trace-proposal-planner.js";
 import { OpenRouterClient, type FetchLike as ClientFetch } from "../openrouter/client.js";
 import { OpenRouterRequestError } from "../openrouter/types.js";
-import { dedupeTurnRanges, hasExistingProposal, slugify } from "./proposal-utils.js";
+import { dedupeTurnRanges, hasExistingProposal, hasRejectedSameTitle, slugify } from "./proposal-utils.js";
 
 export interface FetchResponseLike {
   ok: boolean;
@@ -171,7 +171,10 @@ export class OpenRouterProposalPlanner implements BoxProposalPlanner, TracePropo
       assertKnownSummaryIds(modelProposal.sourceSummaryIds, summariesById);
       const boxId = modelProposal.boxId ?? boxIdFromTitle(modelProposal.title);
       const proposalId = `proposal_box_${boxId}`;
-      if (hasExistingProposal(request.proposals, proposalId) || request.boxes.some((box) => box.id === boxId && box.state !== "rejected")) {
+      if (hasExistingProposal(request.proposals, proposalId) ||
+        request.boxes.some((box) => box.id === boxId) ||
+        hasRejectedSameTitle(request.boxes, modelProposal.title) ||
+        hasRejectedSameTitle(request.proposals, modelProposal.title)) {
         continue;
       }
 
@@ -264,7 +267,9 @@ export class OpenRouterProposalPlanner implements BoxProposalPlanner, TracePropo
       const traceId = modelProposal.traceId ?? traceIdFromTitle(modelProposal.title);
       const proposalId = `proposal_trace_${traceId}`;
       if (hasExistingProposal(request.proposals, proposalId) ||
-        request.traces.some((trace) => trace.id === traceId && trace.state !== "rejected")) {
+        request.traces.some((trace) => trace.id === traceId) ||
+        hasRejectedSameTitle(request.traces, modelProposal.title) ||
+        hasRejectedSameTitle(request.proposals, modelProposal.title)) {
         continue;
       }
 

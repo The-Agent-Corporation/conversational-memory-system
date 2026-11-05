@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ingestHermesTimelineRow } from "../../src/integrations/hermes/ingest-command.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
@@ -11,6 +11,11 @@ const makeTempDir = async (): Promise<string> => {
   tempDir = await mkdtemp(join(tmpdir(), "cms-hermes-ingest-"));
   return tempDir;
 };
+
+beforeEach(() => {
+  process.env.HERMES_MEMORY_PERSON_ID = "person_default";
+  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
+});
 
 afterEach(async () => {
   if (tempDir) {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import type { HermesTimelineRow } from "../../src/integrations/hermes/contract.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
@@ -24,6 +24,11 @@ const row = (overrides: Partial<HermesTimelineRow> = {}): HermesTimelineRow => (
 });
 
 describe("HermesMemoryAdapter derivation hygiene (live bridge)", () => {
+  beforeEach(() => {
+    process.env.HERMES_MEMORY_PERSON_ID = "person_default";
+    process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
+  });
+
   it("does not open or close a topic span for tool rows, but still ingests them", async () => {
     const store = new InMemoryStore();
     const adapter = new HermesMemoryAdapter(store, { summarizer: new DeterministicSummarizer() });

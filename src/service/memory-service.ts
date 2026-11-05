@@ -35,7 +35,6 @@ export interface MemoryServiceOptions {
   parserVersion?: string;
   sourceInstanceId?: string;
   scopeId?: string;
-  allowLegacyUnscopedRetrieval?: boolean;
   clock?: () => string;
   syncDeviceId?: string;
 }
@@ -52,8 +51,7 @@ export class MemoryService {
 
   constructor(private readonly store: MemoryStore, options: MemoryServiceOptions = {}) {
     this.retriever = new MemoryRetriever(store, {
-      embedder: options.embedder,
-      allowLegacyUnscoped: options.allowLegacyUnscopedRetrieval ?? false
+      embedder: options.embedder
     });
     this.personId = options.personId ?? "person_default";
     this.personDisplayName = options.personDisplayName ?? null;

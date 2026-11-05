@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { injectHermesMemory } from "../../src/integrations/hermes/inject-command.js";
 import type { MemoryTrace, Summary } from "../../src/domain/types.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
@@ -13,6 +13,11 @@ const makeTempDir = async (): Promise<string> => {
   return tempDir;
 };
 
+beforeEach(() => {
+  process.env.HERMES_MEMORY_PERSON_ID = "person_default";
+  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
+});
+
 afterEach(async () => {
   if (tempDir) {
     await rm(tempDir, { recursive: true, force: true });
@@ -22,6 +27,8 @@ afterEach(async () => {
 
 const summary = (overrides: Partial<Summary> = {}): Summary => ({
   id: "summary_smith_pip",
+  personId: "person_default",
+  scopeIds: ["personal"],
   summaryText: "Smith PIP demand strategy coverage timing provider bill review wage loss benefits and deadline planning.",
   sourceTurnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 2 }],
   sourceSummaryIds: [],
@@ -46,6 +53,7 @@ const summary = (overrides: Partial<Summary> = {}): Summary => ({
 
 const trace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
   id: "trace_smith_pip_provider_bills",
+  personId: "person_default",
   title: "Smith PIP Provider Bills",
   description: "Recurring Smith PIP provider bill dispute and no-fault payment timing.",
   traceType: "case_issue",

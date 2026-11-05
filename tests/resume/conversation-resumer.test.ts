@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Box, InjectionPacket, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
-import { ConversationResumer } from "../../src/resume/conversation-resumer.js";
+import { ConversationResumer, type ResumeAuthority } from "../../src/resume/conversation-resumer.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
+
+const AUTHORITY: ResumeAuthority = {
+  personId: "person_test",
+  allowedScopeIds: ["personal"],
+  hostSessionId: "session_1"
+};
+
+const resumerFor = (store: InMemoryStore): ConversationResumer => new ConversationResumer(store, AUTHORITY);
 
 const makeTurn = (overrides: Partial<Turn> = {}): Turn => ({
   id: "turn_1",
@@ -19,6 +27,8 @@ const makeTurn = (overrides: Partial<Turn> = {}): Turn => ({
 
 const makeSummary = (overrides: Partial<Summary> = {}): Summary => ({
   id: "summary_1",
+  personId: "person_test",
+  scopeIds: ["personal"],
   summaryText: "Smith PIP demand strategy and coverage timing.",
   sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }],
   sourceSummaryIds: [],
@@ -43,6 +53,7 @@ const makeSummary = (overrides: Partial<Summary> = {}): Summary => ({
 
 const makeBox = (overrides: Partial<Box> = {}): Box => ({
   id: "box_smith_pip",
+  personId: "person_test",
   title: "Smith PIP",
   description: "Smith PIP provider bill issue.",
   parentBoxId: null,
@@ -61,6 +72,7 @@ const makeBox = (overrides: Partial<Box> = {}): Box => ({
 
 const makeTrace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
   id: "trace_smith_pip_provider_bills",
+  personId: "person_test",
   title: "Smith PIP Provider Bills",
   description: "Smith PIP provider bill dispute.",
   traceType: "case_issue",
@@ -81,6 +93,8 @@ const makeTrace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
 
 const makeInjection = (overrides: Partial<InjectionPacket> = {}): InjectionPacket => ({
   id: "inject_1",
+  personId: "person_test",
+  allowedScopeIds: ["personal"],
   hostSessionId: "session_1",
   currentTopicSummary: "Smith PIP demand",
   selectedMemory: "Smith PIP demand strategy.",
@@ -112,7 +126,7 @@ describe("ConversationResumer", () => {
     }));
     await store.saveSummary(makeSummary());
 
-    const resumer = new ConversationResumer(store);
+    const resumer = resumerFor(store);
     const result = await resumer.resumeSummary("summary_1");
 
     expect(result).toMatchObject({
@@ -131,25 +145,36 @@ describe("ConversationResumer", () => {
     await store.saveTurn(makeTurn({ id: "turn_1", sequence: 1 }));
     await store.saveTurn(makeTurn({ id: "turn_2", sequence: 2 }));
     await store.saveTurn(makeTurn({ id: "turn_3", sequence: 3 }));
-
-    const resumer = new ConversationResumer(store);
-    const result = await resumer.resumeInjection(makeInjection({
+    await store.saveSummary(makeSummary({
+      id: "summary_1",
+      sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }]
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_2",
+      sourceTurnRanges: [{ threadId: "session_1", startSequence: 2, endSequence: 3 }]
+    }));
+    const packet = makeInjection({
       sourceSummaryIds: ["summary_1", "summary_2"],
+      boxIds: [],
       sourceTurnRanges: [
         { threadId: "session_1", startSequence: 1, endSequence: 2 },
         { threadId: "session_1", startSequence: 2, endSequence: 3 }
       ]
-    }));
+    });
+    await store.saveInjection(packet);
+
+    const resumer = resumerFor(store);
+    const result = await resumer.resumeInjection(packet);
 
     expect(result.sourceSummaryIds).toEqual(["summary_1", "summary_2"]);
     expect(result.sourceTraceIds).toEqual([]);
-    expect(result.sourceBoxIds).toEqual(["box_1"]);
+    expect(result.sourceBoxIds).toEqual([]);
     expect(result.turns.map((turn) => turn.id)).toEqual(["turn_1", "turn_2", "turn_3"]);
     expect(result.turnCount).toBe(3);
   });
 
   it("throws when a requested summary does not exist", async () => {
-    const resumer = new ConversationResumer(new InMemoryStore());
+    const resumer = resumerFor(new InMemoryStore());
 
     await expect(resumer.resumeSummary("missing")).rejects.toThrow("Summary missing was not found");
   });
@@ -160,9 +185,11 @@ describe("ConversationResumer", () => {
     await store.saveTurn(makeTurn({ id: "turn_2", sequence: 2 }));
     await store.saveTurn(makeTurn({ id: "turn_3", sequence: 3 }));
     await store.saveTurn(makeTurn({ id: "turn_4", sequence: 4 }));
+    await store.saveSummary(makeSummary({ id: "summary_1" }));
+    await store.saveSummary(makeSummary({ id: "summary_2" }));
     await store.saveTrace(makeTrace());
 
-    const resumer = new ConversationResumer(store);
+    const resumer = resumerFor(store);
     const result = await resumer.resumeTrace("trace_smith_pip_provider_bills");
 
     expect(result.sourceSummaryIds).toEqual(["summary_1", "summary_2"]);
@@ -173,7 +200,7 @@ describe("ConversationResumer", () => {
   });
 
   it("throws when a requested trace does not exist", async () => {
-    const resumer = new ConversationResumer(new InMemoryStore());
+    const resumer = resumerFor(new InMemoryStore());
 
     await expect(resumer.resumeTrace("missing")).rejects.toThrow("Trace missing was not found");
   });
@@ -183,6 +210,7 @@ describe("ConversationResumer", () => {
     await store.saveTurn(makeTurn({ id: "turn_1", sequence: 1 }));
     await store.saveTurn(makeTurn({ id: "turn_2", sequence: 2 }));
     await store.saveTurn(makeTurn({ id: "turn_3", sequence: 3 }));
+    await store.saveSummary(makeSummary());
     await store.saveBox(makeBox({
       childBoxIds: ["box_child"],
       turnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }]
@@ -193,7 +221,7 @@ describe("ConversationResumer", () => {
       turnRanges: [{ threadId: "session_1", startSequence: 3, endSequence: 3 }]
     }));
 
-    const resumer = new ConversationResumer(store);
+    const resumer = resumerFor(store);
     const result = await resumer.resumeBox("box_smith_pip");
 
     expect(result.sourceBoxIds).toEqual(["box_smith_pip"]);
@@ -205,6 +233,8 @@ describe("ConversationResumer", () => {
     await store.saveTurn(makeTurn({ id: "turn_1", sequence: 1 }));
     await store.saveTurn(makeTurn({ id: "turn_2", sequence: 2 }));
     await store.saveTurn(makeTurn({ id: "turn_3", sequence: 3 }));
+    await store.saveSummary(makeSummary());
+    await store.saveSummary(makeSummary({ id: "summary_child" }));
     await store.saveBox(makeBox({
       childBoxIds: ["box_child"],
       turnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 1 }]
@@ -216,7 +246,7 @@ describe("ConversationResumer", () => {
       turnRanges: [{ threadId: "session_1", startSequence: 2, endSequence: 3 }]
     }));
 
-    const resumer = new ConversationResumer(store);
+    const resumer = resumerFor(store);
     const result = await resumer.resumeBox("box_smith_pip", { includeChildBoxes: true });
 
     expect(result.sourceSummaryIds).toEqual(["summary_1", "summary_child"]);
@@ -228,6 +258,7 @@ describe("ConversationResumer", () => {
     const store = new InMemoryStore();
     await store.saveTurn(makeTurn({ id: "turn_1", sequence: 1 }));
     await store.saveTurn(makeTurn({ id: "turn_2", sequence: 2 }));
+    await store.saveSummary(makeSummary());
     await store.saveBox(makeBox({
       turnRanges: [
         { threadId: "session_1", startSequence: 1, endSequence: 1 },
@@ -235,7 +266,7 @@ describe("ConversationResumer", () => {
       ]
     }));
 
-    const resumer = new ConversationResumer(store);
+    const resumer = resumerFor(store);
     const result = await resumer.resumeBox("box_smith_pip", { maxTurnRanges: 1 });
 
     expect(result.sourceTurnRanges).toEqual([{ threadId: "session_1", startSequence: 1, endSequence: 1 }]);
@@ -244,7 +275,7 @@ describe("ConversationResumer", () => {
   });
 
   it("throws when a requested box does not exist", async () => {
-    const resumer = new ConversationResumer(new InMemoryStore());
+    const resumer = resumerFor(new InMemoryStore());
 
     await expect(resumer.resumeBox("missing")).rejects.toThrow("Box missing was not found");
   });

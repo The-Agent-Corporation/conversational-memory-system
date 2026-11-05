@@ -15,6 +15,8 @@ import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 
 const makeSummary = (overrides: Partial<Summary> = {}): Summary => ({
   id: "summary_1",
+  personId: "person_legacy",
+  scopeIds: ["personal"],
   summaryText: "Smith PIP demand strategy and coverage timing.",
   sourceTurnRanges: [{ threadId: "session_1", startSequence: 1, endSequence: 2 }],
   sourceSummaryIds: [],
@@ -39,6 +41,8 @@ const makeSummary = (overrides: Partial<Summary> = {}): Summary => ({
 
 const makeAnchor = (overrides: Partial<Anchor> = {}): Anchor => ({
   id: "anchor_1",
+  personId: "person_legacy",
+  scopeId: "personal",
   turnId: "turn_1",
   threadId: "session_1",
   boxId: "box_1",
@@ -53,6 +57,7 @@ const makeAnchor = (overrides: Partial<Anchor> = {}): Anchor => ({
 
 const makeBox = (overrides: Partial<Box> = {}): Box => ({
   id: "box_smith_pip",
+  personId: "person_legacy",
   title: "Smith PIP",
   description: "Smith no-fault benefits and provider bills.",
   parentBoxId: null,
@@ -71,6 +76,7 @@ const makeBox = (overrides: Partial<Box> = {}): Box => ({
 
 const makeTrace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
   id: "trace_smith_pip_provider_bills",
+  personId: "person_legacy",
   title: "Smith PIP Provider Bills",
   description: "Recurring Smith PIP provider bill dispute and no-fault payment timing.",
   traceType: "case_issue",
@@ -92,7 +98,16 @@ const makeTrace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
 const legacyRetriever = (
   store: InMemoryStore,
   options: { embedder?: Embedder } = {}
-): MemoryRetriever => new MemoryRetriever(store, { ...options, allowLegacyUnscoped: true });
+): MemoryRetriever => {
+  const retriever = new MemoryRetriever(store, options);
+  const prepareInjection = retriever.prepareInjection.bind(retriever);
+  retriever.prepareInjection = (request) => prepareInjection({
+    ...request,
+    personId: request.personId ?? "person_legacy",
+    allowedScopeIds: request.allowedScopeIds ?? ["personal"]
+  });
+  return retriever;
+};
 
 describe("MemoryRetriever", () => {
   it("enforces exact person and allowed-scope boundaries across derived memory", async () => {
@@ -233,7 +248,9 @@ describe("MemoryRetriever", () => {
       profileId: "default",
       hostSessionId: "session_1",
       currentTopicSummary: "Smith PIP demand",
-      requestedAt: "2026-05-04T10:10:00.000Z"
+      requestedAt: "2026-05-04T10:10:00.000Z",
+      personId: "person_legacy",
+      allowedScopeIds: ["personal"]
     };
 
     const retriever = legacyRetriever(store);
@@ -254,8 +271,7 @@ describe("MemoryRetriever", () => {
       allSummaries,
       allAnchors,
       allTraces,
-      allBoxes,
-      true
+      allBoxes
     );
     const ranked = rankMemories(request.currentTopicSummary, summaries, anchors, traces, { topicEmbedding: null });
     const primarySelected = selectMemories(ranked, undefined);
@@ -671,6 +687,7 @@ describe("MemoryRetriever", () => {
 
   it("retrieves approved traces with linked summary provenance", async () => {
     const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({ id: "summary_1" }));
     await store.saveSummary(makeSummary({
       id: "summary_provider_bill",
       summaryText: "Smith PIP provider bill review needs the ledger before demand finalization.",
@@ -771,7 +788,12 @@ describe("MemoryRetriever", () => {
     }));
     await store.saveBox(makeBox({
       id: "box_smith_pip",
-      parentBoxId: "box_case_smith"
+      parentBoxId: "box_case_smith",
+      summaryIds: ["summary_provider_bill"]
+    }));
+    await store.saveSummary(makeSummary({
+      id: "summary_case_smith",
+      summaryText: "Smith car accident case overview."
     }));
     await store.saveSummary(makeSummary({
       id: "summary_provider_bill",

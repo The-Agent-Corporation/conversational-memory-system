@@ -1,5 +1,8 @@
 # Phase 13 — Pre-execution plan check
 
+> **ADR number mapping (GitHub issue #12, reconciled 2026-11-05):** Historical references below to "ADR 0055" are the Phase 13 decision record this review reserved. That number is occupied by `docs/adr/0055-openrouter-client.md` (Shared OpenRouter Client). The Phase 13 record is **ADR 0061** (`docs/adr/0061-forward-only-vector-trace-discovery.md`). Active plans `13-01` through `13-12` now cite ADR 0061. This review text is otherwise unchanged.
+
+
 **Checked:** 2026-08-04 · 12 plans (`13-01` … `13-12`), 7 waves, commit `159ec15`
 **Inputs read:** all 12 PLAN.md, `13-CONTEXT.md`, `13-RESEARCH.md`,
 `.planning/phases/12-daemon-incremental-embedding/12-CLOSING.md`, `12-PLAN-CHECK.md`, ROADMAP Phase 13

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Box, InjectionPacket, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
 import { resumeHermesMemory } from "../../src/integrations/hermes/resume-command.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
@@ -13,7 +13,14 @@ const makeTempDir = async (): Promise<string> => {
   return tempDir;
 };
 
+beforeEach(() => {
+  process.env.HERMES_MEMORY_PERSON_ID = "person_test";
+  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
+});
+
 afterEach(async () => {
+  delete process.env.HERMES_MEMORY_PERSON_ID;
+  delete process.env.HERMES_MEMORY_SCOPE_IDS;
   if (tempDir) {
     await rm(tempDir, { recursive: true, force: true });
     tempDir = null;
@@ -36,6 +43,8 @@ const turn = (overrides: Partial<Turn> = {}): Turn => ({
 
 const summary = (overrides: Partial<Summary> = {}): Summary => ({
   id: "summary_smith_pip",
+  personId: "person_test",
+  scopeIds: ["personal"],
   summaryText: "Smith PIP demand timing.",
   sourceTurnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 2 }],
   sourceSummaryIds: [],
@@ -60,6 +69,7 @@ const summary = (overrides: Partial<Summary> = {}): Summary => ({
 
 const box = (overrides: Partial<Box> = {}): Box => ({
   id: "box_smith_pip",
+  personId: "person_test",
   title: "Smith PIP",
   description: "Smith PIP issue.",
   parentBoxId: null,
@@ -78,6 +88,7 @@ const box = (overrides: Partial<Box> = {}): Box => ({
 
 const trace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
   id: "trace_smith_pip_provider_bills",
+  personId: "person_test",
   title: "Smith PIP Provider Bills",
   description: "Smith PIP provider bill dispute.",
   traceType: "case_issue",
@@ -98,6 +109,8 @@ const trace = (overrides: Partial<MemoryTrace> = {}): MemoryTrace => ({
 
 const injection = (overrides: Partial<InjectionPacket> = {}): InjectionPacket => ({
   id: "inject_1",
+  personId: "person_test",
+  allowedScopeIds: ["personal"],
   hostSessionId: "profile:default",
   currentTopicSummary: "Smith PIP",
   selectedMemory: "Smith PIP demand timing.",
@@ -153,11 +166,14 @@ describe("Hermes resume command", () => {
     const store = new SqliteStore(databasePath);
     await store.saveTurn(turn());
     await store.saveTurn(turn({ id: "turn_2", sequence: 2, content: "Second turn." }));
+    await store.saveSummary(summary());
+    const packet = injection();
+    await store.saveInjection(packet);
     store.close();
 
     const result = await resumeHermesMemory({
       databasePath,
-      input: JSON.stringify({ injection_packet: injection() })
+      input: JSON.stringify({ injection_packet: packet })
     });
 
     expect(result.sourceSummaryIds).toEqual(["summary_smith_pip"]);
@@ -172,6 +188,11 @@ describe("Hermes resume command", () => {
     await store.saveTurn(turn());
     await store.saveTurn(turn({ id: "turn_2", sequence: 2, role: "assistant", content: "Second turn." }));
     await store.saveTurn(turn({ id: "turn_4", sequence: 4, content: "Provider bill ledger arrived." }));
+    await store.saveSummary(summary());
+    await store.saveSummary(summary({
+      id: "summary_smith_provider_bill",
+      sourceTurnRanges: [{ threadId: "profile:default", startSequence: 4, endSequence: 4 }]
+    }));
     await store.saveTrace(trace());
     store.close();
 
@@ -193,6 +214,9 @@ describe("Hermes resume command", () => {
     await store.saveTurn(turn());
     await store.saveTurn(turn({ id: "turn_2", sequence: 2, role: "assistant", content: "Second turn." }));
     await store.saveTurn(turn({ id: "turn_3", sequence: 3, content: "Child box turn." }));
+    await store.saveSummary(summary());
+    await store.saveSummary(summary({ id: "summary_smith_provider_bill" }));
+    await store.saveSummary(summary({ id: "summary_child" }));
     await store.saveBox(box({
       childBoxIds: ["box_child"],
       turnRanges: [{ threadId: "profile:default", startSequence: 1, endSequence: 1 }]
