@@ -4,6 +4,7 @@ import type { InjectionPacket, Turn } from "../../domain/types.js";
 import { ConversationResumer, type ResumeResult } from "../../resume/conversation-resumer.js";
 import { SqliteStore } from "../../storage/sqlite-store.js";
 import { InjectionPacketSchema } from "../../domain/types.js";
+import { resolveHermesMemoryIdentity } from "./identity.js";
 
 const ResumeOptionsSchema = z.object({
   databasePath: z.string().min(1),
@@ -54,7 +55,11 @@ export async function resumeHermesMemory(options: {
   const store = new SqliteStore(parsedOptions.databasePath);
 
   try {
-    const resumer = new ConversationResumer(store);
+    const identity = resolveHermesMemoryIdentity();
+    const resumer = new ConversationResumer(store, {
+      personId: identity.personId,
+      allowedScopeIds: identity.allowedScopeIds
+    });
     const result = await routeResumeRequest(resumer, request);
 
     return {

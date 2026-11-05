@@ -1612,6 +1612,13 @@ export class SqliteStore implements MemoryStore {
       .run(parsed.id, parsed.hostSessionId, JSON.stringify(parsed));
   }
 
+  async getInjection(id: string): Promise<InjectionPacket | null> {
+    const row = this.database
+      .prepare("select payload from injections where id = ?")
+      .get(id) as PayloadRow | undefined;
+    return row ? InjectionPacketSchema.parse(JSON.parse(row.payload)) : null;
+  }
+
   async listInjections(hostSessionId: string): Promise<InjectionPacket[]> {
     const rows = this.database
       .prepare("select payload from injections where host_session_id = ? order by id asc")

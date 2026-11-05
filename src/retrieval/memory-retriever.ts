@@ -23,7 +23,7 @@ export interface RankedMemory {
 export class MemoryRetriever {
   constructor(
     private readonly store: MemoryStore,
-    private readonly options: { embedder?: Embedder; allowLegacyUnscoped?: boolean } = {}
+    private readonly options: { embedder?: Embedder } = {}
   ) {}
 
   async prepareInjection(request: InjectionRequest): Promise<InjectionPacket | null> {
@@ -48,8 +48,7 @@ export class MemoryRetriever {
       allSummaries,
       allAnchors,
       allTraces,
-      allBoxes,
-      this.options.allowLegacyUnscoped ?? false
+      allBoxes
     );
     const topicEmbedding = this.options.embedder
       ? await this.options.embedder.embed(request.currentTopicSummary)
@@ -192,8 +191,7 @@ export function applyRetrievalBoundary(
   summaries: Summary[],
   anchors: Anchor[],
   traces: MemoryTrace[],
-  boxes: Box[],
-  allowLegacyUnscoped: boolean
+  boxes: Box[]
 ): {
   summaries: Summary[];
   anchors: Anchor[];
@@ -208,19 +206,7 @@ export function applyRetrievalBoundary(
     throw new Error("Scoped retrieval requires both personId and allowedScopeIds");
   }
   if (!hasPerson || !hasScopes) {
-    if (!allowLegacyUnscoped) {
-      throw new Error("Unscoped retrieval is disabled; provide personId and allowedScopeIds");
-    }
-    // Legacy unscoped retrieval must not become a bypass for the state boundary (T-11-21):
-    // apply the same isRetrievableState / REVIVABLE_MEMORY_STATE partition here as the scoped path.
-    return {
-      summaries: summaries.filter((summary) => isRetrievableState(summary.state)),
-      anchors,
-      traces,
-      boxes,
-      allowedScopeIds: null,
-      revivableSummaries: summaries.filter((summary) => summary.state === REVIVABLE_MEMORY_STATE)
-    };
+    throw new Error("Unscoped retrieval is disabled; provide personId and allowedScopeIds");
   }
 
   const personId = request.personId!;

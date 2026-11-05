@@ -45,5 +45,20 @@ export function latestSummaryTimestamp(summaries: Summary[], fallback: string): 
 }
 
 export function hasExistingProposal(proposals: MemoryProposal[], proposalId: string): boolean {
-  return proposals.some((proposal) => proposal.id === proposalId && proposal.state === "proposed");
+  return proposals.some((proposal) =>
+    proposal.id === proposalId &&
+    (proposal.state === "proposed" || proposal.state === "rejected" || proposal.state === "superseded")
+  );
+}
+
+/** A rejected or superseded value stays rejected when a later candidate uses a new id. */
+export function hasRejectedSameTitle(
+  items: ReadonlyArray<{ title: string; state: string }>,
+  title: string
+): boolean {
+  const normalized = title.trim().toLowerCase();
+  return items.some((item) =>
+    item.title.trim().toLowerCase() === normalized &&
+    (item.state === "rejected" || item.state === "superseded")
+  );
 }

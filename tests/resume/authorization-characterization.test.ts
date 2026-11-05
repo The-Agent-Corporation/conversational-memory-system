@@ -24,10 +24,7 @@ const AUTHORITY: ResumeAuthority = {
 };
 
 const openResumer = (store: MemoryStore, authority: ResumeAuthority = AUTHORITY): ConversationResumer =>
-  new (ConversationResumer as unknown as new (
-    store: MemoryStore,
-    authority?: ResumeAuthority
-  ) => ConversationResumer)(store, authority);
+  new ConversationResumer(store, authority);
 
 const turn = (overrides: Partial<Turn> = {}): Turn => ({
   id: "turn_1",

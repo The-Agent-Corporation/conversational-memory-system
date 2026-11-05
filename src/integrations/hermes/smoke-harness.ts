@@ -51,6 +51,23 @@ export interface HermesSmokeHarnessResult {
 export async function runHermesMemorySmokeHarness(
   options: HermesSmokeHarnessOptions = {}
 ): Promise<HermesSmokeHarnessResult> {
+  const previousPerson = process.env.HERMES_MEMORY_PERSON_ID;
+  const previousScopes = process.env.HERMES_MEMORY_SCOPE_IDS;
+  process.env.HERMES_MEMORY_PERSON_ID = "person_smoke";
+  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
+  try {
+    return await runConfiguredHermesMemorySmokeHarness(options);
+  } finally {
+    if (previousPerson === undefined) delete process.env.HERMES_MEMORY_PERSON_ID;
+    else process.env.HERMES_MEMORY_PERSON_ID = previousPerson;
+    if (previousScopes === undefined) delete process.env.HERMES_MEMORY_SCOPE_IDS;
+    else process.env.HERMES_MEMORY_SCOPE_IDS = previousScopes;
+  }
+}
+
+async function runConfiguredHermesMemorySmokeHarness(
+  options: HermesSmokeHarnessOptions = {}
+): Promise<HermesSmokeHarnessResult> {
   const databasePath = options.databasePath ?? await defaultDatabasePath();
   const projectRoot = options.projectRoot ?? process.cwd();
   const firstTurn = await ingestHermesTimelineRow({

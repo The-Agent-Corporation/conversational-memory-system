@@ -3,6 +3,7 @@ import type { Anchor, Box, MemoryProposal, Summary } from "../domain/types.js";
 import {
   dedupeTurnRanges,
   hasExistingProposal,
+  hasRejectedSameTitle,
   latestSummaryTimestamp,
   sharedTerms,
   significantTerms,
@@ -279,6 +280,7 @@ function hasDuplicateBox(
   return boxes.some((box) =>
     box.id === boxId ||
     (box.title.trim().toLowerCase() === normalizedTitle &&
-      (box.state === "approved" || box.state === "active" || box.state === "revived" || box.state === "proposed"))
-  ) || hasExistingProposal(proposals, proposalId);
+      (box.state === "approved" || box.state === "active" || box.state === "revived" ||
+        box.state === "proposed" || box.state === "rejected" || box.state === "superseded"))
+  ) || hasExistingProposal(proposals, proposalId) || hasRejectedSameTitle(proposals, title);
 }

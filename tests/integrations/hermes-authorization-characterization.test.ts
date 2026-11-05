@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import type { InjectionPacket, Summary, Turn } from "../../src/domain/types.js";
-import { HermesMemoryAdapter, type HermesMemoryAdapterOptions } from "../../src/integrations/hermes/adapter.js";
+import { HermesMemoryAdapter } from "../../src/integrations/hermes/adapter.js";
 import { resumeHermesMemory } from "../../src/integrations/hermes/resume-command.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
@@ -43,7 +43,7 @@ const openAdapter = (store: InMemoryStore): HermesMemoryAdapter =>
   new HermesMemoryAdapter(store, {
     personId: "person_a",
     allowedScopeIds: ["personal"]
-  } as HermesMemoryAdapterOptions);
+  });
 
 const summary = (overrides: Partial<Summary> = {}): Summary => ({
   id: "summary_other",

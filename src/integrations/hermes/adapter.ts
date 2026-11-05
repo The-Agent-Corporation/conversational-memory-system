@@ -22,6 +22,7 @@ import {
   mapHermesTimelineRowToHostEvent,
   type HermesTimelineRow
 } from "./contract.js";
+import { resolveHermesMemoryIdentity } from "./identity.js";
 
 export interface HermesAdapterResult {
   turn: Turn | null;
@@ -36,6 +37,8 @@ export interface HermesMemoryAdapterOptions {
   embedder?: Embedder;
   env?: SummarizerEnvironment;
   summarizerOptions?: SummarizerFactoryOptions;
+  personId?: string;
+  allowedScopeIds?: readonly string[];
 }
 
 export interface HermesInjectionOptions {
@@ -58,10 +61,17 @@ export class HermesMemoryAdapter {
   private readonly preCompactor: PreCompactor;
   private readonly resumer: ConversationResumer;
 
+  private readonly identity: ReturnType<typeof resolveHermesMemoryIdentity>;
+
   constructor(store: MemoryStore, options: HermesMemoryAdapterOptions = {}) {
+    this.identity = resolveHermesMemoryIdentity({
+      personId: options.personId,
+      allowedScopeIds: options.allowedScopeIds
+    });
     this.service = new MemoryService(store, {
       embedder: options.embedder,
-      allowLegacyUnscopedRetrieval: true
+      personId: this.identity.personId,
+      scopeId: this.identity.scopeId
     });
     this.anchorDetector = new AnchorDetector(store);
     this.preCompactor = new PreCompactor(
@@ -69,7 +79,10 @@ export class HermesMemoryAdapter {
       options.summarizer ?? createSummarizerFromEnv(options.env, options.summarizerOptions),
       options.embedder
     );
-    this.resumer = new ConversationResumer(store);
+    this.resumer = new ConversationResumer(store, {
+      personId: this.identity.personId,
+      allowedScopeIds: this.identity.allowedScopeIds
+    });
   }
 
   async processTimelineRow(row: HermesTimelineRow): Promise<HermesAdapterResult> {
@@ -126,7 +139,9 @@ export class HermesMemoryAdapter {
       hostSessionId,
       currentTopicSummary: currentTopic.currentTopicSummary,
       requestedAt: injectionOptions.requestedAt,
-      maxMemoryTokens: injectionOptions.maxMemoryTokens
+      maxMemoryTokens: injectionOptions.maxMemoryTokens,
+      personId: this.identity.personId,
+      allowedScopeIds: [...this.identity.allowedScopeIds]
     });
   }
 
@@ -137,7 +152,9 @@ export class HermesMemoryAdapter {
       hostSessionId: request.hostSessionId,
       currentTopicSummary: request.query,
       requestedAt: request.requestedAt,
-      maxMemoryTokens: request.maxMemoryTokens
+      maxMemoryTokens: request.maxMemoryTokens,
+      personId: this.identity.personId,
+      allowedScopeIds: [...this.identity.allowedScopeIds]
     });
 
     if (!packet) {

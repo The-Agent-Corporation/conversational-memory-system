@@ -13,6 +13,8 @@ export const HostNameSchema = z.enum([
   "unknown"
 ]);
 
+// `host` names the source application. It is not an authorization principal.
+// Person and scope are server-bound (ADR 0062); caller-supplied authority fields are rejected.
 export const ConversationTurnEventSchema = z.object({
   id: z.string().min(1),
   host: HostNameSchema,
@@ -27,7 +29,7 @@ export const ConversationTurnEventSchema = z.object({
   createdAt: IsoDateTimeSchema,
   nativeParentEventId: z.string().min(1).nullable().optional(),
   metadata: JsonObjectSchema
-});
+}).strict();
 
 export const ControlSignalEventSchema = z.object({
   id: z.string().min(1),
@@ -45,7 +47,7 @@ export const ControlSignalEventSchema = z.object({
   ]),
   createdAt: IsoDateTimeSchema,
   metadata: JsonObjectSchema
-});
+}).strict();
 
 export const HostEventSchema = z.discriminatedUnion("type", [
   ConversationTurnEventSchema,

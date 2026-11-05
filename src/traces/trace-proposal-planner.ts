@@ -1,5 +1,5 @@
 import type { Anchor, Box, MemoryProposal, MemoryTrace, Summary } from "../domain/types.js";
-import { dedupeTurnRanges, hasExistingProposal } from "../proposals/proposal-utils.js";
+import { dedupeTurnRanges, hasExistingProposal, hasRejectedSameTitle } from "../proposals/proposal-utils.js";
 import { buildTraceCandidates, type TraceCandidate } from "./trace-candidate-core.js";
 import { buildTraceCandidatesParallel } from "./parallel-trace-backfill.js";
 
@@ -93,7 +93,12 @@ export class DeterministicTraceProposalPlanner implements TraceProposalPlanner {
 
       const proposalId = `proposal_trace_${candidate.traceId}`;
       if (hasExistingProposal(request.proposals, proposalId) ||
-        request.traces.some((trace) => trace.id === candidate.traceId && trace.state !== "rejected")) {
+        request.traces.some((trace) => trace.id === candidate.traceId) ||
+        hasRejectedSameTitle(request.traces, candidate.title) ||
+        hasRejectedSameTitle(
+          request.proposals.filter((proposal) => proposal.proposalType === "trace"),
+          candidate.title
+        )) {
         skippedCandidates.push({
           title: candidate.title,
           summaryIds: candidate.summaries.map((summary) => summary.id),

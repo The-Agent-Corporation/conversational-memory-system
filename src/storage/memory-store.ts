@@ -259,6 +259,7 @@ export interface MemoryStore {
     unattributedCount: number;
   }>;
   saveInjection(packet: InjectionPacket): Promise<void>;
+  getInjection(id: string): Promise<InjectionPacket | null>;
   listInjections(hostSessionId: string): Promise<InjectionPacket[]>;
   deleteInjectionsReferencingSummaryIds(summaryIds: string[]): Promise<void>;
   saveProposal(proposal: MemoryProposal): Promise<void>;
