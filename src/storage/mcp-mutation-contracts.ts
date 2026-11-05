@@ -530,6 +530,38 @@ export type CommitUnhygienicAnchorPruneInput = z.infer<typeof CommitUnhygienicAn
 export type UnhygienicAnchorPruneSkipReason = z.infer<typeof UnhygienicAnchorPruneSkipReasonSchema>;
 export type UnhygienicAnchorPruneReceipt = z.infer<typeof UnhygienicAnchorPruneReceiptSchema>;
 
+export const LegacyUnownedKindSchema = z.enum(["summary", "box", "trace", "anchor"]);
+export const LegacyUnownedSkipReasonSchema = z.enum(["not_found", "already_owned"]);
+
+export const CommitLegacyUnownedQuarantineInputSchema = z.object({
+  operation: z.literal("legacy_unowned_quarantine"),
+  summaryIds: IdListSchema.max(1000),
+  boxIds: IdListSchema.max(1000),
+  traceIds: IdListSchema.max(1000),
+  anchorIds: IdListSchema.max(1000),
+  requestedAt: IsoDateTimeSchema
+}).strict();
+
+export const LegacyUnownedQuarantineReceiptSchema = z.object({
+  operation: z.literal("legacy_unowned_quarantine"),
+  marker: z.literal("legacy-unowned"),
+  quarantinedSummaryIds: IdListSchema,
+  quarantinedBoxIds: IdListSchema,
+  quarantinedTraceIds: IdListSchema,
+  quarantinedAnchorIds: IdListSchema,
+  skipped: z.array(z.object({
+    kind: LegacyUnownedKindSchema,
+    id: IdSchema,
+    reason: LegacyUnownedSkipReasonSchema
+  })),
+  committedAt: IsoDateTimeSchema
+}).strict();
+
+export type CommitLegacyUnownedQuarantineInput = z.infer<typeof CommitLegacyUnownedQuarantineInputSchema>;
+export type LegacyUnownedQuarantineReceipt = z.infer<typeof LegacyUnownedQuarantineReceiptSchema>;
+export type LegacyUnownedKind = z.infer<typeof LegacyUnownedKindSchema>;
+export type LegacyUnownedSkipReason = z.infer<typeof LegacyUnownedSkipReasonSchema>;
+
 export type McpMutationFaultBoundary =
   | "history_import_before_write" | "history_import_after_sources" | "history_import_after_events" | "history_import_after_checkpoint"
   | "proposal_decision_before_write" | "proposal_decision_after_boxes" | "proposal_decision_after_traces" | "proposal_decision_after_proposal"

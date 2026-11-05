@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "profiles": {
+    "workspace": {
+      "databasePath": "/absolute/path/to/memory.sqlite",
+      "personId": "person_example",
+      "allowedScopeIds": ["personal"],
+      "ingestScopeId": "personal",
+      "scopeAliases": {
+        "personal": "workspace"
+      },
+      "sourceRoots": {
+        "synthetic": "/absolute/path/to/sources"
+      },
+      "allowInjection": false
+    }
+  }
+}
