@@ -34,6 +34,8 @@ import type {
   TraceFilter
 } from "./memory-store.js";
 import { cosineSimilarity } from "../embeddings/embedder.js";
+import { assertRejectedValueAllowed, rejectedValueHash, scopeIdsForPerson } from "../retrieval/rejected-value.js";
+import { mutationAuditId, type MutationAuditRecord } from "./mutation-audit.js";
 import { isRetrievableState } from "../retrieval/retrievable-state.js";
 import { ImportCheckpointSchema, type ImportCheckpoint } from "../imports/types.js";
 import {
@@ -159,6 +161,8 @@ export class InMemoryStore implements MemoryStore {
   private readonly sourceGrants: SourceGrant[] = [];
   private readonly sourceLifecycleAuditEvents: SourceLifecycleAuditEvent[] = [];
   private readonly quarantineRecords: QuarantineRecord[] = [];
+  private readonly mutationAudits: import("./mutation-audit.js").MutationAuditRecord[] = [];
+  private readonly rejectedValueFingerprints: import("./mutation-audit.js").RejectedValueFingerprint[] = [];
   private readonly bootstrapCheckpoints: HistoricalBootstrapCheckpoint[] = [];
   private readonly turns: Turn[] = [];
   private readonly summaries: Summary[] = [];
@@ -372,6 +376,13 @@ export class InMemoryStore implements MemoryStore {
     this.replace(this.canonicalEvents, staged.canonicalEvents);
     this.replace(this.importCheckpoints, staged.checkpoints);
     this.replace(this.sourceLifecycleAuditEvents, staged.audits);
+    this.rememberMutationAudit({
+      personId: parsed.personId,
+      scopeId: parsed.expectedGrant.scopeId,
+      action: "history_import",
+      targetId: parsed.candidateId,
+      occurredAt: parsed.receipt.committedAt
+    });
     return structuredClone(parsed.receipt);
   }
 
@@ -407,6 +418,7 @@ export class InMemoryStore implements MemoryStore {
     this.replace(this.boxes, staged.boxes);
     this.replace(this.traces, staged.traces);
     this.replace(this.proposals, staged.proposals);
+    this.rememberProposalDecision(parsed.nextProposal, currentSummaries, parsed.personId, parsed.receipt.committedAt);
     return structuredClone(parsed.receipt);
   }
 
@@ -423,6 +435,13 @@ export class InMemoryStore implements MemoryStore {
     this.faultInjector?.reach("source_revocation_after_audit");
     this.replace(this.sourceGrants, grants);
     this.replace(this.sourceLifecycleAuditEvents, audits);
+    this.rememberMutationAudit({
+      personId: parsed.personId,
+      scopeId: parsed.nextGrant.scopeId,
+      action: "source_revocation",
+      targetId: parsed.nextGrant.id,
+      occurredAt: parsed.receipt.committedAt
+    });
     return structuredClone(parsed.receipt);
   }
 
@@ -467,6 +486,13 @@ export class InMemoryStore implements MemoryStore {
     this.replace(this.summaries, staged.summaries); this.replace(this.boxes, staged.boxes);
     this.replace(this.proposals, staged.proposals); this.replace(this.traces, staged.traces);
     this.replace(this.sourceLifecycleAuditEvents, staged.audits);
+    this.rememberMutationAudit({
+      personId: parsed.personId,
+      scopeId: parsed.expectedGrant.scopeId,
+      action: "source_deletion",
+      targetId: parsed.expectedGrant.id,
+      occurredAt: parsed.receipt.committedAt
+    });
     return structuredClone(parsed.receipt);
   }
 
@@ -1001,7 +1027,12 @@ export class InMemoryStore implements MemoryStore {
   }
 
   async saveBox(box: Box): Promise<void> {
-    this.upsertById(this.boxes, structuredClone(BoxSchema.parse(box)));
+    const parsed = BoxSchema.parse(box);
+    const existing = this.boxes.find((item) => item.id === parsed.id);
+    if (!existing) {
+      await this.assertAutomatedWriteAllowed(parsed.personId, parsed.summaryIds, parsed.title);
+    }
+    this.upsertById(this.boxes, structuredClone(parsed));
   }
 
   async getBox(id: string): Promise<Box | null> {
@@ -1262,7 +1293,57 @@ export class InMemoryStore implements MemoryStore {
   }
 
   async saveProposal(proposal: MemoryProposal): Promise<void> {
-    this.upsertById(this.proposals, structuredClone(MemoryProposalSchema.parse(proposal)));
+    const parsed = MemoryProposalSchema.parse(proposal);
+    const existing = this.proposals.find((item) => item.id === parsed.id);
+    if (!existing && parsed.state === "proposed") {
+      await this.assertAutomatedWriteAllowed(parsed.personId, parsed.sourceSummaryIds, parsed.title);
+      if (parsed.personId) {
+        for (const scopeId of scopeIdsForPerson(
+          this.summaries.filter((summary) => parsed.sourceSummaryIds.includes(summary.id)),
+          parsed.personId
+        )) {
+          this.rememberMutationAudit({
+            personId: parsed.personId,
+            scopeId,
+            action: "proposal_write",
+            targetId: parsed.id,
+            occurredAt: parsed.createdAt
+          });
+        }
+      }
+    }
+    this.upsertById(this.proposals, structuredClone(parsed));
+  }
+
+  async recordMutationAudit(record: import("./mutation-audit.js").MutationAuditRecord): Promise<void> {
+    const parsed = record;
+    if (this.mutationAudits.some((item) => item.id === parsed.id)) return;
+    this.mutationAudits.push(structuredClone(parsed));
+  }
+
+  async listMutationAudits(personId: string): Promise<import("./mutation-audit.js").MutationAuditRecord[]> {
+    return structuredClone(this.mutationAudits
+      .filter((record) => record.personId === personId)
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.id.localeCompare(right.id)));
+  }
+
+  async recordRejectedValueFingerprint(record: import("./mutation-audit.js").RejectedValueFingerprint): Promise<void> {
+    if (this.rejectedValueFingerprints.some((item) =>
+      item.personId === record.personId && item.scopeId === record.scopeId && item.valueHash === record.valueHash
+    )) return;
+    this.rejectedValueFingerprints.push(structuredClone(record));
+  }
+
+  async hasRejectedValueFingerprint(personId: string, scopeId: string, valueHash: string): Promise<boolean> {
+    return this.rejectedValueFingerprints.some((item) =>
+      item.personId === personId && item.scopeId === scopeId && item.valueHash === valueHash
+    );
+  }
+
+  async listRejectedValueFingerprints(personId: string): Promise<import("./mutation-audit.js").RejectedValueFingerprint[]> {
+    return structuredClone(this.rejectedValueFingerprints
+      .filter((item) => item.personId === personId)
+      .sort((left, right) => left.scopeId.localeCompare(right.scopeId) || left.valueHash.localeCompare(right.valueHash)));
   }
 
   async getProposal(id: string): Promise<MemoryProposal | null> {
@@ -2047,6 +2128,13 @@ export class InMemoryStore implements MemoryStore {
       if (job.state === "complete") job.state = "pending";
       job.updatedAt = parsed.deletedAt;
     }
+    this.rememberMutationAudit({
+      personId: parsed.personId,
+      scopeId: event.scopeId ?? "unspecified",
+      action: "event_deletion",
+      targetId: event.id,
+      occurredAt: parsed.deletedAt
+    });
     return {
       operation: "event_deletion",
       status: "COMMITTED",
@@ -2062,5 +2150,54 @@ export class InMemoryStore implements MemoryStore {
       },
       committedAt: parsed.deletedAt
     };
+  }
+
+  private rememberMutationAudit(input: Omit<MutationAuditRecord, "id">): void {
+    const record = { id: mutationAuditId(input), ...input };
+    if (this.mutationAudits.some((item) => item.id === record.id)) return;
+    this.mutationAudits.push(record);
+  }
+
+  private rememberProposalDecision(
+    proposal: MemoryProposal,
+    summaries: readonly Summary[],
+    personId: string,
+    occurredAt: string
+  ): void {
+    const ownerId = proposal.personId ?? personId;
+    const linked = summaries.filter((summary) => proposal.sourceSummaryIds.includes(summary.id));
+    const scopes = scopeIdsForPerson(linked, ownerId);
+    if (proposal.state === "rejected") {
+      const valueHash = rejectedValueHash(proposal.title);
+      for (const scopeId of scopes) {
+        if (this.rejectedValueFingerprints.some((item) =>
+          item.personId === ownerId && item.scopeId === scopeId && item.valueHash === valueHash
+        )) continue;
+        this.rejectedValueFingerprints.push({ personId: ownerId, scopeId, valueHash, recordedAt: occurredAt });
+      }
+    }
+    for (const scopeId of scopes) {
+      this.rememberMutationAudit({
+        personId: ownerId,
+        scopeId,
+        action: "proposal_decision",
+        targetId: proposal.id,
+        occurredAt
+      });
+    }
+  }
+
+  private async assertAutomatedWriteAllowed(
+    personId: string | undefined,
+    summaryIds: readonly string[],
+    title: string
+  ): Promise<void> {
+    await assertRejectedValueAllowed({
+      personId,
+      summaryIds,
+      title,
+      summaries: this.summaries,
+      hasFingerprint: (ownerId, scopeId, valueHash) => this.hasRejectedValueFingerprint(ownerId, scopeId, valueHash)
+    });
   }
 }

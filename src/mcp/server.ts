@@ -13,6 +13,7 @@ import type { Embedder } from "../embeddings/embedder.js";
 import { probeEmbedderHealth, resolveEmbedder } from "../embeddings/embedder-resolver.js";
 import { LiveTurnAppendService } from "./live-turn-append.js";
 import { ConversationResumer } from "../resume/conversation-resumer.js";
+import { reinforceSummary } from "../retrieval/reinforce.js";
 import { MemoryRetriever } from "../retrieval/memory-retriever.js";
 import { MemoryQueryService } from "../retrieval/memory-query-service.js";
 import { SubjectExpansionService } from "../retrieval/subject-expansion-service.js";
@@ -152,6 +153,21 @@ export const createMemoryMcpServer = async (
           const saved = await readStore.getInjection(packetId);
           if (!saved) throw new Error(`Injection packet ${packetId} was not found.`);
           return resumer.resumeInjection(saved);
+        }
+      },
+      reinforce: {
+        reinforce: async (summaryId) => {
+          const writeStore = new SqliteStore(authority.databasePath, { busyTimeoutMs: options.busyTimeoutMs ?? 5_000 });
+          try {
+            return await reinforceSummary(writeStore, {
+              summaryId,
+              personId: authority.personId,
+              allowedScopeIds: authority.allowedScopeIds,
+              now: now()
+            });
+          } finally {
+            writeStore.close();
+          }
         }
       }
     });

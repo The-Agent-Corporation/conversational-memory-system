@@ -113,6 +113,8 @@ import {
   type UnhygienicAnchorPruneSkipReason
 } from "./mcp-mutation-contracts.js";
 import { classifyEvent, HYGIENE_RULE_VERSION } from "../topic/derivation-hygiene.js";
+import { assertRejectedValueAllowed, rejectedValueHash, scopeIdsForPerson } from "../retrieval/rejected-value.js";
+import { mutationAuditId, type MutationAuditRecord, type RejectedValueFingerprint } from "./mutation-audit.js";
 import { buildLegacyUnownedQuarantineRecord, isLegacyUnowned } from "../operations/legacy-unowned.js";
 import {
   AcceptedSyncOperationSchema,
@@ -553,6 +555,13 @@ export class SqliteStore implements MemoryStore {
       await this.saveImportCheckpoint(parsed.nextCheckpoint);
       this.faultInjector?.reach("history_import_after_checkpoint");
       for (const item of parsed.auditEvents) await this.saveSourceLifecycleAuditEvent(item);
+      this.insertMutationAudit({
+        personId: parsed.personId,
+        scopeId: parsed.expectedGrant.scopeId,
+        action: "history_import",
+        targetId: parsed.candidateId,
+        occurredAt: parsed.receipt.committedAt
+      });
       this.database.exec("commit");
       return parsed.receipt;
     } catch (error) {
@@ -595,6 +604,7 @@ export class SqliteStore implements MemoryStore {
       this.faultInjector?.reach("proposal_decision_after_traces");
       await this.saveProposal(parsed.nextProposal);
       this.faultInjector?.reach("proposal_decision_after_proposal");
+      this.insertProposalDecision(parsed.nextProposal, currentSummaries, parsed.personId, parsed.receipt.committedAt);
       this.database.exec("commit");
       return parsed.receipt;
     } catch (error) {
@@ -617,6 +627,13 @@ export class SqliteStore implements MemoryStore {
       this.faultInjector?.reach("source_revocation_after_grant");
       await this.saveSourceLifecycleAuditEvent(parsed.auditEvent);
       this.faultInjector?.reach("source_revocation_after_audit");
+      this.insertMutationAudit({
+        personId: parsed.personId,
+        scopeId: parsed.nextGrant.scopeId,
+        action: "source_revocation",
+        targetId: parsed.nextGrant.id,
+        occurredAt: parsed.receipt.committedAt
+      });
       this.database.exec("commit");
       return parsed.receipt;
     } catch (error) {
@@ -656,6 +673,13 @@ export class SqliteStore implements MemoryStore {
       this.faultInjector?.reach("source_deletion_after_checkpoint");
       for (const item of parsed.auditEvents) await this.saveSourceLifecycleAuditEvent(item);
       this.faultInjector?.reach("source_deletion_after_audits");
+      this.insertMutationAudit({
+        personId: parsed.personId,
+        scopeId: parsed.expectedGrant.scopeId,
+        action: "source_deletion",
+        targetId: parsed.expectedGrant.id,
+        occurredAt: parsed.receipt.committedAt
+      });
       this.database.exec("commit");
       return parsed.receipt;
     } catch (error) {
@@ -1411,7 +1435,10 @@ export class SqliteStore implements MemoryStore {
   }
 
   async saveBox(box: Box): Promise<void> {
-    this.upsertPayload("boxes", BoxSchema.parse(box));
+    const parsed = BoxSchema.parse(box);
+    const existing = await this.getBox(parsed.id);
+    if (!existing) await this.assertAutomatedWriteAllowed(parsed.personId, parsed.summaryIds, parsed.title);
+    this.upsertPayload("boxes", parsed);
   }
 
   async getBox(id: string): Promise<Box | null> {
@@ -1716,6 +1743,22 @@ export class SqliteStore implements MemoryStore {
 
   async saveProposal(proposal: MemoryProposal): Promise<void> {
     const parsed = MemoryProposalSchema.parse(proposal);
+    const existing = await this.getProposal(parsed.id);
+    if (!existing && parsed.state === "proposed") {
+      await this.assertAutomatedWriteAllowed(parsed.personId, parsed.sourceSummaryIds, parsed.title);
+      if (parsed.personId) {
+        const linked = (await this.listSummaries()).filter((summary) => parsed.sourceSummaryIds.includes(summary.id));
+        for (const scopeId of scopeIdsForPerson(linked, parsed.personId)) {
+          this.insertMutationAudit({
+            personId: parsed.personId,
+            scopeId,
+            action: "proposal_write",
+            targetId: parsed.id,
+            occurredAt: parsed.createdAt
+          });
+        }
+      }
+    }
     this.database
       .prepare(
         `insert into proposals (id, state, proposal_type, payload)
@@ -1726,6 +1769,54 @@ export class SqliteStore implements MemoryStore {
            payload = excluded.payload`
       )
       .run(parsed.id, parsed.state, parsed.proposalType, JSON.stringify(parsed));
+  }
+
+  async recordMutationAudit(record: MutationAuditRecord): Promise<void> {
+    this.insertMutationAudit(record);
+  }
+
+  async listMutationAudits(personId: string): Promise<MutationAuditRecord[]> {
+    const rows = this.database.prepare(
+      "select id, person_id, scope_id, action, target_id, occurred_at from mutation_audits where person_id = ? order by occurred_at asc, id asc"
+    ).all(personId) as Array<{
+      id: string;
+      person_id: string;
+      scope_id: string;
+      action: MutationAuditRecord["action"];
+      target_id: string;
+      occurred_at: string;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      personId: row.person_id,
+      scopeId: row.scope_id,
+      action: row.action,
+      targetId: row.target_id,
+      occurredAt: row.occurred_at
+    }));
+  }
+
+  async recordRejectedValueFingerprint(record: RejectedValueFingerprint): Promise<void> {
+    this.insertRejectedValueFingerprint(record);
+  }
+
+  async hasRejectedValueFingerprint(personId: string, scopeId: string, valueHash: string): Promise<boolean> {
+    const row = this.database.prepare(
+      "select 1 as present from rejected_value_fingerprints where person_id = ? and scope_id = ? and value_hash = ?"
+    ).get(personId, scopeId, valueHash) as { present: number } | undefined;
+    return row !== undefined;
+  }
+
+  async listRejectedValueFingerprints(personId: string): Promise<RejectedValueFingerprint[]> {
+    const rows = this.database.prepare(
+      "select person_id, scope_id, value_hash, recorded_at from rejected_value_fingerprints where person_id = ? order by scope_id asc, value_hash asc"
+    ).all(personId) as Array<{ person_id: string; scope_id: string; value_hash: string; recorded_at: string }>;
+    return rows.map((row) => ({
+      personId: row.person_id,
+      scopeId: row.scope_id,
+      valueHash: row.value_hash,
+      recordedAt: row.recorded_at
+    }));
   }
 
   async getProposal(id: string): Promise<MemoryProposal | null> {
@@ -2072,6 +2163,13 @@ export class SqliteStore implements MemoryStore {
          values (?, ?, ?, ?, ?, ?)
          on conflict(id) do nothing`
       ).run(auditId, parsed.personId, event.id, parsed.actor, parsed.deletedAt, parsed.reason);
+      this.insertMutationAudit({
+        personId: parsed.personId,
+        scopeId: event.scopeId ?? "unspecified",
+        action: "event_deletion",
+        targetId: event.id,
+        occurredAt: parsed.deletedAt
+      });
       this.database.exec("commit");
       return {
         operation: "event_deletion",
@@ -3035,5 +3133,63 @@ export class SqliteStore implements MemoryStore {
   ): void {
     const statement = this.database.prepare(`delete from ${tableName} where id = ?`);
     for (const id of ids) statement.run(id);
+  }
+
+  private insertMutationAudit(input: Omit<MutationAuditRecord, "id"> & { id?: string }): void {
+    const record = { ...input, id: input.id ?? mutationAuditId(input) };
+    this.database.prepare(
+      `insert into mutation_audits (id, person_id, scope_id, action, target_id, occurred_at)
+       values (?, ?, ?, ?, ?, ?)
+       on conflict(id) do nothing`
+    ).run(record.id, record.personId, record.scopeId, record.action, record.targetId, record.occurredAt);
+  }
+
+  private insertRejectedValueFingerprint(record: RejectedValueFingerprint): void {
+    this.database.prepare(
+      `insert into rejected_value_fingerprints (person_id, scope_id, value_hash, recorded_at)
+       values (?, ?, ?, ?)
+       on conflict(person_id, scope_id, value_hash) do nothing`
+    ).run(record.personId, record.scopeId, record.valueHash, record.recordedAt);
+  }
+
+  private insertProposalDecision(
+    proposal: MemoryProposal,
+    summaries: readonly Summary[],
+    personId: string,
+    occurredAt: string
+  ): void {
+    const ownerId = proposal.personId ?? personId;
+    const linked = summaries.filter((summary) => proposal.sourceSummaryIds.includes(summary.id));
+    const scopes = scopeIdsForPerson(linked, ownerId);
+    if (proposal.state === "rejected") {
+      const valueHash = rejectedValueHash(proposal.title);
+      for (const scopeId of scopes) {
+        this.insertRejectedValueFingerprint({ personId: ownerId, scopeId, valueHash, recordedAt: occurredAt });
+      }
+    }
+    for (const scopeId of scopes) {
+      this.insertMutationAudit({
+        personId: ownerId,
+        scopeId,
+        action: "proposal_decision",
+        targetId: proposal.id,
+        occurredAt
+      });
+    }
+  }
+
+  private async assertAutomatedWriteAllowed(
+    personId: string | undefined,
+    summaryIds: readonly string[],
+    title: string
+  ): Promise<void> {
+    const summaries = await this.listSummaries();
+    await assertRejectedValueAllowed({
+      personId,
+      summaryIds,
+      title,
+      summaries,
+      hasFingerprint: (ownerId, scopeId, valueHash) => this.hasRejectedValueFingerprint(ownerId, scopeId, valueHash)
+    });
   }
 }

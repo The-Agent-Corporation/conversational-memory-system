@@ -7,6 +7,7 @@ import { redactKnownSecrets } from "../imports/secret-redactor.js";
 import { serializedToolCallsAreMalformed } from "../imports/tool-call-record.js";
 import { MemoryService } from "../service/memory-service.js";
 import type { MemoryStore } from "../storage/memory-store.js";
+import { mutationAuditId } from "../storage/mutation-audit.js";
 import type { ProfileAuthority } from "./authority.js";
 
 export const LIVE_TURN_PARSER_VERSION = "mcp-live-turn/v1";
@@ -135,6 +136,20 @@ export class LiveTurnAppendService {
       content,
       createdAt: input.createdAt,
       metadata
+    });
+    await this.store.recordMutationAudit({
+      id: mutationAuditId({
+        personId: this.authority.personId,
+        scopeId: this.authority.ingestScopeId,
+        action: "append_turn",
+        targetId: canonicalEventId,
+        occurredAt: input.createdAt
+      }),
+      personId: this.authority.personId,
+      scopeId: this.authority.ingestScopeId,
+      action: "append_turn",
+      targetId: canonicalEventId,
+      occurredAt: input.createdAt
     });
     return {
       status: "APPENDED",

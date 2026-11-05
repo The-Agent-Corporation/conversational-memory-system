@@ -434,7 +434,7 @@ describe("MemoryRetriever", () => {
     await expect(store.listSummaries()).resolves.toEqual([
       expect.objectContaining({
         id: "summary_large",
-        retrievalCount: 1
+        retrievalCount: 0
       })
     ]);
   });
@@ -460,10 +460,10 @@ describe("MemoryRetriever", () => {
     await expect(store.listSummaries()).resolves.toEqual([
       expect.objectContaining({
         id: "summary_1",
-        strength: 0.85,
-        retrievalCount: 3,
-        lastAccessedAt: "2026-05-04T10:10:00.000Z",
-        retrievedAt: "2026-05-04T10:10:00.000Z"
+        strength: 0.8,
+        retrievalCount: 2,
+        lastAccessedAt: "2026-05-04T09:00:00.000Z",
+        retrievedAt: "2026-05-04T09:00:00.000Z"
       })
     ]);
   });
@@ -492,8 +492,8 @@ describe("MemoryRetriever", () => {
     await expect(store.listSummaries()).resolves.toEqual([
       expect.objectContaining({
         id: "summary_selected",
-        strength: 1,
-        retrievalCount: 1
+        strength: 0.98,
+        retrievalCount: 0
       }),
       expect.objectContaining({
         id: "summary_unselected",
@@ -541,22 +541,11 @@ describe("MemoryRetriever", () => {
 
     const afterFirst = await store.listSummaries();
     expect(afterFirst.find((summary) => summary.id === "summary_stale")).toMatchObject({
-      state: "revived",
-      strength: 0.25,
-      retrievalCount: 5,
-      lastAccessedAt: "2026-05-04T10:10:00.000Z",
-      retrievedAt: "2026-05-04T10:10:00.000Z"
+      state: "stale",
+      strength: 0.2,
+      retrievalCount: 4
     });
-
-    const secondPacket = await retriever.prepareInjection({
-      host: "roscoe-hermes",
-      profileId: "default",
-      hostSessionId: "session_1",
-      currentTopicSummary: "Smith PIP demand",
-      requestedAt: "2026-05-04T10:20:00.000Z"
-    });
-
-    expect(secondPacket?.sourceSummaryIds).toContain("summary_stale");
+    expect(firstPacket?.sourceSummaryIds).not.toContain("summary_stale");
   });
 
   it("leaves a stale summary stale when it scores below the selected floor", async () => {

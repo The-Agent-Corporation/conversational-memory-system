@@ -162,6 +162,31 @@ export const MIGRATIONS: readonly SchemaMigration[] = [
         );
       `);
     }
+  },
+  {
+    version: 8,
+    description: "ADR 0066: content-free mutation audit and rejected-value fingerprints",
+    apply: (database) => {
+      database.exec(`
+        create table if not exists mutation_audits (
+          id text primary key,
+          person_id text not null,
+          scope_id text not null,
+          action text not null,
+          target_id text not null,
+          occurred_at text not null
+        );
+        create index if not exists idx_mutation_audits_person_time
+          on mutation_audits (person_id, occurred_at, id);
+        create table if not exists rejected_value_fingerprints (
+          person_id text not null,
+          scope_id text not null,
+          value_hash text not null,
+          recorded_at text not null,
+          primary key (person_id, scope_id, value_hash)
+        );
+      `);
+    }
   }
 ];
 
