@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Box, InjectionPacket, MemoryTrace, Summary, Turn } from "../../src/domain/types.js";
 import { resumeHermesMemory } from "../../src/integrations/hermes/resume-command.js";
+import { writeHermesMcpProfile } from "../../src/integrations/hermes/profile-file.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 let tempDir: string | null = null;
@@ -13,14 +14,21 @@ const makeTempDir = async (): Promise<string> => {
   return tempDir;
 };
 
-beforeEach(() => {
-  process.env.HERMES_MEMORY_PERSON_ID = "person_test";
-  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
-});
+const resumeAt = async (databasePath: string, input: string) => {
+  const profile = await writeHermesMcpProfile({
+    directory: dirname(databasePath),
+    databasePath,
+    personId: "person_test",
+    scopeId: "personal"
+  });
+  return resumeHermesMemory({
+    configPath: profile.configPath,
+    profileName: profile.profileName,
+    input
+  });
+};
 
 afterEach(async () => {
-  delete process.env.HERMES_MEMORY_PERSON_ID;
-  delete process.env.HERMES_MEMORY_SCOPE_IDS;
   if (tempDir) {
     await rm(tempDir, { recursive: true, force: true });
     tempDir = null;
@@ -143,10 +151,7 @@ describe("Hermes resume command", () => {
     await store.saveSummary(summary());
     store.close();
 
-    const result = await resumeHermesMemory({
-      databasePath,
-      input: JSON.stringify({ summary_id: "summary_smith_pip" })
-    });
+    const result = await resumeAt(databasePath, JSON.stringify({ summary_id: "summary_smith_pip" }));
 
     expect(result.ok).toBe(true);
     expect(result.turnCount).toBe(2);
@@ -171,10 +176,7 @@ describe("Hermes resume command", () => {
     await store.saveInjection(packet);
     store.close();
 
-    const result = await resumeHermesMemory({
-      databasePath,
-      input: JSON.stringify({ injection_packet: packet })
-    });
+    const result = await resumeAt(databasePath, JSON.stringify({ injection_packet: packet }));
 
     expect(result.sourceSummaryIds).toEqual(["summary_smith_pip"]);
     expect(result.turnCount).toBe(2);
@@ -196,10 +198,7 @@ describe("Hermes resume command", () => {
     await store.saveTrace(trace());
     store.close();
 
-    const result = await resumeHermesMemory({
-      databasePath,
-      input: JSON.stringify({ trace_id: "trace_smith_pip_provider_bills" })
-    });
+    const result = await resumeAt(databasePath, JSON.stringify({ trace_id: "trace_smith_pip_provider_bills" }));
 
     expect(result.sourceTraceIds).toEqual(["trace_smith_pip_provider_bills"]);
     expect(result.sourceBoxIds).toEqual(["box_smith_pip"]);
@@ -232,14 +231,11 @@ describe("Hermes resume command", () => {
     }));
     store.close();
 
-    const result = await resumeHermesMemory({
-      databasePath,
-      input: JSON.stringify({
-        box_id: "box_smith_pip",
-        include_child_boxes: true,
-        max_turn_ranges: 2
-      })
-    });
+    const result = await resumeAt(databasePath, JSON.stringify({
+      box_id: "box_smith_pip",
+      include_child_boxes: true,
+      max_turn_ranges: 2
+    }));
 
     expect(result.sourceBoxIds).toEqual(["box_smith_pip", "box_child"]);
     expect(result.turns.map((sourceTurn) => sourceTurn.id)).toEqual(["turn_1", "turn_2"]);
@@ -250,12 +246,9 @@ describe("Hermes resume command", () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
 
-    await expect(resumeHermesMemory({
-      databasePath,
-      input: JSON.stringify({
-        summary_id: "summary_smith_pip",
-        trace_id: "trace_smith_pip_provider_bills"
-      })
-    })).rejects.toThrow("Provide exactly one of summary_id, trace_id, box_id, or injection_packet.");
+    await expect(resumeAt(databasePath, JSON.stringify({
+      summary_id: "summary_smith_pip",
+      trace_id: "trace_smith_pip_provider_bills"
+    }))).rejects.toThrow("Provide exactly one of summary_id, trace_id, box_id, or injection_packet.");
   });
 });

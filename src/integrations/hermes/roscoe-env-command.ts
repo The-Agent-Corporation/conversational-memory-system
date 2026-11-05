@@ -7,6 +7,8 @@ const OutputFormatSchema = z.enum(["shell", "json"]);
 
 export interface RoscoeEnvCommandOptions {
   databasePath: string;
+  configPath?: string;
+  profileName?: string;
   projectRoot?: string;
   format?: "shell" | "json";
 }
@@ -15,6 +17,8 @@ export function renderRoscoeMemoryEnvironment(options: RoscoeEnvCommandOptions):
   const format = OutputFormatSchema.parse(options.format ?? "shell");
   const env = buildRoscoeMemoryEnvironment({
     databasePath: options.databasePath,
+    configPath: options.configPath ?? `${options.databasePath}.profiles.json`,
+    profileName: options.profileName ?? "hermes",
     projectRoot: options.projectRoot
   });
 

@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ingestHermesTimelineRow } from "../../src/integrations/hermes/ingest-command.js";
+import { writeHermesMcpProfile } from "../../src/integrations/hermes/profile-file.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
 let tempDir: string | null = null;
@@ -12,11 +14,6 @@ const makeTempDir = async (): Promise<string> => {
   return tempDir;
 };
 
-beforeEach(() => {
-  process.env.HERMES_MEMORY_PERSON_ID = "person_default";
-  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
-});
-
 afterEach(async () => {
   if (tempDir) {
     await rm(tempDir, { recursive: true, force: true });
@@ -24,259 +21,109 @@ afterEach(async () => {
   }
 });
 
+const row = (overrides: Record<string, unknown>) => JSON.stringify({
+  profile_id: "default",
+  session_id: "profile:default",
+  channel: "telegram",
+  metadata_json: null,
+  ...overrides
+});
+
 describe("Hermes ingest command", () => {
-  it("ingests a bridged Hermes timeline row into the SQLite memory store", async () => {
+  it("appends a timeline row through the generic MCP profile", async () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
+    const profile = await writeHermesMcpProfile({
+      directory: dir,
+      databasePath,
+      personId: "person_default",
+      scopeId: "personal"
+    });
 
     const result = await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
+      configPath: profile.configPath,
+      profileName: profile.profileName,
+      input: row({
         id: "default:1",
-        profile_id: "default",
-        session_id: "profile:default",
         sequence: 1,
         role: "user",
         content: "Let's talk about Smith PIP.",
         created_at: "2024-05-04T12:40:00.000Z",
-        channel: "telegram",
-        metadata_json: JSON.stringify({
-          direction: "inbound",
-          platform: "telegram",
-          source_chat_id: "chat-1",
-          source_thread_id: "thread-1",
-          author: "Alice",
-          message_id: "m1"
-        })
+        metadata_json: JSON.stringify({ author: "Alice" })
       })
     });
 
-    expect(result).toEqual({
-      ok: true,
-      turnId: "turn_hermes_default:1",
-      completedTopic: null,
-      summaryId: null
-    });
+    expect(result.status).toBe("APPENDED");
+    expect(result.summaryId).toBeNull();
+    expect(result.turnId).toEqual(expect.any(String));
 
-    const store = new SqliteStore(databasePath);
-    const turns = await store.listTurns("profile:default");
-    expect(turns).toHaveLength(1);
-    expect(turns[0]).toMatchObject({
-      id: "turn_hermes_default:1",
-      threadId: "profile:default",
+    const store = new SqliteStore(databasePath, { readOnly: true });
+    try {
+      const events = await store.listCanonicalEvents("person_default");
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        personId: "person_default",
+        scopeId: "personal",
+        sourceApplication: "hermes",
+        content: "Let's talk about Smith PIP."
+      });
+      expect(JSON.stringify(events[0].metadata)).toContain("Alice");
+    } finally {
+      store.close();
+    }
+  });
+
+  it("replays the same host session turn without writing another event", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "memory.sqlite");
+    const profile = await writeHermesMcpProfile({
+      directory: dir,
+      databasePath,
+      personId: "person_default",
+      scopeId: "personal"
+    });
+    const input = row({
+      id: "default:1",
       sequence: 1,
       role: "user",
-      content: "Let's talk about Smith PIP."
+      content: "Let's talk about Smith PIP.",
+      created_at: "2024-05-04T12:40:00.000Z"
     });
-    expect(turns[0].metadata).toMatchObject({
-      host: "roscoe-hermes",
-      profileId: "default",
-      sourceMetadata: {
-        channel: "telegram",
-        sourceMetadata: {
-          author: "Alice",
-          direction: "inbound"
-        }
-      }
-    });
-    store.close();
+    const target = { configPath: profile.configPath, profileName: profile.profileName, input };
+    await ingestHermesTimelineRow(target);
+    const replay = await ingestHermesTimelineRow(target);
+    expect(replay.status).toBe("REPLAYED");
+
+    const store = new SqliteStore(databasePath, { readOnly: true });
+    try {
+      expect(await store.listCanonicalEvents("person_default")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
   });
 
-  it("compacts stored topic turns when a bridged control signal arrives in a fresh process", async () => {
+  it("does not store a control signal or invent a summary", async () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
-
-    await ingestHermesTimelineRow({
+    const profile = await writeHermesMcpProfile({
+      directory: dir,
       databasePath,
-      input: JSON.stringify({
-        id: "default:1",
-        profile_id: "default",
-        session_id: "profile:default",
-        sequence: 1,
-        role: "user",
-        content: "Let's talk about Smith PIP.",
-        created_at: "2024-05-04T12:40:00.000Z",
-        channel: "telegram",
-        metadata_json: null
-      })
+      personId: "person_default",
+      scopeId: "personal"
     });
-    await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
-        id: "default:2",
-        profile_id: "default",
-        session_id: "profile:default",
-        sequence: 2,
-        role: "assistant",
-        content: "The Smith PIP demand deadline is June 1.",
-        created_at: "2024-05-04T12:40:10.000Z",
-        channel: "telegram",
-        metadata_json: null
-      })
-    });
-
     const result = await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
+      configPath: profile.configPath,
+      profileName: profile.profileName,
+      input: row({
         id: "default:3",
-        profile_id: "default",
-        session_id: "profile:default",
         sequence: 3,
         role: "user",
         content: "/new",
-        created_at: "2024-05-04T12:45:00.000Z",
-        channel: "telegram",
-        metadata_json: null
+        created_at: "2024-05-04T12:45:00.000Z"
       })
     });
 
-    expect(result).toEqual({
-      ok: true,
-      turnId: null,
-      completedTopic: "Smith PIP",
-      summaryId: "summary_profile:default_1_2"
-    });
-
-    const store = new SqliteStore(databasePath);
-    const summaries = await store.listSummaries();
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].summaryText).toContain("Smith PIP");
-    expect(summaries[0].sourceTurnRanges).toEqual([
-      { threadId: "profile:default", startSequence: 1, endSequence: 2 }
-    ]);
-    store.close();
-  });
-
-  it("compacts stored topic turns when a later row changes topics in a fresh process", async () => {
-    const dir = await makeTempDir();
-    const databasePath = join(dir, "memory.sqlite");
-
-    await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
-        id: "default:1",
-        profile_id: "default",
-        session_id: "profile:default",
-        sequence: 1,
-        role: "user",
-        content: "Let's talk about Smith PIP.",
-        created_at: "2024-05-04T12:40:00.000Z",
-        channel: "telegram",
-        metadata_json: null
-      })
-    });
-    await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
-        id: "default:2",
-        profile_id: "default",
-        session_id: "profile:default",
-        sequence: 2,
-        role: "assistant",
-        content: "The Smith PIP demand deadline is June 1.",
-        created_at: "2024-05-04T12:40:10.000Z",
-        channel: "telegram",
-        metadata_json: null
-      })
-    });
-
-    const result = await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
-        id: "default:3",
-        profile_id: "default",
-        session_id: "profile:default",
-        sequence: 3,
-        role: "user",
-        content: "Switch to Jones BI coverage.",
-        created_at: "2024-05-04T12:45:00.000Z",
-        channel: "telegram",
-        metadata_json: null
-      })
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      turnId: "turn_hermes_default:3",
-      completedTopic: "Smith PIP",
-      summaryId: "summary_profile:default_1_2"
-    });
-
-    const store = new SqliteStore(databasePath);
-    const turns = await store.listTurns("profile:default");
-    const summaries = await store.listSummaries();
-    expect(turns).toHaveLength(3);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].summaryText).toContain("Smith PIP");
-    expect(summaries[0].sourceTurnRanges).toEqual([
-      { threadId: "profile:default", startSequence: 1, endSequence: 2 }
-    ]);
-    store.close();
-  });
-
-  it("compacts the full unsummarized tail on control signals even when topic labels drift", async () => {
-    const dir = await makeTempDir();
-    const databasePath = join(dir, "memory.sqlite");
-
-    await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
-        id: "memory-test:7",
-        profile_id: "memory-test",
-        session_id: "profile:memory-test",
-        sequence: 7,
-        role: "user",
-        content: "Let us discuss Alpha Boundary Case. The settlement ledger review deadline is July 9.",
-        created_at: "2024-05-04T12:40:00.000Z",
-        channel: "api_server",
-        metadata_json: null
-      })
-    });
-    await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
-        id: "memory-test:8",
-        profile_id: "memory-test",
-        session_id: "profile:memory-test",
-        sequence: 8,
-        role: "assistant",
-        content: "To help you effectively with the Alpha Boundary Case and the settlement ledger review deadline on July 9, could you please specify what exactly you'd like to discuss or need assistance with? For example, do you want a summary of the case, key points about the ledger, preparatory steps for the review, or anything else?",
-        created_at: "2024-05-04T12:40:10.000Z",
-        channel: "api_server",
-        metadata_json: null
-      })
-    });
-
-    const result = await ingestHermesTimelineRow({
-      databasePath,
-      input: JSON.stringify({
-        id: "memory-test:9",
-        profile_id: "memory-test",
-        session_id: "profile:memory-test",
-        sequence: 9,
-        role: "user",
-        content: "/new",
-        created_at: "2024-05-04T12:45:00.000Z",
-        channel: "api_server",
-        metadata_json: null
-      })
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      turnId: null,
-      completedTopic: "Alpha Boundary Case",
-      summaryId: "summary_profile:memory-test_7_8"
-    });
-
-    const store = new SqliteStore(databasePath);
-    const summaries = await store.listSummaries();
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].summaryText).toContain("Alpha Boundary Case");
-    expect(summaries[0].summaryText).toContain("July 9");
-    expect(summaries[0].sourceTurnRanges).toEqual([
-      { threadId: "profile:memory-test", startSequence: 7, endSequence: 8 }
-    ]);
-    store.close();
+    expect(result).toMatchObject({ ok: true, turnId: null, summaryId: null, status: "IGNORED_CONTROL" });
+    expect(existsSync(databasePath)).toBe(false);
   });
 });

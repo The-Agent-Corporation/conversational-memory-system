@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { loadMemoryMcpProfile, type LoadMemoryMcpProfileOptions } from "./profile-loader.js";
 import type { ProfileAuthority } from "./authority.js";
@@ -11,6 +12,7 @@ import { ExplainService } from "../audit/explain-service.js";
 import type { Embedder } from "../embeddings/embedder.js";
 import { probeEmbedderHealth, resolveEmbedder } from "../embeddings/embedder-resolver.js";
 import { LiveTurnAppendService } from "./live-turn-append.js";
+import { ConversationResumer } from "../resume/conversation-resumer.js";
 import { MemoryRetriever } from "../retrieval/memory-retriever.js";
 import { MemoryQueryService } from "../retrieval/memory-query-service.js";
 import { SubjectExpansionService } from "../retrieval/subject-expansion-service.js";
@@ -52,14 +54,19 @@ export const createMemoryMcpServer = async (
   options: CreateMemoryMcpServerOptions
 ): Promise<MemoryMcpApplication> => {
   const authority = await loadMemoryMcpProfile(options);
+  const busyTimeoutMs = options.busyTimeoutMs ?? 5_000;
+  if (!existsSync(authority.databasePath)) {
+    const created = new SqliteStore(authority.databasePath, { busyTimeoutMs });
+    created.close();
+  }
   const readStore = new SqliteStore(authority.databasePath, {
     readOnly: true,
-    busyTimeoutMs: options.busyTimeoutMs ?? 5_000
+    busyTimeoutMs
   });
   const mutationStore = createAtomicMutationStore(
     readStore,
     authority.databasePath,
-    options.busyTimeoutMs ?? 5_000
+    busyTimeoutMs
   );
   const server = new McpServer(MEMORY_MCP_SERVER_INFO, { instructions: SERVER_INSTRUCTIONS });
   const now = options.now ?? (() => new Date().toISOString());
@@ -125,6 +132,26 @@ export const createMemoryMcpServer = async (
           } finally {
             writeStore.close();
           }
+        }
+      },
+      resume: {
+        resume: async (input) => {
+          const resumer = new ConversationResumer(readStore, {
+            personId: authority.personId,
+            allowedScopeIds: authority.allowedScopeIds
+          });
+          if (input.summaryId) return resumer.resumeSummary(input.summaryId);
+          if (input.traceId) return resumer.resumeTrace(input.traceId);
+          if (input.boxId) {
+            return resumer.resumeBox(input.boxId, {
+              maxTurnRanges: input.maxTurnRanges,
+              includeChildBoxes: input.includeChildBoxes
+            });
+          }
+          const packetId = input.injectionPacketId ?? "";
+          const saved = await readStore.getInjection(packetId);
+          if (!saved) throw new Error(`Injection packet ${packetId} was not found.`);
+          return resumer.resumeInjection(saved);
         }
       }
     });

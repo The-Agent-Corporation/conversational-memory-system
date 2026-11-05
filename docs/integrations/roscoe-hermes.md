@@ -29,25 +29,31 @@ The shell output can be sourced before starting Roscoe.
 
 ## Runtime Flow
 
+`hermes:roscoe-env` points ingest, search, and resume at `<db>.profiles.json` and profile name `hermes`. That file is a local MCP profile naming the person and the one allowed scope; the env command does not create it. `HERMES_MEMORY_PERSON_ID` and `HERMES_MEMORY_SCOPE_IDS` are not read. The three commands are thin clients of that profile and are scheduled for removal after 2026-12-05 (ADR 0064).
+
 Roscoe emits unified timeline rows to:
 
 ```bash
-npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:ingest -- --db <memory.sqlite>
+npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:ingest -- --config <profiles.json> --profile hermes
 ```
+
+Conversation rows call `memory_append_turn` with host `hermes`. Control signals (`/new`, `/clear`, `/reset`, `/compress`, `/resume`) are ignored and do not compact.
 
 Before an agent turn, Roscoe asks for quiet recall through:
 
 ```bash
-npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:inject -- --db <memory.sqlite>
+npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:inject -- --config <profiles.json> --profile hermes
 ```
 
-Roscoe also uses the same command for explicit foreground memory search when an agent calls its `conversational_memory_search` tool.
+That command calls `memory_search`. It returns `readOnly: true` and `packet: null`. It does not write an injection packet, strengthen a summary, or revive one. Roscoe uses the same command for explicit foreground memory search when an agent calls its `conversational_memory_search` tool.
 
 When the agent needs verbatim history, Roscoe calls:
 
 ```bash
-npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:resume -- --db <memory.sqlite>
+npm --silent --prefix /Users/aaronwhaley/Github/conversational-memory-system run hermes:resume -- --config <profiles.json> --profile hermes
 ```
+
+Resume calls `memory_resume`. An `injection_packet` contributes only its saved id. Raw turn ranges are not accepted.
 
 Background organization uses:
 
@@ -71,7 +77,7 @@ Run:
 npm run hermes:smoke -- --db /tmp/roscoe-memory-smoke.sqlite
 ```
 
-The smoke harness proves that one SQLite store supports ingest, compaction, injection, resume, sleep review, and proposal listing. It creates two non-contiguous Smith PIP provider-bill spans, then requires sleep review and proposal listing to surface the matching trace proposal.
+The smoke harness proves that one profile supports MCP ingest, replay, ignored control signals, read-only search, a not-found resume, sleep review, and proposal listing. Search writes no injection rows. Sleep and proposal commands still take `--db`.
 
 ## OpenRouter Sleep Planning
 
@@ -92,9 +98,10 @@ Then call `hermes:sleep` with:
 
 ## Failure Modes
 
-- Missing DB path: commands fail with a database path error.
+- Missing config or profile: ingest, search, and resume fail before startup.
+- Missing DB path: sleep and proposal commands fail with a database path error.
 - Missing command env in Roscoe: Roscoe skips that memory surface.
-- Empty recall: `hermes:inject` returns `packet: null` and no context block.
+- Empty recall: `hermes:inject` returns `packet: null`, `readOnly: true`, and no context block.
 - No sleep changes: `hermes:sleep` returns `noopReason`.
 - No proposals: `hermes:proposals:list` returns an empty proposal list.
 - Missing OpenRouter config in `openrouter` mode: sleep review fails before persistence.

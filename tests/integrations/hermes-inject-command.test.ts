@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { injectHermesMemory } from "../../src/integrations/hermes/inject-command.js";
+import { writeHermesMcpProfile } from "../../src/integrations/hermes/profile-file.js";
 import type { MemoryTrace, Summary } from "../../src/domain/types.js";
 import { SqliteStore } from "../../src/storage/sqlite-store.js";
 
@@ -12,11 +13,6 @@ const makeTempDir = async (): Promise<string> => {
   tempDir = await mkdtemp(join(tmpdir(), "cms-hermes-inject-"));
   return tempDir;
 };
-
-beforeEach(() => {
-  process.env.HERMES_MEMORY_PERSON_ID = "person_default";
-  process.env.HERMES_MEMORY_SCOPE_IDS = "personal";
-});
 
 afterEach(async () => {
   if (tempDir) {
@@ -88,24 +84,40 @@ describe("Hermes inject command", () => {
     await store.saveTrace(trace());
     store.close();
 
-    const result = await injectHermesMemory({
+    const profile = await writeHermesMcpProfile({
+      directory: dirname(databasePath),
       databasePath,
+      personId: "person_default",
+      scopeId: "personal"
+    });
+    const result = await injectHermesMemory({
+      configPath: profile.configPath,
+      profileName: profile.profileName,
       input: JSON.stringify({
-        profile_id: "default",
-        session_id: "profile:default",
         query: "Smith PIP provider bill ledger",
         requested_at: "2024-05-04T13:00:00.000Z",
-        max_memory_tokens: 120
+        limit: 20
       })
     });
 
     expect(result.ok).toBe(true);
-    expect(result.packet?.sourceTraceIds).toEqual(["trace_smith_pip_provider_bills"]);
-    expect(result.packet?.sourceSummaryIds).toContain("summary_smith_provider_bill");
+    expect(result.readOnly).toBe(true);
+    expect(result.packet).toBeNull();
+    expect(result.candidates.map((candidate) => candidate.id)).toEqual(expect.arrayContaining([
+      "trace_smith_pip_provider_bills",
+      "summary_smith_provider_bill"
+    ]));
     expect(result.contextBlock).toContain("<memory-context>");
-    expect(result.contextBlock).toContain("[Trace: Smith PIP Provider Bills]");
-    expect(result.contextBlock).toContain("Top trace match trace_smith_pip_provider_bills");
+    expect(result.contextBlock).toContain("Smith PIP Provider Bills");
     expect(result.contextBlock).toContain("</memory-context>");
+    const readBack = new SqliteStore(databasePath, { readOnly: true });
+    try {
+      expect(await readBack.listInjections("profile:default")).toEqual([]);
+      const summaryRow = (await readBack.listSummaries()).find((item) => item.id === "summary_smith_pip");
+      expect(summaryRow?.retrievalCount).toBe(0);
+    } finally {
+      readBack.close();
+    }
   });
 
   it("returns an empty result when no memory matches", async () => {
@@ -115,20 +127,23 @@ describe("Hermes inject command", () => {
     await store.saveSummary(summary());
     store.close();
 
-    const result = await injectHermesMemory({
+    const profile = await writeHermesMcpProfile({
+      directory: dirname(databasePath),
       databasePath,
+      personId: "person_default",
+      scopeId: "personal"
+    });
+    const result = await injectHermesMemory({
+      configPath: profile.configPath,
+      profileName: profile.profileName,
       input: JSON.stringify({
-        profile_id: "default",
-        session_id: "profile:default",
         query: "unrelated cooking recipe",
         requested_at: "2024-05-04T13:00:00.000Z"
       })
     });
 
-    expect(result).toEqual({
-      ok: true,
-      packet: null,
-      contextBlock: null
-    });
+    expect(result.packet).toBeNull();
+    expect(result.candidates).toEqual([]);
+    expect(result.contextBlock).toBeNull();
   });
 });

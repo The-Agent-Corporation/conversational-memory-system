@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 describe("Hermes memory smoke harness", () => {
-  it("proves ingest, compaction, injection, resume, sleep, and proposal listing share one SQLite store", async () => {
+  it("proves MCP ingest, read-only search, and resume share one profile without Hermes privileges", async () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
 
@@ -30,35 +30,26 @@ describe("Hermes memory smoke harness", () => {
 
     expect(result.ok).toBe(true);
     expect(result.databasePath).toBe(databasePath);
-    expect(result.compaction.summaryId).toBe("summary_profile:default_4_5");
-    expect(result.injection.packet?.sourceSummaryIds).toEqual(expect.arrayContaining([
-      "summary_profile:default_1_2",
-      "summary_profile:default_4_5"
-    ]));
-    expect(result.injection.packet?.selectedMemory).toContain("Smith PIP");
-    expect(result.injection.packet?.selectedMemory).toContain("provider bill");
-    expect(result.injection.contextBlock).toContain("<memory-context>");
-    expect(result.injection.contextBlock).toContain("Smith PIP");
-    expect(result.resume.turnCount).toBe(4);
-    expect(result.resume.contextBlock).toContain("<memory-resume>");
-    expect(result.resume.contextBlock).toContain("[USER]: Let's talk about Smith PIP provider bill review.");
-    expect(result.resume.contextBlock).toContain("[ASSISTANT]: The Smith PIP provider bill deadline is June 1.");
-    expect(result.resume.contextBlock).toContain("[USER]: Returning to Smith PIP provider bill review after new records.");
+    expect(result.ingestedTurnIds).toHaveLength(4);
+    expect(result.replay.status).toBe("REPLAYED");
+    expect(result.eventCount).toBe(4);
+    expect(result.compaction.status).toBe("IGNORED_CONTROL");
+    expect(result.compaction.summaryId).toBeNull();
+    expect(result.injection.readOnly).toBe(true);
+    expect(result.injection.packet).toBeNull();
+    expect(result.injectionCount).toBe(0);
+    expect(result.resumeNotFound).toBe(true);
     expect(result.sleep.ok).toBe(true);
-    expect(result.sleep.proposalIds).toEqual(expect.arrayContaining([
-      "proposal_box_box_topic_smith_pip",
-      "proposal_trace_trace_smith_pip_provider_bill"
-    ]));
-    expect(result.sleep.proposedTraceIds).toEqual(["trace_smith_pip_provider_bill"]);
-    expect(result.proposals.proposals.map((proposal) => proposal.id)).toEqual(expect.arrayContaining([
-      "proposal_box_box_topic_smith_pip",
-      "proposal_trace_trace_smith_pip_provider_bill"
-    ]));
+    expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toContain("--config");
+    expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toContain("--profile hermes");
+    expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).not.toContain("--db");
   });
 
   it("prints Roscoe environment commands for the same database path", () => {
     const env = buildRoscoeMemoryEnvironment({
       databasePath: "/tmp/memory.sqlite",
+      configPath: "/tmp/profiles.json",
+      profileName: "hermes",
       projectRoot: "/repo/conversational-memory-system"
     });
 
@@ -66,16 +57,16 @@ describe("Hermes memory smoke harness", () => {
     expect(env.HERMES_CONVERSATIONAL_MEMORY_ENABLED).toBe("1");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_INJECT_ENABLED).toBe("1");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toBe(
-      "npm --silent --prefix /repo/conversational-memory-system run hermes:ingest -- --db /tmp/memory.sqlite"
+      "npm --silent --prefix /repo/conversational-memory-system run hermes:ingest -- --config /tmp/profiles.json --profile hermes"
     );
     expect(env.HERMES_CONVERSATIONAL_MEMORY_TIMEOUT).toBe("10");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_INJECT_COMMAND).toBe(
-      "npm --silent --prefix /repo/conversational-memory-system run hermes:inject -- --db /tmp/memory.sqlite"
+      "npm --silent --prefix /repo/conversational-memory-system run hermes:inject -- --config /tmp/profiles.json --profile hermes"
     );
     expect(env.HERMES_CONVERSATIONAL_MEMORY_INJECT_TIMEOUT).toBe("10");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_MAX_TOKENS).toBe("120");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_RESUME_COMMAND).toBe(
-      "npm --silent --prefix /repo/conversational-memory-system run hermes:resume -- --db /tmp/memory.sqlite"
+      "npm --silent --prefix /repo/conversational-memory-system run hermes:resume -- --config /tmp/profiles.json --profile hermes"
     );
     expect(env.HERMES_CONVERSATIONAL_MEMORY_RESUME_TIMEOUT).toBe("10");
     expect(env.HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND).toBe(

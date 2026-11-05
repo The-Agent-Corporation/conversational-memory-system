@@ -10,7 +10,7 @@ describe("Hermes Roscoe env command", () => {
     });
 
     expect(output).toContain("export HERMES_CONVERSATIONAL_MEMORY_ENABLED='1'");
-    expect(output).toContain("export HERMES_CONVERSATIONAL_MEMORY_COMMAND='npm --silent --prefix /repo/conversational-memory-system run hermes:ingest -- --db /tmp/memory.sqlite'");
+    expect(output).toContain("export HERMES_CONVERSATIONAL_MEMORY_COMMAND='npm --silent --prefix /repo/conversational-memory-system run hermes:ingest -- --config /tmp/memory.sqlite.profiles.json --profile hermes'");
     expect(output).toContain("export HERMES_CONVERSATIONAL_MEMORY_MAX_TOKENS='120'");
     expect(output).toContain("export HERMES_CONVERSATIONAL_MEMORY_SLEEP_COMMAND='npm --silent --prefix /repo/conversational-memory-system run hermes:sleep -- --db /tmp/memory.sqlite'");
   });
