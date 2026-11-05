@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,6 +21,13 @@ export interface OfflineLocalMcpSmokeResult {
 
 export async function runOfflineLocalMcpSmoke(directory?: string): Promise<OfflineLocalMcpSmokeResult> {
   const root = directory ?? await mkdtemp(join(tmpdir(), "cms-offline-mcp-"));
+  if (directory) {
+    await mkdir(root, { recursive: true });
+    const entries = await readdir(root);
+    if (entries.length > 0) {
+      throw new Error(`Refusing to write an offline smoke profile into a non-empty directory: ${root}`);
+    }
+  }
   const databasePath = resolve(root, "memory.sqlite");
   const sourceRoot = resolve(root, "sources");
   const configPath = resolve(root, "profiles.json");

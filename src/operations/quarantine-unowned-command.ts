@@ -49,7 +49,7 @@ export async function quarantineUnownedLegacyRows(
     }
   }
 
-  const store = new SqliteStore(parsed.databasePath);
+  const store = new SqliteStore(parsed.databasePath, { readOnly: parsed.apply !== true });
   try {
     const summaryIds = (await store.listSummaries()).filter(isLegacyUnowned).map((row) => row.id);
     const boxIds = (await store.listBoxes()).filter(isLegacyUnowned).map((row) => row.id);

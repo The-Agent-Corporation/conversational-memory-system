@@ -1550,6 +1550,7 @@ export class SqliteStore implements MemoryStore {
          values (?, ?, ?, ?, ?)
          on conflict(id) do update set state = excluded.state, payload = excluded.payload`
       );
+      const deleteSummaryVector = this.database.prepare("delete from summary_vectors where summary_id = ?");
       const quarantine = (
         kind: LegacyUnownedKind,
         table: "summaries" | "boxes" | "traces" | "anchors",
@@ -1575,18 +1576,16 @@ export class SqliteStore implements MemoryStore {
             payload: row,
             now: parsed.requestedAt
           });
-          if (kind === "summary") {
-            this.database.prepare("delete from summary_vectors where summary_id = ?").run(id);
-          }
+          if (kind === "summary") deleteSummaryVector.run(id);
           insertQuarantine.run(record.id, record.personId, record.candidateId, record.state, JSON.stringify(record));
           remove.run(id);
           collected.push(id);
         }
       };
-      quarantine("summary", "summaries", this.listPayloads("summaries", SummarySchema), parsed.summaryIds, quarantinedSummaryIds);
-      quarantine("box", "boxes", this.listPayloads("boxes", BoxSchema), parsed.boxIds, quarantinedBoxIds);
-      quarantine("trace", "traces", this.listPayloads("traces", MemoryTraceSchema), parsed.traceIds, quarantinedTraceIds);
-      quarantine("anchor", "anchors", this.listPayloads("anchors", AnchorSchema), parsed.anchorIds, quarantinedAnchorIds);
+      quarantine("summary", "summaries", this.listPayloadsByIds("summaries", SummarySchema, parsed.summaryIds), parsed.summaryIds, quarantinedSummaryIds);
+      quarantine("box", "boxes", this.listPayloadsByIds("boxes", BoxSchema, parsed.boxIds), parsed.boxIds, quarantinedBoxIds);
+      quarantine("trace", "traces", this.listPayloadsByIds("traces", MemoryTraceSchema, parsed.traceIds), parsed.traceIds, quarantinedTraceIds);
+      quarantine("anchor", "anchors", this.listPayloadsByIds("anchors", AnchorSchema, parsed.anchorIds), parsed.anchorIds, quarantinedAnchorIds);
       const receipt = LegacyUnownedQuarantineReceiptSchema.parse({
         operation: "legacy_unowned_quarantine",
         marker: "legacy-unowned",
@@ -2986,6 +2985,27 @@ export class SqliteStore implements MemoryStore {
       .all() as PayloadRow[];
 
     return rows.map((row) => schema.parse(JSON.parse(row.payload)));
+  }
+
+  /** Requested rows only, in chunks of 500 bound parameters. */
+  private listPayloadsByIds<T>(
+    tableName: "summaries" | "boxes" | "traces" | "anchors",
+    schema: { parse(value: unknown): T },
+    ids: readonly string[]
+  ): T[] {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
+    const chunkSize = 500;
+    const parsed: T[] = [];
+    for (let offset = 0; offset < unique.length; offset += chunkSize) {
+      const chunk = unique.slice(offset, offset + chunkSize);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.database
+        .prepare(`select payload from ${tableName} where id in (${placeholders})`)
+        .all(...chunk) as PayloadRow[];
+      for (const row of rows) parsed.push(schema.parse(JSON.parse(row.payload)));
+    }
+    return parsed;
   }
 
   private getPayload<T>(

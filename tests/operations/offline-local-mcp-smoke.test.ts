@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -30,5 +30,14 @@ describe("offline local MCP smoke", () => {
       searchErrored: false,
       eventCount: 1
     });
+  });
+
+  it("refuses a supplied directory that already contains files", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "cms-offline-smoke-"));
+    const profilePath = join(tempDir, "profiles.json");
+    await writeFile(profilePath, "{\"keep\":true}\n");
+    await expect(runOfflineLocalMcpSmoke(tempDir)).rejects.toThrow(/non-empty directory/);
+    expect(await readFile(profilePath, "utf8")).toBe("{\"keep\":true}\n");
+    await expect(stat(join(tempDir, "memory.sqlite"))).rejects.toThrow();
   });
 });

@@ -13,7 +13,7 @@ Remove the `personal-memory` entry from the host's MCP configuration and restart
 To undo that removal:
 
 1. Stop every memory process that has the database open, including MCP children and the daemon.
-2. Replace the database file with the backup you confirmed.
+2. Restore the confirmed encrypted backup to a new database with `memory restore --backup <confirmed-backup> --out <new-database> --passphrase <passphrase>`, then use that restored database in place of the current one. Data written after the backup is lost.
 3. Start the host again with the same profile, or delete the profile file if this machine should stop serving that person.
 
 Do not copy a quarantined row onto a person. The quarantine marker `legacy-unowned` is not an owner. `memory quarantine --person legacy-unowned` lists those records for inspection. Their `sanitizedRecord` may be truncated and secrets are redacted. The backup is the copy that still has the original rows.

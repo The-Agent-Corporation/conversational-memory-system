@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -15,7 +15,10 @@ const SECRET = "sk-liveFixtureSecretValue99";
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as {
   DatabaseSync: new (location: string) => {
-    prepare(sql: string): { get(): { c: number } };
+    prepare(sql: string): {
+      get(...args: unknown[]): { c: number; payload: string } | undefined;
+      run(...args: unknown[]): void;
+    };
     close(): void;
   };
 };
@@ -228,7 +231,52 @@ describe("quarantine-unowned command", () => {
     }
     const database = new DatabaseSync(databasePath);
     try {
-      expect(database.prepare("select count(*) as c from summary_vectors").get().c).toBe(0);
+      expect(database.prepare("select count(*) as c from summary_vectors").get()?.c).toBe(0);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("dry-run does not create a missing database", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "cms-unowned-"));
+    const databasePath = join(tempDir, "missing.sqlite");
+    await expect(quarantineUnownedLegacyRows({ databasePath })).rejects.toThrow();
+    await expect(stat(databasePath)).rejects.toThrow();
+  });
+
+  it("quarantines a requested summary without parsing unrelated rows", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "cms-unowned-"));
+    const databasePath = join(tempDir, "memory.sqlite");
+    const store = new SqliteStore(databasePath);
+    await store.saveSummary(withoutOwner(summary({ id: "summary_unowned", summaryText: "legacy row" })));
+    store.close();
+    const seeded = new DatabaseSync(databasePath);
+    seeded.prepare("insert into summaries (id, payload) values (?, ?)").run(
+      "summary_malformed",
+      JSON.stringify({ id: "summary_malformed" })
+    );
+    seeded.close();
+
+    const reopened = new SqliteStore(databasePath);
+    try {
+      const receipt = await reopened.commitLegacyUnownedQuarantine({
+        operation: "legacy_unowned_quarantine",
+        summaryIds: ["summary_unowned"],
+        boxIds: [],
+        traceIds: [],
+        anchorIds: [],
+        requestedAt: NOW
+      });
+      expect(receipt.quarantinedSummaryIds).toEqual(["summary_unowned"]);
+    } finally {
+      reopened.close();
+    }
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      expect(database.prepare("select payload from summaries where id = ?").get("summary_malformed")?.payload).toBe(
+        JSON.stringify({ id: "summary_malformed" })
+      );
     } finally {
       database.close();
     }
