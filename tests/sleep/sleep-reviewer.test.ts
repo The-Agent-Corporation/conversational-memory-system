@@ -397,6 +397,23 @@ describe("SleepReviewer", () => {
     expect((await store.listSummaries())[0]?.strength).toBe(0.1);
   });
 
+  it("does not round a weak unrounded strength upward", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_unrounded",
+      strength: 0.125,
+      halfLifeHours: 24,
+      lastAccessedAt: "2026-05-02T23:59:00.000Z",
+      createdAt: "2026-05-01T00:00:00.000Z"
+    }));
+    const result = await new SleepReviewer(store).decaySummaries({
+      reviewedAt: "2026-05-03T00:00:00.000Z",
+      staleStrengthThreshold: 0.05
+    });
+    expect(result.updatedSummaries).toEqual([]);
+    expect((await store.listSummaries())[0]?.strength).toBe(0.125);
+  });
+
   it("loads only decay-eligible states, including when the ineligible set grows", async () => {
     const ineligible = ["superseded", "proposed", "approved", "rejected", "disputed"] as const;
     const run = async (extraIneligible: number) => {

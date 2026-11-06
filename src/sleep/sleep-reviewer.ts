@@ -349,7 +349,8 @@ function decaySummary(
   }
 
   const derived = DECAY_BASELINE_STRENGTH * Math.pow(0.5, ageHours / summary.halfLifeHours);
-  const decayedStrength = roundStrength(Math.min(summary.strength, derived));
+  // Round the derived bound first. Rounding the capped value can raise an unrounded strength.
+  const decayedStrength = Math.min(summary.strength, roundStrength(derived));
   const decayedState = decayedStrength < staleStrengthThreshold ? "stale" : summary.state;
 
   if (decayedStrength === summary.strength && decayedState === summary.state) {
