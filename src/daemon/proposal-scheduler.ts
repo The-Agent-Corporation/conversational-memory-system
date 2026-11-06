@@ -1,5 +1,7 @@
 import type { Anchor, Box, MemoryProposal, MemoryTrace, Summary } from "../domain/types.js";
 import { SleepReviewer, type StagedSleepReviewResult } from "../sleep/sleep-reviewer.js";
+import type { TraceProposalPlanner } from "../traces/trace-proposal-planner.js";
+import { NullTraceProposalPlanner } from "../traces/null-trace-proposal-planner.js";
 import { InMemoryStore } from "../storage/in-memory-store.js";
 import type { MemoryStore } from "../storage/memory-store.js";
 import type { CommitProposalRunInput, ContractionJob, WriteAuthority } from "./types.js";
@@ -19,7 +21,13 @@ export interface ProposalSchedulerOptions {
   forcedMs?: number;
   beforeCommit?: (input: CommitProposalRunInput) => void | Promise<void>;
   reviewerFactory?: (store: MemoryStore) => ProposalReviewer;
-  /** Production daemon passes false. Omitted keeps trace discovery on for existing tests. */
+  /**
+   * Planner for the staged review's trace pass. Defaults to `NullTraceProposalPlanner` because
+   * the daemon does not run shared-term trace discovery (GAP-12-E, ADR 0061). A supplied
+   * `reviewerFactory` owns its reviewer and this default does not apply.
+   */
+  tracePlanner?: TraceProposalPlanner;
+  /** Production daemon passes false. Omitted keeps the reviewer's own flag for existing tests. */
   traceDiscoveryEnabled?: boolean;
   maxReviewCandidates?: number;
 }
@@ -52,6 +60,7 @@ export class ProposalScheduler {
     const reviewer = this.options.reviewerFactory?.(staging)
       ?? new SleepReviewer(this.store, {
         writeStore: staging,
+        tracePlanner: this.options.tracePlanner ?? new NullTraceProposalPlanner(),
         traceDiscoveryEnabled: this.options.traceDiscoveryEnabled,
         maxReviewCandidates: this.options.maxReviewCandidates
       });

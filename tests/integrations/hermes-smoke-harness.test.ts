@@ -40,6 +40,8 @@ describe("Hermes memory smoke harness", () => {
     expect(result.injectionCount).toBe(0);
     expect(result.resumeNotFound).toBe(true);
     expect(result.sleep.ok).toBe(true);
+    // GAP-12-E, plan 13-01, ADR 0061: was a shared-term trace id such as trace_smith_pip_provider_bill.
+    expect(result.sleep.proposedTraceIds).toEqual([]);
     expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toContain("--config");
     expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toContain("--profile hermes");
     expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).not.toContain("--db");

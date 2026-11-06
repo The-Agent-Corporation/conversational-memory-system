@@ -25,6 +25,7 @@ import { SleepReviewer } from "../sleep/sleep-reviewer.js";
 import { OpenRouterSummarizer } from "../summarization/openrouter-summarizer.js";
 import { DeterministicSummarizer } from "../summarization/summarizer.js";
 import { ProposalScheduler } from "./proposal-scheduler.js";
+import { NullTraceProposalPlanner } from "../traces/null-trace-proposal-planner.js";
 import type { CommandRunner, SignalAdapter } from "./runtime-adapters.js";
 import { DaemonScheduler } from "./scheduler.js";
 import { HttpSyncRelay } from "../sync/transport/http-sync-relay.js";
@@ -391,11 +392,14 @@ function createDefaultDependencies(databasePath: string, deviceSecretStore?: Dev
             new ProposalScheduler(store, {
               clock,
               authority: captured,
+              // ADR 0061 / GAP-12-E: the daemon does not run the shared-term trace matcher.
+              tracePlanner: new NullTraceProposalPlanner(),
               traceDiscoveryEnabled: semantic.traceDiscoveryEnabled,
               maxReviewCandidates: semantic.maxReviewCandidates,
               ...(plannerModel ? {
                 reviewerFactory: (staging) => new SleepReviewer(store, {
                   writeStore: staging,
+                  tracePlanner: new NullTraceProposalPlanner(),
                   traceDiscoveryEnabled: false,
                   maxReviewCandidates: semantic.maxReviewCandidates,
                   boxPlanner: OpenRouterProposalPlanner.fromEnv({

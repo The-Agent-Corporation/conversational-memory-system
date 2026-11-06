@@ -125,7 +125,8 @@ describe("HistoricalBootstrapper", () => {
 
     const proposals = await store.listProposals({ state: "proposed" });
     expect(proposals.some((proposal) => proposal.proposalType === "box")).toBe(true);
-    expect(proposals.some((proposal) => proposal.proposalType === "trace")).toBe(true);
+    // GAP-12-E, plan 13-01, ADR 0061: ProposalScheduler no longer emits shared-term traces.
+    expect(proposals.some((proposal) => proposal.proposalType === "trace")).toBe(false);
     expect(proposals.every((proposal) => proposal.personId === "person_1")).toBe(true);
     expect((await store.listBoxes()).every((box) => box.state === "proposed")).toBe(true);
   });
