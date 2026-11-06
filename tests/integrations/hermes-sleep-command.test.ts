@@ -167,7 +167,8 @@ describe("Hermes sleep command", () => {
 
     expect(result.ok).toBe(true);
     expect(result.reviewedAt).toBe("2026-05-03T00:00:00.000Z");
-    expect(result.updatedSummaryIds).toEqual(["summary_1", "summary_2", "summary_old"]);
+    // GAP-12-D: summary_old stays at strength 0.1, so it is no longer rewritten. Was included when decay compounded.
+    expect(result.updatedSummaryIds).toEqual(["summary_1", "summary_2"]);
     expect(result.updatedBoxIds).toEqual(["box_topic_old"]);
     expect(result.proposedBoxIds).toEqual(["box_topic_smith_pip"]);
     expect(result.proposalIds).toEqual(["proposal_box_box_topic_smith_pip"]);

@@ -4,6 +4,7 @@ import {
   type Anchor,
   type Box,
   type MemoryProposal,
+  type MemoryState,
   type MemoryTrace,
   type Summary,
   type TurnRange
@@ -214,12 +215,19 @@ export class SleepReviewer {
   }
 
   async decaySummaries(request: SleepReviewRequest): Promise<SummaryDecayResult> {
-    const summaries = await this.store.listSummaries();
+    const summaries = await this.store.listSummaries({
+      ...(request.personId ? { personId: request.personId } : {}),
+      states: DECAY_ELIGIBLE_STATES
+    });
     const updatedSummaries: Summary[] = [];
     const staleStrengthThreshold = request.staleStrengthThreshold ?? 0.2;
 
     for (const summary of summaries) {
-      const decayed = decaySummary(summary, request.reviewedAt, staleStrengthThreshold);
+      // The store filter is an optimisation. This predicate is the contract: a future caller
+      // that lists every summary must not start decaying superseded rows.
+      const decayed = isDecayEligible(summary)
+        ? decaySummary(summary, request.reviewedAt, staleStrengthThreshold)
+        : null;
 
       if (!decayed) {
         continue;
@@ -311,6 +319,19 @@ function latestTimestamp(timestamps: string[]): string | null {
   return timestamps.sort().at(-1) ?? null;
 }
 
+/**
+ * Strength is a recency bound, not an accumulator (GAP-12-D, ADR 0061).
+ * `Math.min` makes a repeated pass at the same clock a no-op without a `decayedThroughAt`
+ * field. `SummarySchema` has no `updatedAt`, and contraction writes `version: 1`
+ * unconditionally (ADR 0052 §7), so there is no monotonic marker to store one.
+ * The symptom this closes is 5,138 hot summaries after one pass and 1,679 after two
+ * (`12-CLOSING.md`).
+ */
+export const DECAY_BASELINE_STRENGTH = 1;
+
+/** Single decay-eligibility predicate. `isDecayEligible` reads this; do not copy the tuple. */
+export const DECAY_ELIGIBLE_STATES: readonly MemoryState[] = ["compacted", "active", "revived", "stale"];
+
 function decaySummary(
   summary: Summary,
   reviewedAt: string,
@@ -327,9 +348,9 @@ function decaySummary(
     return null;
   }
 
-  const decayedStrength = roundStrength(
-    summary.strength * Math.pow(0.5, ageHours / summary.halfLifeHours)
-  );
+  const derived = DECAY_BASELINE_STRENGTH * Math.pow(0.5, ageHours / summary.halfLifeHours);
+  // Round the derived bound first. Rounding the capped value can raise an unrounded strength.
+  const decayedStrength = Math.min(summary.strength, roundStrength(derived));
   const decayedState = decayedStrength < staleStrengthThreshold ? "stale" : summary.state;
 
   if (decayedStrength === summary.strength && decayedState === summary.state) {
@@ -344,7 +365,7 @@ function decaySummary(
 }
 
 function isDecayEligible(summary: Summary): boolean {
-  return summary.state === "compacted" || summary.state === "active" || summary.state === "revived" || summary.state === "stale";
+  return DECAY_ELIGIBLE_STATES.includes(summary.state);
 }
 
 function hoursBetween(start: string, end: string): number {
