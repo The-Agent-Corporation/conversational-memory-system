@@ -185,6 +185,21 @@ describe("ProposalScheduler", () => {
     expect(stagingSummaryCount).toBe(0);
   });
 
+  it("emits box proposals and no shared-term trace proposals on a Smith PIP fixture", async () => {
+    const clock = new FakeDaemonClock();
+    const store = await seededStore(clock);
+    for (const summary of smithPipSummaries()) await store.saveSummary(summary);
+
+    const result = await new ProposalScheduler(store, {
+      clock,
+      authority: foregroundAuthority()
+    }).runDue(PERSON_ID);
+
+    expect(result.boxProposals).toBeGreaterThan(0);
+    expect(result.traceProposals).toBe(0);
+    expect(await store.listProposals({ proposalType: "trace" })).toEqual([]);
+  });
+
   /**
    * Reads move to the durable store, so the write isolation has to be re-proven: nothing the
    * reviewer produces may be visible in the durable store until `commitProposalRun` publishes it.
@@ -278,6 +293,63 @@ function summaries(incompleteProvenance: boolean): Summary[] {
     halfLifeHours: 168,
     outcomeScore: null
   }));
+}
+
+function smithPipSummaries(): Summary[] {
+  return [
+    {
+      id: "summary_smith_1",
+      personId: PERSON_ID,
+      scopeIds: [SCOPE_ID],
+      origin: "historical_bootstrap",
+      summaryText: "Smith PIP provider bill review and coverage timing.",
+      sourceTurnRanges: [{ threadId: `person:${PERSON_ID}`, startSequence: 1, endSequence: 3 }],
+      sourceCanonicalEventIds: ["event_smith_1"],
+      sourceSummaryIds: [],
+      boxIds: [],
+      embedding: null,
+      createdAt: FIXED_NOW,
+      model: "deterministic",
+      promptVersion: "test/v1",
+      confidence: 0.9,
+      state: "compacted",
+      detailLevel: "brief",
+      tokenCount: 8,
+      lastAccessedAt: null,
+      version: 1,
+      strength: 0.8,
+      retrievalCount: 0,
+      retrievedAt: null,
+      halfLifeHours: 168,
+      outcomeScore: null
+    },
+    {
+      id: "summary_smith_3",
+      personId: PERSON_ID,
+      scopeIds: [SCOPE_ID],
+      origin: "historical_bootstrap",
+      summaryText: "Smith PIP provider bill review follow-up after new records.",
+      sourceTurnRanges: [{ threadId: `person:${PERSON_ID}`, startSequence: 4350, endSequence: 4380 }],
+      sourceCanonicalEventIds: ["event_smith_3"],
+      sourceSummaryIds: [],
+      boxIds: [],
+      embedding: null,
+      createdAt: new Date(Date.parse(FIXED_NOW) + 60_000).toISOString(),
+      model: "deterministic",
+      promptVersion: "test/v1",
+      confidence: 0.9,
+      state: "compacted",
+      detailLevel: "brief",
+      tokenCount: 8,
+      lastAccessedAt: null,
+      version: 1,
+      strength: 0.8,
+      retrievalCount: 0,
+      retrievedAt: null,
+      halfLifeHours: 168,
+      outcomeScore: null
+    }
+  ];
 }
 
 function job(): ContractionJob {
