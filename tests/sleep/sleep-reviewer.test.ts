@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Box, MemoryProposal, Summary } from "../../src/domain/types.js";
 import type { BoxProposalPlanner } from "../../src/boxes/box-proposal-planner.js";
 import type { TraceProposalPlanner } from "../../src/traces/trace-proposal-planner.js";
-import { SleepReviewer } from "../../src/sleep/sleep-reviewer.js";
+import { DECAY_BASELINE_STRENGTH, DECAY_ELIGIBLE_STATES, SleepReviewer } from "../../src/sleep/sleep-reviewer.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 
 const makeSummary = (overrides: Partial<Summary> = {}): Summary => ({
@@ -261,8 +261,9 @@ describe("SleepReviewer", () => {
     expect(result.updatedSummaries).toEqual([
       expect.objectContaining({
         id: "summary_old",
-        strength: 0.2,
-        state: "stale"
+        // GAP-12-D: was 0.2 and stale. Decay is now min(strength, 1 * 0.5^(48/24)) = 0.25, which is not below 0.25.
+        strength: 0.25,
+        state: "compacted"
       })
     ]);
     await expect(store.listSummaries()).resolves.toEqual(result.updatedSummaries);
@@ -289,7 +290,8 @@ describe("SleepReviewer", () => {
     expect(result.updatedSummaries).toEqual([
       expect.objectContaining({
         id: "summary_recent",
-        strength: 0.57,
+        // GAP-12-D: was 0.57 (0.8 * 0.5^(12/24)). The bound is 1 * 0.5^(12/24), rounded to 0.71.
+        strength: 0.71,
         state: "compacted"
       })
     ]);
@@ -316,6 +318,123 @@ describe("SleepReviewer", () => {
       strength: 0.8,
       halfLifeHours: 24
     })]);
+  });
+
+  it("is idempotent at a fixed clock and halves once per elapsed half-life", async () => {
+    const expected = (hours: number, halfLifeHours: number, strength: number) => Number(
+      Math.max(0, Math.min(1, Math.min(
+        strength,
+        DECAY_BASELINE_STRENGTH * Math.pow(0.5, hours / halfLifeHours)
+      ))).toFixed(2)
+    );
+    const base = makeSummary({
+      id: "summary_decay",
+      strength: 1,
+      halfLifeHours: 24,
+      lastAccessedAt: "2026-05-01T00:00:00.000Z",
+      createdAt: "2026-04-01T00:00:00.000Z"
+    });
+    const strengths: number[] = [];
+    let reviewed = "2026-05-02T00:00:00.000Z";
+    const store = new InMemoryStore();
+    await store.saveSummary(base);
+    for (const hours of [24, 48, 72]) {
+      reviewed = new Date(Date.parse("2026-05-01T00:00:00.000Z") + hours * 60 * 60 * 1000).toISOString();
+      await new SleepReviewer(store).decaySummaries({ reviewedAt: reviewed });
+      strengths.push((await store.listSummaries())[0]!.strength);
+    }
+    expect(strengths).toEqual([
+      expected(24, 24, 1),
+      expected(48, 24, expected(24, 24, 1)),
+      expected(72, 24, expected(48, 24, expected(24, 24, 1)))
+    ]);
+
+    const repeated = new InMemoryStore();
+    await repeated.saveSummary(base);
+    const atOneHalfLife = "2026-05-02T00:00:00.000Z";
+    for (let call = 0; call < 10; call += 1) {
+      await new SleepReviewer(repeated).decaySummaries({ reviewedAt: atOneHalfLife });
+    }
+    expect((await repeated.listSummaries())[0]?.strength).toBe(expected(24, 24, 1));
+  });
+
+  it("writes nothing on a second decay at the same clock", async () => {
+    const store = new InMemoryStore();
+    await store.saveSummary(makeSummary({
+      id: "summary_once",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      strength: 0.9,
+      halfLifeHours: 24
+    }));
+    const reviewer = new SleepReviewer(store);
+    await reviewer.decaySummaries({ reviewedAt: "2026-05-03T00:00:00.000Z" });
+    let saves = 0;
+    const saveSummary = store.saveSummary.bind(store);
+    store.saveSummary = async (summary) => {
+      saves += 1;
+      return saveSummary(summary);
+    };
+    const second = await reviewer.decaySummaries({ reviewedAt: "2026-05-03T00:00:00.000Z" });
+    expect(second.updatedSummaries).toEqual([]);
+    expect(saves).toBe(0);
+  });
+
+  it("does not raise a weak summary that was accessed recently", async () => {
+    const store = new InMemoryStore();
+    const summary = makeSummary({
+      id: "summary_weak",
+      strength: 0.1,
+      halfLifeHours: 24,
+      lastAccessedAt: "2026-05-02T23:59:00.000Z",
+      createdAt: "2026-05-01T00:00:00.000Z"
+    });
+    await store.saveSummary(summary);
+    const result = await new SleepReviewer(store).decaySummaries({
+      reviewedAt: "2026-05-03T00:00:00.000Z",
+      staleStrengthThreshold: 0.05
+    });
+    expect(result.updatedSummaries).toEqual([]);
+    expect((await store.listSummaries())[0]?.strength).toBe(0.1);
+  });
+
+  it("loads only decay-eligible states, including when the ineligible set grows", async () => {
+    const ineligible = ["superseded", "proposed", "approved", "rejected", "disputed"] as const;
+    const run = async (extraIneligible: number) => {
+      const store = new InMemoryStore();
+      const calls: Array<{ personId?: string; states?: readonly string[] } | undefined> = [];
+      let returned = 0;
+      const listSummaries = store.listSummaries.bind(store);
+      store.listSummaries = async (filter) => {
+        calls.push(filter);
+        const rows = await listSummaries(filter);
+        returned = rows.length;
+        return rows;
+      };
+      for (let index = 0; index < 10; index += 1) {
+        await store.saveSummary(makeSummary({ id: `eligible_${index}`, state: "active", personId: "person_a" }));
+      }
+      for (let index = 0; index < extraIneligible; index += 1) {
+        await store.saveSummary(makeSummary({
+          id: `ineligible_${index}`,
+          state: ineligible[index % ineligible.length]!,
+          personId: "person_a"
+        }));
+      }
+      await store.saveSummary(makeSummary({ id: "other_person", state: "active", personId: "person_b" }));
+      await new SleepReviewer(store).decaySummaries({
+        reviewedAt: "2026-05-03T00:00:00.000Z",
+        personId: "person_a"
+      });
+      return { calls, returned };
+    };
+    const small = await run(10);
+    const large = await run(1_000);
+    expect(small.calls).toHaveLength(1);
+    expect(large.calls).toHaveLength(1);
+    expect(small.calls[0]).toEqual({ personId: "person_a", states: DECAY_ELIGIBLE_STATES });
+    expect(large.calls[0]).toEqual(small.calls[0]);
+    expect(small.returned).toBe(10);
+    expect(large.returned).toBe(10);
   });
 
   it("marks boxes stale when every linked summary is stale", async () => {
