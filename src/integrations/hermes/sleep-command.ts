@@ -8,6 +8,7 @@ import {
   type OpenRouterProposalPlannerEnvironment
 } from "../../proposals/openrouter-proposal-planner.js";
 import { SleepReviewer } from "../../sleep/sleep-reviewer.js";
+import { NullTraceProposalPlanner } from "../../traces/null-trace-proposal-planner.js";
 import { SqliteStore } from "../../storage/sqlite-store.js";
 
 const SleepOptionsSchema = z.object({
@@ -62,7 +63,12 @@ export async function sleepHermesMemory(options: {
   );
 
   try {
-    const reviewer = new SleepReviewer(store, plannerBundle ?? {});
+    // Null planner first: shared-term trace discovery stays off (GAP-12-E, ADR 0061).
+    // The selected bundle is spread after it so an explicit trace planner still wins.
+    const reviewer = new SleepReviewer(store, {
+      tracePlanner: new NullTraceProposalPlanner(),
+      ...(plannerBundle ?? {})
+    });
     const decay = await reviewer.decaySummaries({
       reviewedAt,
       staleStrengthThreshold: request.stale_strength_threshold

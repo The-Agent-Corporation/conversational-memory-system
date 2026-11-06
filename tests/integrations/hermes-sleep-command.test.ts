@@ -170,11 +170,9 @@ describe("Hermes sleep command", () => {
     expect(result.updatedSummaryIds).toEqual(["summary_1", "summary_2", "summary_old"]);
     expect(result.updatedBoxIds).toEqual(["box_topic_old"]);
     expect(result.proposedBoxIds).toEqual(["box_topic_smith_pip"]);
-    expect(result.proposalIds).toEqual(expect.arrayContaining([
-      "proposal_box_box_topic_smith_pip",
-      "proposal_trace_trace_smith_pip_provider_bill"
-    ]));
-    expect(result.proposedTraceIds).toEqual(["trace_smith_pip_provider_bill"]);
+    expect(result.proposalIds).toEqual(["proposal_box_box_topic_smith_pip"]);
+    // GAP-12-E, plan 13-01, ADR 0061: was ["trace_smith_pip_provider_bill"].
+    expect(result.proposedTraceIds).toEqual([]);
     expect(result.noopReason).toBeNull();
 
     const verifyStore = new SqliteStore(databasePath);
@@ -188,6 +186,38 @@ describe("Hermes sleep command", () => {
       })
     ]);
     verifyStore.close();
+  });
+
+  it("treats include_proposals false and the default path as the same trace output", async () => {
+    const input = {
+      reviewed_at: "2026-05-03T00:00:00.000Z",
+      minimum_summaries_per_box: 2,
+      minimum_trace_summaries: 2
+    };
+    const seed = async () => {
+      const dir = await makeTempDir();
+      const databasePath = join(dir, "memory.sqlite");
+      const store = new SqliteStore(databasePath);
+      await store.saveSummary(summary({
+        id: "summary_1",
+        summaryText: "Smith PIP provider bill review and coverage timing."
+      }));
+      await store.saveSummary(summary({
+        id: "summary_2",
+        summaryText: "Smith PIP deadline and provider bill review.",
+        sourceTurnRanges: [{ threadId: "profile:default", startSequence: 10, endSequence: 12 }]
+      }));
+      store.close();
+      return databasePath;
+    };
+    const omitted = await sleepHermesMemory({ databasePath: await seed(), input: JSON.stringify(input) });
+    const disabled = await sleepHermesMemory({
+      databasePath: await seed(),
+      input: JSON.stringify({ ...input, include_proposals: false })
+    });
+    expect(disabled.proposedTraceIds).toEqual(omitted.proposedTraceIds);
+    expect(disabled.proposedTraceIds).toEqual([]);
+    expect(disabled.proposalIds).toEqual(omitted.proposalIds);
   });
 
   it("returns a no-op reason when sleep review makes no changes", async () => {
@@ -250,6 +280,7 @@ describe("Hermes sleep command", () => {
       "proposal_trace_trace_openrouter"
     ]);
     expect(result.proposedBoxIds).toEqual(["box_topic_openrouter"]);
+    // GAP-12-E null default must not override an explicitly selected OpenRouter trace planner.
     expect(result.proposedTraceIds).toEqual(["trace_openrouter"]);
   });
 
@@ -280,10 +311,9 @@ describe("Hermes sleep command", () => {
       proposalPlannerFactory: () => null
     });
 
-    expect(result.proposalIds).toEqual(expect.arrayContaining([
-      "proposal_box_box_topic_smith_pip",
-      "proposal_trace_trace_smith_pip_provider_bill"
-    ]));
+    expect(result.proposalIds).toEqual(["proposal_box_box_topic_smith_pip"]);
+    // GAP-12-E, plan 13-01, ADR 0061: hybrid fallback no longer emits proposal_trace_trace_smith_pip_provider_bill.
+    expect(result.proposedTraceIds).toEqual([]);
   });
 
   it("requires OpenRouter configuration in openrouter proposal mode", async () => {
