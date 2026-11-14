@@ -1,7 +1,7 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { composeFileIdentity } from "./file-identity.js";
 import {
-  collectHistoryFiles,
   fileCandidateSummary,
   historyCandidateId,
   type HistoryFile
@@ -28,10 +28,28 @@ export function decodeGrokWorkspaceName(name: string): string | null {
 
 export async function findGrokHistoryFiles(workspacePath: string): Promise<HistoryFile[]> {
   const root = await realpath(resolve(workspacePath));
-  return collectHistoryFiles(root, root, (_absolutePath, resourcePath) => {
-    const parts = resourcePath.split(sep);
-    return parts.length === 2 && parts[1] === "chat_history.jsonl";
-  });
+  const sessions = await readdir(root, { withFileTypes: true });
+  const files: HistoryFile[] = [];
+  for (const session of sessions) {
+    if (!session.isDirectory() || session.isSymbolicLink()) continue;
+    const absolutePath = join(root, session.name, "chat_history.jsonl");
+    let metadata;
+    try {
+      metadata = await lstat(absolutePath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+      throw error;
+    }
+    if (!metadata.isFile() || metadata.isSymbolicLink()) continue;
+    files.push({
+      absolutePath,
+      resourcePath: relative(root, absolutePath),
+      size: metadata.size,
+      modifiedAt: metadata.mtime.toISOString(),
+      fileIdentity: composeFileIdentity(metadata)
+    });
+  }
+  return files.sort((left, right) => left.resourcePath.localeCompare(right.resourcePath));
 }
 
 export async function discoverGrokCliHistory(

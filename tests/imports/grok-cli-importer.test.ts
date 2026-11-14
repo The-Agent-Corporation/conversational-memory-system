@@ -136,6 +136,8 @@ async function createFixture() {
     "{malformed"
   ].join("\n") + "\n");
   await writeFile(join(alphaSession, "system_prompt.txt"), "SECRET_SYSTEM_PROMPT");
+  await mkdir(join(alphaSession, "nested-sidecar"), { recursive: true });
+  await writeFile(join(alphaSession, "nested-sidecar", "chat_history.jsonl"), "NESTED_TRANSCRIPT_MUST_NOT_BE_DISCOVERED");
   await writeFile(join(betaSession, "chat_history.jsonl"), `${JSON.stringify({ type: "user", content: "Beta" })}\n`);
   await writeFile(join(sessionsRoot, "session_search.sqlite"), "not a database");
   await writeFile(join(root, ".grok", "auth.json"), "SECRET_AUTH");
