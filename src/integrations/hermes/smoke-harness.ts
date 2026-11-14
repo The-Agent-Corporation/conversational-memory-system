@@ -12,6 +12,7 @@ import type { HermesSleepResult } from "./sleep-command.js";
 import { sleepHermesMemory } from "./sleep-command.js";
 import type { HermesProposalListResult } from "./proposals-list-command.js";
 import { listHermesProposals } from "./proposals-list-command.js";
+import { loadMemoryMcpProfile } from "../../mcp/profile-loader.js";
 
 export interface HermesSmokeHarnessOptions {
   databasePath?: string;
@@ -71,7 +72,7 @@ export async function runHermesMemorySmokeHarness(
   const databasePath = options.databasePath ?? await defaultDatabasePath();
   const projectRoot = options.projectRoot ?? process.cwd();
   const profile = options.configPath && options.profileName
-    ? { configPath: options.configPath, profileName: options.profileName, databasePath }
+    ? { configPath: options.configPath, profileName: options.profileName }
     : await writeHermesMcpProfile({
       directory: dirname(databasePath),
       databasePath,
@@ -79,10 +80,14 @@ export async function runHermesMemorySmokeHarness(
       personId: "person_smoke",
       scopeId: "personal"
     });
+  const authority = await loadMemoryMcpProfile(profile);
+  if (resolve(authority.databasePath) !== resolve(databasePath)) {
+    throw new Error("Smoke harness database must match the selected MCP profile database");
+  }
   const store = new SqliteStore(databasePath);
   const adapter = new HermesMemoryAdapter(store, {
-    personId: "person_smoke",
-    allowedScopeIds: ["personal"]
+    personId: authority.personId,
+    allowedScopeIds: authority.allowedScopeIds
   });
   const firstResult = await adapter.processTimelineRow(timelineRow({
     id: "default:1",
@@ -141,7 +146,7 @@ export async function runHermesMemorySmokeHarness(
   }
   const resumed = await adapter.resumeInjection(packet);
   const injectionCount = (await store.listInjections("profile:default")).length;
-  const eventCount = (await store.listCanonicalEvents("person_smoke")).length;
+  const eventCount = (await store.listCanonicalEvents(authority.personId)).length;
   store.close();
   const sleep = await sleepHermesMemory({
     databasePath,

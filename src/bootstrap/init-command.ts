@@ -78,9 +78,8 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
         discoveredAt: requestedAt
       });
       discoveries.push(...discovered.candidates);
-    } catch {
-      // Not present / unreadable on this machine -- skip silently, matches existing importer
-      // per-source discovery semantics (T-07-06: no content is read at this stage regardless).
+    } catch (error) {
+      if (!isMissingSource(error)) throw error;
     }
   }
 
@@ -149,6 +148,10 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
   } finally {
     store.close();
   }
+}
+
+function isMissingSource(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 function requireMatchingGrokScope(candidateScope: string, requestedScope: string | undefined): string {

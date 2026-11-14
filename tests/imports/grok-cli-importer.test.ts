@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { approveGrokCliHistory, discoverGrokCliHistory } from "../../src/imports/grok-cli-discovery.js";
 import { GrokCliHistoryImporter } from "../../src/imports/grok-cli-importer.js";
-import { planConfiguredHistoryImport } from "../../src/imports/history-import-command.js";
+import { CONFIGURED_HISTORY_HANDLERS, planConfiguredHistoryImport } from "../../src/imports/history-import-command.js";
 import { createProfileAuthority } from "../../src/mcp/authority.js";
 import { SourceLifecycleService } from "../../src/service/source-lifecycle-service.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
+import { SqliteStore } from "../../src/storage/sqlite-store.js";
+import { CONFIGURED_HISTORY_SOURCES } from "../../src/imports/types.js";
 
 const NOW = "2026-11-14T12:00:00.000Z";
 const cleanups: string[] = [];
@@ -17,6 +19,10 @@ afterEach(async () => {
 });
 
 describe("Grok CLI history import", () => {
+  it("has one configured handler for every wire source", () => {
+    expect(Object.keys(CONFIGURED_HISTORY_HANDLERS).sort()).toEqual([...CONFIGURED_HISTORY_SOURCES].sort());
+  });
+
   it("discovers one metadata-only candidate per decoded workspace and ignores sidecars and symlinks", async () => {
     const fixture = await createFixture();
     const unreadableTranscript = fixture.chatPath;
@@ -111,14 +117,15 @@ describe("Grok CLI history import", () => {
     await utimes(fixture.chatPath, fallbackTime, fallbackTime);
     const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
       .find((item) => item.scopeId === "/workspace/alpha")!;
-    const store = new InMemoryStore();
+    const databasePath = join(fixture.root, "memory.sqlite");
+    const store = new SqliteStore(databasePath);
     await new SourceLifecycleService(store).approve({
       personId: "person_1", candidateId: candidate.id, application: candidate.application,
       format: candidate.format, sourceLocator: candidate.rootPath, profileId: "default",
       scopeId: candidate.scopeId, approvedAt: NOW
     });
     const authority = createProfileAuthority({
-      profileName: "default", databasePath: "/tmp/memory.sqlite", personId: "person_1",
+      profileName: "default", databasePath, personId: "person_1",
       allowedScopeIds: [candidate.scopeId], ingestScopeId: candidate.scopeId,
       sourceRoots: { grok: candidate.rootPath }, scopeAliases: {}, allowedHosts: null
     });
@@ -143,6 +150,14 @@ describe("Grok CLI history import", () => {
     ]);
     expect(updated[0]?.metadata.sourceMetadata)
       .toMatchObject({ timestampSource: "events_turn", timestampConfidence: "high" });
+    store.close();
+
+    const reopened = new SqliteStore(databasePath);
+    const persisted = await reopened.listCanonicalEvents("person_1");
+    expect(persisted[0]?.metadata.sourceMetadata)
+      .toMatchObject({ timestampSource: "events_turn", timestampConfidence: "high" });
+    expect(persisted[0]?.occurredAt).toBe("2026-07-01T10:00:00.000Z");
+    reopened.close();
   });
 
   it("treats an events sidecar symlink as absent without reading or quarantining its target", async () => {
@@ -238,7 +253,8 @@ async function createFixture() {
     "not-an-object",
     { type: "user", id: "user-2", content: "Second turn" }
   ];
-  await writeFile(chatPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+  await writeFile(chatPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n` +
+    `{"type":"reasoning","encrypted_content":"MALFORMED_ENCRYPTED_PAYLOAD"\n`);
   const eventsPath = join(alphaSession, "events.jsonl");
   await writeFile(eventsPath, [
     JSON.stringify({ turn_number: 1, ts: "2026-07-01T10:00:00.000Z" }),

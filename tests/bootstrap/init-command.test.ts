@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -158,5 +158,19 @@ describe("guided init orchestration (discover -> per-source consent -> bootstrap
     } finally {
       finalStore.close();
     }
+  });
+
+  it("surfaces an explicit Grok root that is not a directory", async () => {
+    tempDirectory = await mkdtemp(join(tmpdir(), "memory-init-command-invalid-grok-"));
+    const rootFile = join(tempDirectory, "not-a-directory");
+    await writeFile(rootFile, "synthetic");
+
+    await expect(runInitCommand({
+      databasePath: join(tempDirectory, "memory.db"),
+      personId: "person_1",
+      sources: [{ source: "grok-cli", sourcePath: rootFile }],
+      consent: async () => false,
+      offerDaemon: async () => false
+    })).rejects.toMatchObject({ code: "ENOTDIR" });
   });
 });

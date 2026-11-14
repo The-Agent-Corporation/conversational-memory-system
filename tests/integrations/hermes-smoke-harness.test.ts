@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -97,5 +97,57 @@ describe("Hermes memory smoke harness", () => {
     expect(env.HERMES_CONVERSATIONAL_MEMORY_PROPOSALS_REJECT_COMMAND).toBe(
       "npm --silent --prefix /repo/conversational-memory-system run hermes:proposals:reject -- --db /tmp/memory.sqlite"
     );
+  });
+
+  it("uses the selected profile authority for lifecycle writes and emitted commands", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "custom.sqlite");
+    const configPath = join(dir, "profiles.json");
+    await writeFile(configPath, JSON.stringify({
+      version: 1,
+      profiles: {
+        custom: {
+          databasePath,
+          personId: "person_custom",
+          allowedScopeIds: ["matter-a"],
+          ingestScopeId: "matter-a",
+          sourceRoots: {},
+          scopeAliases: {},
+          allowInjection: true
+        }
+      }
+    }));
+
+    const result = await runHermesMemorySmokeHarness({ databasePath, configPath, profileName: "custom" });
+    expect(result.eventCount).toBe(4);
+    expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_PROFILE).toBe("custom");
+    expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toContain("--profile custom");
+
+    const reopened = new SqliteStore(databasePath);
+    expect(await reopened.listCanonicalEvents("person_smoke")).toHaveLength(0);
+    expect(await reopened.listCanonicalEvents("person_custom")).toHaveLength(4);
+    reopened.close();
+  });
+
+  it("rejects a profile bound to a different database", async () => {
+    const dir = await makeTempDir();
+    const databasePath = join(dir, "smoke.sqlite");
+    const configPath = join(dir, "profiles.json");
+    await writeFile(configPath, JSON.stringify({
+      version: 1,
+      profiles: {
+        custom: {
+          databasePath: join(dir, "other.sqlite"),
+          personId: "person_custom",
+          allowedScopeIds: ["matter-a"],
+          ingestScopeId: "matter-a",
+          sourceRoots: {},
+          scopeAliases: {}
+        }
+      }
+    }));
+
+    await expect(runHermesMemorySmokeHarness({ databasePath, configPath, profileName: "custom" }))
+      .rejects.toThrow("database must match");
   });
 });

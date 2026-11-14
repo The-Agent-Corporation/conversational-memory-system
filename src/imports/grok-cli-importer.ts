@@ -238,6 +238,9 @@ function classifyRecord(line: string): ClassifiedRecord {
   if (line.trim().length === 0) return { record: null, startsTurn: false, recognizedExclusion: true };
   let value: unknown;
   try { value = JSON.parse(line); } catch {
+    if (line.includes('"encrypted_content"')) {
+      return { record: null, startsTurn: false, recognizedExclusion: true };
+    }
     return { record: null, startsTurn: false, recognizedExclusion: false, quarantineReason: "malformed_json" };
   }
   const record = asObject(value);

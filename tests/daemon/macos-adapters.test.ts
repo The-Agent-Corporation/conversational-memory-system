@@ -118,7 +118,8 @@ describe("MacOSLaunchAgent", () => {
       stdoutPath: join(directory, "daemon.out.log"),
       stderrPath: join(directory, "daemon.err.log"),
       commandRunner: commands,
-      userDomain: "gui/501"
+      userDomain: "gui/501",
+      commandAvailable: () => true
     });
 
     await expect(launchAgent.status()).resolves.toMatchObject({ capable: true, loaded: false });
@@ -187,7 +188,7 @@ describe("MacOSPowerSource", () => {
     const commands = new FakeCommandRunner();
     commands.enqueueResult({ stdout: "Now drawing from 'Battery Power'" });
     commands.enqueueResult({ exitCode: 1, stderr: "unavailable" });
-    const power = new MacOSPowerSource({ commandRunner: commands });
+    const power = new MacOSPowerSource({ commandRunner: commands, commandAvailable: () => true });
 
     await expect(power.current()).resolves.toBe("battery");
     await expect(power.current()).resolves.toBe("unknown");
@@ -203,7 +204,7 @@ describe("MacOSNotificationAdapter", () => {
     const commands = new FakeCommandRunner();
     commands.enqueueResult({ exitCode: 0 });
     commands.enqueueResult({ exitCode: 1, stderr: "osascript failed" });
-    const notifications = new MacOSNotificationAdapter({ commandRunner: commands });
+    const notifications = new MacOSNotificationAdapter({ commandRunner: commands, commandAvailable: () => true });
     const episode = {
       sourceLabel: "codex_candidate_synthetic",
       category: "permission_denied" as const,
