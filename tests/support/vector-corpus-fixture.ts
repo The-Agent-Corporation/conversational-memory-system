@@ -12,7 +12,6 @@ export interface VectorCorpusOptions {
   dimensions?: number;
   seed: number;
   scopeIds?: string[];
-  clusterCount?: number;
   provenanceIncomplete?: number;
   createdAtStart?: string;
   createdAtStepMinutes?: number;
@@ -25,7 +24,7 @@ export interface VectorCorpus {
 
 export async function buildVectorCorpus(options: VectorCorpusOptions): Promise<VectorCorpus> {
   const dimensions = options.dimensions ?? 384;
-  const clusterCount = options.clusterCount ?? Math.max(2, Math.floor(options.summaryCount / 10));
+  const clusterCount = Math.max(2, Math.floor(options.summaryCount / 10));
   const scopeIds = options.scopeIds ?? ["personal"];
   const incompleteCount = options.provenanceIncomplete ?? 0;
   const start = Date.parse(options.createdAtStart ?? "2026-01-01T00:00:00.000Z");

@@ -75,7 +75,7 @@ describe("vector corpus fixture", () => {
   it("is deterministic, clustered, provenance-complete, and time ordered", async () => {
     const firstStore = new InMemoryStore();
     const secondStore = new InMemoryStore();
-    const options = { personId: "person_1", summaryCount: 20, dimensions: 16, seed: 42, clusterCount: 4 };
+    const options = { personId: "person_1", summaryCount: 20, dimensions: 16, seed: 42 };
     const first = await buildVectorCorpus({ store: firstStore, ...options });
     const second = await buildVectorCorpus({ store: secondStore, ...options });
 
@@ -90,7 +90,7 @@ describe("vector corpus fixture", () => {
       expect(summary.sourceTurnRanges.length).toBeGreaterThan(0);
     }
     expect(summaries.every((summary, index) => index === 0 || summary.createdAt > summaries[index - 1].createdAt)).toBe(true);
-    expect(cosineSimilarity(first.vectors[0], first.vectors[4])).toBeGreaterThan(0.8);
+    expect(cosineSimilarity(first.vectors[0], first.vectors[2])).toBeGreaterThan(0.8);
     expect(cosineSimilarity(first.vectors[0], first.vectors[1])).toBeLessThan(0.3);
   });
 
