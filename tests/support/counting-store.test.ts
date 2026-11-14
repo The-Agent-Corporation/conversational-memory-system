@@ -82,22 +82,42 @@ describe("vector corpus fixture", () => {
     expect(first).toEqual(second);
     expect(await firstStore.listSummaries()).toEqual(await secondStore.listSummaries());
     const summaries = await firstStore.listSummaries();
-    for (const summary of summaries) {
+    for (const [index, summary] of summaries.entries()) {
       expect(SummarySchema.parse(summary)).toEqual(summary);
       expect(summary.personId).toBeTruthy();
       expect(summary.scopeIds?.length).toBeGreaterThan(0);
       expect(summary.sourceCanonicalEventIds?.length).toBeGreaterThan(0);
       expect(summary.sourceTurnRanges.length).toBeGreaterThan(0);
+      expect(await firstStore.getSummaryVector(summary.id, "fixture", "clustered-xorshift32-v1")).toEqual({
+        summaryId: summary.id,
+        provider: "fixture",
+        model: "clustered-xorshift32-v1",
+        dimensions: options.dimensions,
+        vector: first.vectors[index],
+        personId: summary.personId,
+        scopeIds: summary.scopeIds,
+        createdAt: summary.createdAt
+      });
     }
     expect(summaries.every((summary, index) => index === 0 || summary.createdAt > summaries[index - 1].createdAt)).toBe(true);
     expect(cosineSimilarity(first.vectors[0], first.vectors[2])).toBeGreaterThan(0.8);
     expect(cosineSimilarity(first.vectors[0], first.vectors[1])).toBeLessThan(0.3);
   });
 
-  it("plants exactly the requested incomplete-provenance cases", async () => {
+  it.each([0, 3, 8])("plants exactly %i requested incomplete-provenance cases", async (provenanceIncomplete) => {
     const store = new InMemoryStore();
-    await buildVectorCorpus({ store, personId: "person_1", summaryCount: 8, dimensions: 8, seed: 7, provenanceIncomplete: 3 });
-    expect((await store.listSummaries()).filter((summary) => summary.scopeIds?.length === 0)).toHaveLength(3);
+    await buildVectorCorpus({ store, personId: "person_1", summaryCount: 8, dimensions: 8, seed: 7, provenanceIncomplete });
+    const summaries = await store.listSummaries();
+    expect(summaries.filter((summary) => summary.scopeIds?.length === 0)).toHaveLength(provenanceIncomplete);
+    expect(summaries.filter((summary) => summary.scopeIds?.length !== 0)).toHaveLength(8 - provenanceIncomplete);
+  });
+
+  it("rejects empty default provenance scopes before writing", async () => {
+    const store = new InMemoryStore();
+    await expect(buildVectorCorpus({
+      store, personId: "person_1", summaryCount: 8, dimensions: 8, seed: 7, scopeIds: []
+    })).rejects.toThrow("scopeIds must contain at least one scope");
+    expect(await store.listSummaries()).toEqual([]);
   });
 });
 

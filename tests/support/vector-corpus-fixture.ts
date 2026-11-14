@@ -39,6 +39,9 @@ export async function buildVectorCorpus(options: VectorCorpusOptions): Promise<V
   if (!Number.isInteger(incompleteCount) || incompleteCount < 0 || incompleteCount > options.summaryCount) {
     throw new Error("provenanceIncomplete must be between zero and summaryCount");
   }
+  if (scopeIds.length === 0) {
+    throw new Error("scopeIds must contain at least one scope");
+  }
   if (!Number.isFinite(start) || !Number.isFinite(step) || step <= 0) {
     throw new Error("createdAtStart and createdAtStepMinutes must define increasing timestamps");
   }
