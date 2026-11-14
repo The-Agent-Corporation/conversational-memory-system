@@ -540,10 +540,16 @@ export class SqliteStore implements MemoryStore {
       const currentSource = sourceId ? await this.getSource(sourceId) : null;
       const currentCheckpoint = await this.getImportCheckpoint(parsed.nextCheckpoint.id);
       const currentGrant = await this.getSourceGrant(parsed.expectedGrant.id);
-      const occupied = parsed.targetCanonicalEventIds.some((id) =>
-        this.database.prepare("select id from canonical_events where id = ?").get(id) !== undefined
+      const expectedEvents = new Map(parsed.expectedCanonicalEvents.map((item) => [item.id, item]));
+      const currentEvents = new Map(
+        (await this.listCanonicalEventsByIds(parsed.personId, parsed.targetCanonicalEventIds))
+          .map((item) => [item.id, item])
       );
-      if (!this.sameRecord(currentSource, parsed.expectedSource) || !this.sameRecord(currentCheckpoint, parsed.expectedCheckpoint) || !this.sameRecord(currentGrant, parsed.expectedGrant) || occupied) {
+      const targetEventsChanged = parsed.targetCanonicalEventIds.some((id) => {
+        const current = currentEvents.get(id) ?? null;
+        return !this.sameRecord(current, expectedEvents.get(id) ?? null);
+      });
+      if (!this.sameRecord(currentSource, parsed.expectedSource) || !this.sameRecord(currentCheckpoint, parsed.expectedCheckpoint) || !this.sameRecord(currentGrant, parsed.expectedGrant) || targetEventsChanged) {
         this.database.exec("rollback");
         return this.stateChanged(parsed.receipt);
       }

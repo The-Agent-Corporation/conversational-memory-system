@@ -104,6 +104,43 @@ describe("Grok CLI history import", () => {
       .toMatchObject({ timestampSource: "events_turn", timestampConfidence: "high" });
   });
 
+  it("commits configured timestamp replay updates when a sidecar arrives", async () => {
+    const fixture = await createFixture();
+    await unlink(fixture.eventsPath);
+    const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
+      .find((item) => item.scopeId === "/workspace/alpha")!;
+    const store = new InMemoryStore();
+    await new SourceLifecycleService(store).approve({
+      personId: "person_1", candidateId: candidate.id, application: candidate.application,
+      format: candidate.format, sourceLocator: candidate.rootPath, profileId: "default",
+      scopeId: candidate.scopeId, approvedAt: NOW
+    });
+    const authority = createProfileAuthority({
+      profileName: "default", databasePath: "/tmp/memory.sqlite", personId: "person_1",
+      allowedScopeIds: [candidate.scopeId], ingestScopeId: candidate.scopeId,
+      sourceRoots: { grok: candidate.rootPath }, scopeAliases: {}, allowedHosts: null
+    });
+    const request = { sourceAlias: "grok", source: "grok-cli" as const, requestedAt: NOW };
+
+    const initial = await planConfiguredHistoryImport(store, authority, request);
+    await expect(store.commitHistoryImport(initial)).resolves.toMatchObject({ status: "COMMITTED" });
+    expect((await store.listCanonicalEvents("person_1"))[0]?.metadata.sourceMetadata)
+      .toMatchObject({ timestampSource: "chat_history_mtime", timestampConfidence: "low" });
+
+    await writeFile(fixture.eventsPath, `${JSON.stringify({ turn_number: 1, ts: "2026-07-01T10:00:00.000Z" })}\n`);
+    const replay = await planConfiguredHistoryImport(store, authority, request);
+    expect(replay.expectedCanonicalEvents).toHaveLength(3);
+    await expect(store.commitHistoryImport(replay)).resolves.toMatchObject({ status: "COMMITTED" });
+    const updated = await store.listCanonicalEvents("person_1");
+    expect(updated.slice(0, 3).map((event) => event.occurredAt)).toEqual([
+      "2026-07-01T10:00:00.000Z",
+      "2026-07-01T10:00:00.000Z",
+      "2026-07-01T10:00:00.000Z"
+    ]);
+    expect(updated[0]?.metadata.sourceMetadata)
+      .toMatchObject({ timestampSource: "events_turn", timestampConfidence: "high" });
+  });
+
   it("treats an events sidecar symlink as absent without reading or quarantining its target", async () => {
     const fixture = await createFixture();
     await unlink(fixture.eventsPath);

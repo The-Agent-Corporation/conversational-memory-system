@@ -24,6 +24,7 @@ import {
 } from "../storage/mcp-mutation-contracts.js";
 import { discoverCodexHistory, approveCodexHistory } from "./codex-discovery.js";
 import { CodexHistoryImporter, seedStagingImportState } from "./codex-importer.js";
+import type { CanonicalEvent } from "../domain/canonical.js";
 
 export interface HistoryImportCommandOptions {
   source: ImportSource;
@@ -114,13 +115,17 @@ export async function planConfiguredHistoryImport(
   // Same shape as `commitStagedGrantBatch`: only the staged ids are ever tested against this set,
   // so resolve exactly those rather than loading the person's entire canonical history.
   const stagedEvents = await staging.listCanonicalEvents(authority.personId);
-  const existingEvents = new Set(
+  const existingEvents = new Map(
     (await store.listCanonicalEventsByIds(authority.personId, stagedEvents.map((item) => item.id)))
-      .map((item) => item.id)
+      .map((item) => [item.id, item])
   );
   const resourceEvents = stagedEvents
-    .filter((event) => sourceResource(event) === nextCheckpoint.resourcePath && !existingEvents.has(event.id))
+    .filter((event) => sourceResource(event) === nextCheckpoint.resourcePath && materiallyChanged(existingEvents.get(event.id), event))
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.nativeSequence - right.nativeSequence || left.id.localeCompare(right.id));
+  const expectedCanonicalEvents = resourceEvents.flatMap((event) => {
+    const existing = existingEvents.get(event.id);
+    return existing ? [existing] : [];
+  });
   const nextSources = (await staging.listSources(authority.personId))
     .filter((item) => item.instanceId === candidate.id)
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -139,6 +144,7 @@ export async function planConfiguredHistoryImport(
     expectedSource,
     expectedSourceStateFingerprint: mutationEffectsFingerprint(expectedSource),
     expectedCheckpoint: existingById.get(nextCheckpoint.id) ?? null,
+    expectedCanonicalEvents,
     expectedGrant: grant,
     targetCanonicalEventIds: effects.eventIds,
     nextSources,
@@ -164,6 +170,12 @@ const sourceResource = (event: { metadata: Record<string, unknown> }): string | 
   }
   return typeof event.metadata.sourceResource === "string" ? event.metadata.sourceResource : null;
 };
+
+const materiallyChanged = (previous: CanonicalEvent | undefined, next: CanonicalEvent): boolean =>
+  previous === undefined || previous.contentHash !== next.contentHash ||
+  previous.occurredAt !== next.occurredAt || previous.nativeSequence !== next.nativeSequence ||
+  previous.parserVersion !== next.parserVersion || previous.role !== next.role ||
+  previous.eventKind !== next.eventKind;
 
 export async function runHistoryImportCommand(
   options: HistoryImportCommandOptions
