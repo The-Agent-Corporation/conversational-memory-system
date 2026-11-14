@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, mkdir, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readFile, rename, rm, symlink, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -107,6 +107,8 @@ describe("Grok CLI history import", () => {
   it("commits configured timestamp replay updates when a sidecar arrives", async () => {
     const fixture = await createFixture();
     await unlink(fixture.eventsPath);
+    const fallbackTime = new Date("2026-07-01T10:00:00.000Z");
+    await utimes(fixture.chatPath, fallbackTime, fallbackTime);
     const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
       .find((item) => item.scopeId === "/workspace/alpha")!;
     const store = new InMemoryStore();
@@ -126,6 +128,8 @@ describe("Grok CLI history import", () => {
     await expect(store.commitHistoryImport(initial)).resolves.toMatchObject({ status: "COMMITTED" });
     expect((await store.listCanonicalEvents("person_1"))[0]?.metadata.sourceMetadata)
       .toMatchObject({ timestampSource: "chat_history_mtime", timestampConfidence: "low" });
+    expect((await store.listCanonicalEvents("person_1"))[0]?.occurredAt)
+      .toBe("2026-07-01T10:00:00.000Z");
 
     await writeFile(fixture.eventsPath, `${JSON.stringify({ turn_number: 1, ts: "2026-07-01T10:00:00.000Z" })}\n`);
     const replay = await planConfiguredHistoryImport(store, authority, request);

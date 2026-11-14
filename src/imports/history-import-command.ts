@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { SqliteStore } from "../storage/sqlite-store.js";
 import { approveClaudeHistory, discoverClaudeHistory } from "./claude-discovery.js";
 import { ClaudeHistoryImporter } from "./claude-importer.js";
@@ -171,11 +172,12 @@ const sourceResource = (event: { metadata: Record<string, unknown> }): string | 
   return typeof event.metadata.sourceResource === "string" ? event.metadata.sourceResource : null;
 };
 
-const materiallyChanged = (previous: CanonicalEvent | undefined, next: CanonicalEvent): boolean =>
-  previous === undefined || previous.contentHash !== next.contentHash ||
-  previous.occurredAt !== next.occurredAt || previous.nativeSequence !== next.nativeSequence ||
-  previous.parserVersion !== next.parserVersion || previous.role !== next.role ||
-  previous.eventKind !== next.eventKind;
+const materiallyChanged = (previous: CanonicalEvent | undefined, next: CanonicalEvent): boolean => {
+  if (previous === undefined) return true;
+  const { importedAt: _previousImportedAt, ...previousDeterministicFields } = previous;
+  const { importedAt: _nextImportedAt, ...nextDeterministicFields } = next;
+  return !isDeepStrictEqual(previousDeterministicFields, nextDeterministicFields);
+};
 
 export async function runHistoryImportCommand(
   options: HistoryImportCommandOptions
