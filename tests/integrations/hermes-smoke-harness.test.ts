@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { SqliteStore } from "../../src/storage/sqlite-store.js";
 import {
   buildRoscoeMemoryEnvironment,
   runHermesMemorySmokeHarness
@@ -22,7 +23,7 @@ afterEach(async () => {
 });
 
 describe("Hermes memory smoke harness", () => {
-  it("proves MCP ingest, read-only search, and resume share one profile without Hermes privileges", async () => {
+  it("proves the deterministic lifecycle while keeping live Hermes commands profile-bound", async () => {
     const dir = await makeTempDir();
     const databasePath = join(dir, "memory.sqlite");
 
@@ -31,20 +32,32 @@ describe("Hermes memory smoke harness", () => {
     expect(result.ok).toBe(true);
     expect(result.databasePath).toBe(databasePath);
     expect(result.ingestedTurnIds).toHaveLength(4);
-    expect(result.replay.status).toBe("REPLAYED");
     expect(result.eventCount).toBe(4);
-    expect(result.compaction.status).toBe("IGNORED_CONTROL");
-    expect(result.compaction.summaryId).toBeNull();
-    expect(result.injection.readOnly).toBe(true);
-    expect(result.injection.packet).toBeNull();
-    expect(result.injectionCount).toBe(0);
-    expect(result.resumeNotFound).toBe(true);
+    expect(result.compaction.status).toBe("COMPACTED");
+    expect(result.compaction.summaryId).toBe("summary_profile:default_4_5");
+    expect(result.injection.readOnly).toBe(false);
+    expect(result.injection.packet.sourceSummaryIds).toEqual(expect.arrayContaining([
+      "summary_profile:default_1_2",
+      "summary_profile:default_4_5"
+    ]));
+    expect(result.injectionCount).toBe(1);
+    expect(result.resume.turnCount).toBe(4);
+    expect(result.resume.contextBlock).toContain("[USER]: Let's talk about Smith PIP provider bill review.");
     expect(result.sleep.ok).toBe(true);
+    expect(result.proposals.count).toBeGreaterThanOrEqual(2);
+    expect(result.proposals.proposals.every((proposal) => proposal.state === "proposed")).toBe(true);
     // GAP-12-E, plan 13-01, ADR 0061: was a shared-term trace id such as trace_smith_pip_provider_bill.
     expect(result.sleep.proposedTraceIds).toEqual([]);
     expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toContain("--config");
     expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).toContain("--profile hermes");
     expect(result.roscoeEnvironment.HERMES_CONVERSATIONAL_MEMORY_COMMAND).not.toContain("--db");
+
+    const reopened = new SqliteStore(databasePath);
+    expect((await reopened.listSummaries()).map((summary) => summary.id)).toEqual(expect.arrayContaining([
+      "summary_profile:default_1_2",
+      "summary_profile:default_4_5"
+    ]));
+    reopened.close();
   });
 
   it("prints Roscoe environment commands for the same database path", () => {
