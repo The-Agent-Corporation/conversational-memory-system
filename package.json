@@ -19,6 +19,8 @@
     "memory:openclaw:import": "tsx src/imports/history-import-command.ts --source openclaw",
     "memory:hermes:discover": "tsx src/imports/history-discover-command.ts --source hermes",
     "memory:hermes:import": "tsx src/imports/history-import-command.ts --source hermes",
+    "memory:grok:discover": "tsx src/imports/history-discover-command.ts --source grok-cli",
+    "memory:grok:import": "tsx src/imports/history-import-command.ts --source grok-cli",
     "memory:bootstrap": "tsx src/bootstrap/bootstrap-command.ts",
     "memory:status": "tsx src/bootstrap/status-command.ts",
     "memory:daemon": "tsx src/daemon/daemon-command.ts",

@@ -230,6 +230,9 @@ describe("MCP explicit tool catalog contract", () => {
     expect(HistoryIngestPreviewInputSchema.safeParse({
       sourceAlias: "codex", source: "unknown", requestedAt: "2026-07-18T12:00:00.000Z"
     }).success).toBe(false);
+    expect(HistoryIngestPreviewInputSchema.safeParse({
+      sourceAlias: "grok-workspace", source: "grok-cli", requestedAt: "2026-07-18T12:00:00.000Z"
+    }).success).toBe(true);
   });
   it("05-07 Task 2 exposes all ten mutation contracts with exact annotations", () => {
     expect(MEMORY_MUTATION_TOOL_NAMES).toEqual(

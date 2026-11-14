@@ -102,7 +102,7 @@ describe("universal history import commands", () => {
       await runHistoryImportCommand({
         ...source,
         databasePath: memoryDatabasePath,
-        approvedCandidateId: discovery.candidate.id,
+        approvedCandidateId: discovery.candidates[0]!.id,
         personId: "person_1",
         requestedAt: NOW
       });

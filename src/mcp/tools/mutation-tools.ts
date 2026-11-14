@@ -60,7 +60,7 @@ const DeletionEffectCountsSchema = z.object({
 
 export const HistoryIngestPreviewInputSchema = z.object({
   sourceAlias: SourceAliasSchema,
-  source: z.enum(["codex", "claude-code", "openclaw", "hermes"]),
+  source: z.enum(["codex", "claude-code", "openclaw", "hermes", "cordis", "grok-cli"]),
   requestedAt: IsoDateTimeSchema
 }).strict();
 

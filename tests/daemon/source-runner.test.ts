@@ -76,7 +76,7 @@ describe("ApprovedSourceRunner", () => {
     expect(await store.listCanonicalEvents(sources.codex.grant.personId)).toEqual([]);
   });
 
-  it("dispatches all four exact durable grant pairs without ever reapproving", async () => {
+  it("dispatches every exact durable grant pair without ever reapproving", async () => {
     const sources = await syntheticSources();
     const store = new InMemoryStore();
     const lifecycle = new SourceLifecycleService(store);
@@ -98,7 +98,8 @@ describe("ApprovedSourceRunner", () => {
       "codex/codex-rollout-jsonl",
       "claude-code/claude-project-jsonl",
       "openclaw/openclaw-session-jsonl",
-      "hermes/hermes-state-sqlite"
+      "hermes/hermes-state-sqlite",
+      "grok-cli/grok-cli-session-jsonl"
     ]);
     expect(approve).not.toHaveBeenCalled();
   });
@@ -319,7 +320,7 @@ async function importPublicationSnapshot(store: InMemoryStore, personId: string,
 }
 
 function allSources(sources: SyntheticDaemonSources): SyntheticApprovedSource[] {
-  return [sources.codex, sources.claudeCode, sources.openClaw, sources.hermes];
+  return [sources.codex, sources.claudeCode, sources.openClaw, sources.hermes, sources.grokCli];
 }
 
 async function seedGrants(store: InMemoryStore, sources: SyntheticDaemonSources): Promise<void> {
@@ -339,7 +340,8 @@ function importerSpies(calls: string[], onOpen: () => void = () => undefined) {
     claudeCode: importer("claude-code/claude-project-jsonl"),
     openClaw: importer("openclaw/openclaw-session-jsonl"),
     hermes: importer("hermes/hermes-state-sqlite"),
-    cordis: importer("cordis/cordis-journal-sqlite")
+    cordis: importer("cordis/cordis-journal-sqlite"),
+    grokCli: importer("grok-cli/grok-cli-session-jsonl")
   };
 }
 

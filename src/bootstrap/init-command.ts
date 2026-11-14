@@ -77,7 +77,7 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
         sourcePath: spec.sourcePath,
         discoveredAt: requestedAt
       });
-      discoveries.push(discovered.candidate);
+      discoveries.push(...discovered.candidates);
     } catch {
       // Not present / unreadable on this machine -- skip silently, matches existing importer
       // per-source discovery semantics (T-07-06: no content is read at this stage regardless).
@@ -105,7 +105,9 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
           format: candidate.format,
           sourceLocator,
           profileId,
-          scopeId,
+          scopeId: candidate.application === "grok-cli"
+            ? requireMatchingGrokScope(candidate.scopeId, options.scopeId)
+            : scopeId,
           approvedAt: requestedAt
         });
         approvedCandidateIds.push(candidate.id);
@@ -147,6 +149,13 @@ export async function runInitCommand(options: InitCommandOptions): Promise<InitC
   } finally {
     store.close();
   }
+}
+
+function requireMatchingGrokScope(candidateScope: string, requestedScope: string | undefined): string {
+  if (requestedScope !== undefined && requestedScope !== candidateScope) {
+    throw new Error("Grok workspace scope cannot be overridden");
+  }
+  return candidateScope;
 }
 
 async function defaultConsent(candidate: UniversalHistoryCandidate): Promise<boolean> {

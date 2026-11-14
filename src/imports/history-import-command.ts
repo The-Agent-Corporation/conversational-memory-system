@@ -10,6 +10,8 @@ import { HermesHistoryImporter } from "./hermes-importer.js";
 import { readFlags, type ImportSource } from "./history-discover-command.js";
 import { approveOpenClawHistory, discoverOpenClawHistory } from "./openclaw-discovery.js";
 import { OpenClawHistoryImporter } from "./openclaw-importer.js";
+import { approveGrokCliHistory, discoverGrokCliHistory } from "./grok-cli-discovery.js";
+import { GrokCliHistoryImporter } from "./grok-cli-importer.js";
 import type { HistoryImportResult } from "./types.js";
 import { SourceLifecycleService } from "../service/source-lifecycle-service.js";
 import type { ProfileAuthority } from "../mcp/authority.js";
@@ -42,7 +44,7 @@ export interface HistoryImportCommandResult {
   checkpointCount: number;
 }
 
-export type ConfiguredHistorySource = "codex" | "claude-code" | "openclaw" | "hermes" | "cordis";
+export type ConfiguredHistorySource = "codex" | "claude-code" | "openclaw" | "hermes" | "cordis" | "grok-cli";
 
 export interface ConfiguredHistoryImportRequest {
   sourceAlias: string;
@@ -58,13 +60,19 @@ export async function planConfiguredHistoryImport(
 ): Promise<CommitHistoryImportInput> {
   const configuredPath = authority.sourceRoots[request.sourceAlias];
   if (!configuredPath) throw new Error("UNAUTHORIZED_OR_NOT_FOUND");
-  const candidate = request.source === "codex"
+  const candidate = request.source === "grok-cli"
+    ? (await discoverGrokCliHistory(resolve(configuredPath, ".."), request.requestedAt))
+      .find((item) => item.rootPath === resolve(configuredPath))
+    : request.source === "codex"
     ? await discoverCodexHistory(configuredPath, request.requestedAt)
     : request.source === "claude-code"
       ? await discoverClaudeHistory(configuredPath, request.requestedAt)
       : request.source === "openclaw"
         ? await discoverOpenClawHistory(configuredPath, request.requestedAt)
-        : await discoverHermesHistory(configuredPath, request.requestedAt);
+        : request.source === "hermes"
+          ? await discoverHermesHistory(configuredPath, request.requestedAt)
+          : await discoverCordisHistory(configuredPath, request.requestedAt);
+  if (!candidate) throw new Error("UNAUTHORIZED_OR_NOT_FOUND");
   const locator = "rootPath" in candidate ? candidate.rootPath : candidate.databasePath;
   const grant = (await store.listSourceGrants(authority.personId)).find((item) =>
     item.candidateId === candidate.id && item.state === "approved" &&
@@ -85,9 +93,16 @@ export async function planConfiguredHistoryImport(
   } else if (request.source === "openclaw") {
     await new OpenClawHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
       .importApprovedSource(approveOpenClawHistory(candidate as Awaited<ReturnType<typeof discoverOpenClawHistory>>, authority.personId, authority.profileName, grant.approvedAt, authority.ingestScopeId));
-  } else {
+  } else if (request.source === "hermes") {
     await new HermesHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
       .importApprovedSource(approveHermesHistory(candidate as Awaited<ReturnType<typeof discoverHermesHistory>>, authority.personId, authority.profileName, grant.approvedAt, authority.ingestScopeId));
+  } else if (request.source === "cordis") {
+    await new CordisHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
+      .importApprovedSource(approveCordisHistory(candidate as Awaited<ReturnType<typeof discoverCordisHistory>>, authority.personId, authority.profileName, grant.approvedAt, authority.ingestScopeId));
+  } else {
+    if (candidate.application !== "grok-cli" || candidate.scopeId !== authority.ingestScopeId) throw new Error("UNAUTHORIZED_OR_NOT_FOUND");
+    await new GrokCliHistoryImporter(staging, { clock: () => request.requestedAt, quarantineLookupStore: store })
+      .importApprovedSource(approveGrokCliHistory(candidate, authority.personId, authority.profileName, grant.approvedAt));
   }
 
   const existingCheckpoints = (await store.listImportCheckpoints(authority.personId)).filter((item) => item.candidateId === candidate.id);
@@ -157,21 +172,26 @@ export async function runHistoryImportCommand(
 ): Promise<HistoryImportCommandResult> {
   const requestedAt = options.requestedAt ?? new Date().toISOString();
   const profileId = options.profileId ?? "default";
-  const scopeId = options.scopeId ?? "personal";
   const sourcePath = resolve(options.sourcePath);
-  const candidate = options.source === "claude-code"
+  const candidate = options.source === "grok-cli"
+    ? (await discoverGrokCliHistory(resolve(sourcePath, ".."), requestedAt)).find((item) => item.rootPath === sourcePath)
+    : options.source === "claude-code"
     ? await discoverClaudeHistory(sourcePath, requestedAt)
     : options.source === "openclaw"
       ? await discoverOpenClawHistory(sourcePath, requestedAt)
       : options.source === "hermes"
         ? await discoverHermesHistory(sourcePath, requestedAt)
         : await discoverCordisHistory(sourcePath, requestedAt);
+  if (!candidate) throw new Error("Grok history import requires a direct workspace candidate path");
   if (candidate.id !== options.approvedCandidateId) {
     throw new Error(`${options.source} history import requires approval for candidate ${candidate.id}`);
   }
 
   const store = new SqliteStore(options.databasePath);
   try {
+    const scopeId = candidate.application === "grok-cli"
+      ? requireGrokScope(candidate.scopeId, options.scopeId)
+      : options.scopeId ?? "personal";
     const lifecycle = new SourceLifecycleService(store);
     await lifecycle.approve({
       personId: options.personId,
@@ -200,11 +220,14 @@ export async function runHistoryImportCommand(
         .importApprovedSource(
           approveHermesHistory(candidate, options.personId, profileId, requestedAt, scopeId)
         );
-    } else {
+    } else if (candidate.application === "cordis") {
       imported = await new CordisHistoryImporter(store, { clock: () => requestedAt })
         .importApprovedSource(
           approveCordisHistory(candidate, options.personId, profileId, requestedAt, scopeId)
         );
+    } else {
+      imported = await new GrokCliHistoryImporter(store, { clock: () => requestedAt })
+        .importApprovedSource(approveGrokCliHistory(candidate, options.personId, profileId, requestedAt));
     }
     const [events, checkpoints] = await Promise.all([
       store.listCanonicalEvents(options.personId),
@@ -225,8 +248,8 @@ export async function runHistoryImportCommand(
 function parseArgs(args: string[]): HistoryImportCommandOptions {
   const values = readFlags(args);
   const source = values.get("--source");
-  if (source !== "claude-code" && source !== "openclaw" && source !== "hermes" && source !== "cordis") {
-    throw new Error("Missing or unsupported --source. Use claude-code, openclaw, hermes, or cordis.");
+  if (source !== "claude-code" && source !== "openclaw" && source !== "hermes" && source !== "cordis" && source !== "grok-cli") {
+    throw new Error("Missing or unsupported --source. Use claude-code, openclaw, hermes, cordis, or grok-cli.");
   }
   const sourcePath = values.get("--root");
   const databasePath = values.get("--db");
@@ -243,8 +266,13 @@ function parseArgs(args: string[]): HistoryImportCommandOptions {
     approvedCandidateId,
     personId,
     profileId: values.get("--profile") ?? "default",
-    scopeId: values.get("--scope") ?? "personal"
+    scopeId: values.get("--scope")
   };
+}
+
+function requireGrokScope(candidateScope: string, requestedScope: string | undefined): string {
+  if (requestedScope !== undefined && requestedScope !== candidateScope) throw new Error("Grok workspace scope cannot be overridden");
+  return candidateScope;
 }
 
 export async function main(argv: string[]): Promise<void> {

@@ -189,7 +189,7 @@ export class FaultBoundaryInjector {
   }
 }
 
-type SupportedApplication = "codex" | "claude-code" | "openclaw" | "hermes";
+type SupportedApplication = "codex" | "claude-code" | "openclaw" | "hermes" | "grok-cli";
 
 export interface SyntheticApprovedSource {
   application: SupportedApplication;
@@ -212,6 +212,7 @@ export interface SyntheticDaemonSources {
   claudeCode: SyntheticApprovedSource;
   openClaw: SyntheticApprovedSource;
   hermes: SyntheticApprovedSource;
+  grokCli: SyntheticApprovedSource;
   cleanup(): Promise<void>;
 }
 
@@ -224,12 +225,14 @@ export async function createSyntheticApprovedSources(
   const claudeCode = await createSyntheticClaudeCodeSource(shared);
   const openClaw = await createSyntheticOpenClawSource(shared);
   const hermes = await createSyntheticHermesSource(shared);
+  const grokCli = await createSyntheticGrokCliSource(shared);
   return {
     tempRoot,
     codex,
     claudeCode,
     openClaw,
     hermes,
+    grokCli,
     cleanup: async () => rm(tempRoot, { recursive: true, force: true })
   };
 }
@@ -307,6 +310,23 @@ export async function createSyntheticHermesSource(
   `);
   database.close();
   return approvedSource("hermes", "hermes-state-sqlite", rootPath, nativePath, options);
+}
+
+export async function createSyntheticGrokCliSource(
+  options: SyntheticSourceOptions = {}
+): Promise<SyntheticApprovedSource> {
+  const root = options.root ?? await mkdtemp(join(tmpdir(), "daemon-grok-cli-"));
+  const scopeId = "/scope/daemon-grok";
+  const rootPath = join(root, "grok-cli", "sessions", encodeURIComponent(scopeId));
+  const sessionPath = join(rootPath, "daemon-grok-session");
+  const nativePath = join(sessionPath, "chat_history.jsonl");
+  await writeResource(nativePath, `${JSON.stringify({
+    type: "user", id: "grok-daemon-event", content: "Synthetic Grok event."
+  })}\n`);
+  await writeResource(join(sessionPath, "events.jsonl"), `${JSON.stringify({
+    turn_number: 1, ts: FIXED_NOW
+  })}\n`);
+  return approvedSource("grok-cli", "grok-cli-session-jsonl", rootPath, nativePath, { ...options, scopeId });
 }
 
 export function normalizePersistedDaemonState<T>(value: T): T {

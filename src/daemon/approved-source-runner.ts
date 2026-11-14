@@ -8,6 +8,7 @@ import { ClaudeHistoryImporter } from "../imports/claude-importer.js";
 import { OpenClawHistoryImporter } from "../imports/openclaw-importer.js";
 import { CordisHistoryImporter } from "../imports/cordis-importer.js";
 import { HermesHistoryImporter } from "../imports/hermes-importer.js";
+import { GrokCliHistoryImporter } from "../imports/grok-cli-importer.js";
 
 interface BatchImporter {
   importApprovedGrantBatch(grant: SourceGrant, options: ApprovedGrantBatchOptions): Promise<ImportBatchReceipt>;
@@ -19,6 +20,7 @@ export interface ApprovedSourceRunnerImporters {
   openClaw: BatchImporter;
   hermes: BatchImporter;
   cordis: BatchImporter;
+  grokCli: BatchImporter;
 }
 
 export interface ApprovedSourceRunnerOptions {
@@ -52,7 +54,8 @@ export class ApprovedSourceRunner {
       claudeCode: new ClaudeHistoryImporter(store, importerOptions),
       openClaw: new OpenClawHistoryImporter(store, importerOptions),
       hermes: new HermesHistoryImporter(store, importerOptions),
-      cordis: new CordisHistoryImporter(store, importerOptions)
+      cordis: new CordisHistoryImporter(store, importerOptions),
+      grokCli: new GrokCliHistoryImporter(store, importerOptions)
     };
   }
 
@@ -95,6 +98,7 @@ export class ApprovedSourceRunner {
     if (pair === "openclaw/openclaw-session-jsonl") return this.importers.openClaw;
     if (pair === "hermes/hermes-state-sqlite") return this.importers.hermes;
     if (pair === "cordis/cordis-journal-sqlite") return this.importers.cordis;
+    if (pair === "grok-cli/grok-cli-session-jsonl") return this.importers.grokCli;
     return null;
   }
 }
