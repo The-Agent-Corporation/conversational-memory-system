@@ -12,7 +12,7 @@ import { approveOpenClawHistory, discoverOpenClawHistory } from "./openclaw-disc
 import { OpenClawHistoryImporter } from "./openclaw-importer.js";
 import { approveGrokCliHistory, discoverGrokCliHistory } from "./grok-cli-discovery.js";
 import { GrokCliHistoryImporter } from "./grok-cli-importer.js";
-import type { HistoryImportResult } from "./types.js";
+import type { ConfiguredHistorySource, HistoryImportResult } from "./types.js";
 import { SourceLifecycleService } from "../service/source-lifecycle-service.js";
 import type { ProfileAuthority } from "../mcp/authority.js";
 import { InMemoryStore } from "../storage/in-memory-store.js";
@@ -43,8 +43,6 @@ export interface HistoryImportCommandResult {
   canonicalEventCount: number;
   checkpointCount: number;
 }
-
-export type ConfiguredHistorySource = "codex" | "claude-code" | "openclaw" | "hermes" | "cordis" | "grok-cli";
 
 export interface ConfiguredHistoryImportRequest {
   sourceAlias: string;

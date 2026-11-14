@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -79,6 +79,72 @@ describe("Grok CLI history import", () => {
       .rejects.toThrow("does not match");
   });
 
+  it("replays checkpointed records when a timestamp sidecar arrives", async () => {
+    const fixture = await createFixture();
+    await unlink(fixture.eventsPath);
+    const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
+      .find((item) => item.scopeId === "/workspace/alpha")!;
+    const store = new InMemoryStore();
+    const importer = new GrokCliHistoryImporter(store, { clock: () => NOW });
+    const approval = approveGrokCliHistory(candidate, "person_1", "default", NOW);
+
+    await importer.importApprovedSource(approval);
+    expect((await store.listCanonicalEvents("person_1"))[0]?.metadata.sourceMetadata)
+      .toMatchObject({ timestampSource: "chat_history_mtime", timestampConfidence: "low" });
+
+    await writeFile(fixture.eventsPath, `${JSON.stringify({ turn_number: 1, ts: "2026-07-01T10:00:00.000Z" })}\n`);
+    expect((await importer.importApprovedSource(approval)).messagesProcessed).toBe(4);
+    const updated = await store.listCanonicalEvents("person_1");
+    expect(updated.slice(0, 3).map((event) => event.occurredAt)).toEqual([
+      "2026-07-01T10:00:00.000Z",
+      "2026-07-01T10:00:00.000Z",
+      "2026-07-01T10:00:00.000Z"
+    ]);
+    expect(updated[0]?.metadata.sourceMetadata)
+      .toMatchObject({ timestampSource: "events_turn", timestampConfidence: "high" });
+  });
+
+  it("treats an events sidecar symlink as absent without reading or quarantining its target", async () => {
+    const fixture = await createFixture();
+    await unlink(fixture.eventsPath);
+    await symlink(join(fixture.root, ".grok", "auth.json"), fixture.eventsPath);
+    const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
+      .find((item) => item.scopeId === "/workspace/alpha")!;
+    const store = new InMemoryStore();
+
+    await new GrokCliHistoryImporter(store, { clock: () => NOW })
+      .importApprovedSource(approveGrokCliHistory(candidate, "person_1", "default", NOW));
+
+    expect(JSON.stringify(await store.listQuarantineRecords("person_1", candidate.id))).not.toContain("SECRET_AUTH");
+    expect((await store.listCanonicalEvents("person_1"))[0]?.metadata.sourceMetadata)
+      .toMatchObject({ timestampSource: "chat_history_mtime" });
+  });
+
+  it("rejects a durable workspace grant when its directory is replaced by a symlink", async () => {
+    const fixture = await createFixture();
+    const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
+      .find((item) => item.scopeId === "/workspace/alpha")!;
+    const store = new InMemoryStore();
+    const grant = await new SourceLifecycleService(store).approve({
+      personId: "person_1", candidateId: candidate.id, application: candidate.application,
+      format: candidate.format, sourceLocator: candidate.rootPath, profileId: "default",
+      scopeId: candidate.scopeId, approvedAt: NOW
+    });
+    const originalWorkspace = `${candidate.rootPath}-approved`;
+    const outsideSessions = join(fixture.root, "outside", "sessions");
+    const outsideWorkspace = join(outsideSessions, encodeURIComponent(candidate.scopeId));
+    await rename(candidate.rootPath, originalWorkspace);
+    await mkdir(join(outsideWorkspace, "external-session"), { recursive: true });
+    await writeFile(join(outsideWorkspace, "external-session", "chat_history.jsonl"),
+      `${JSON.stringify({ type: "user", content: "OUTSIDE_WORKSPACE_CONTENT" })}\n`);
+    await symlink(outsideWorkspace, candidate.rootPath);
+
+    await expect(new GrokCliHistoryImporter(store).importApprovedGrantBatch(grant, {
+      authority: { kind: "foreground", personId: "person_1", operation: "approved-import" }
+    })).rejects.toThrow("regular directory");
+    expect(JSON.stringify(await store.listCanonicalEvents("person_1"))).not.toContain("OUTSIDE_WORKSPACE_CONTENT");
+  });
+
   it("allows configured ingestion only for the approved workspace alias and exact authority scope", async () => {
     const fixture = await createFixture();
     const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
@@ -127,11 +193,13 @@ async function createFixture() {
       tool_calls: [{ id: "call-1", type: "function", function: { name: "shell", arguments: "{\"password\":\"tool-secret\"}" } }] },
     { type: "reasoning", summary: "HIDDEN_REASONING", encrypted_content: "ENCRYPTED_PAYLOAD" },
     { type: "tool", tool_call_id: "call-1", content: "SECRET_TOOL_RESULT" },
+    { type: "assistant", content: [] },
     "not-an-object",
     { type: "user", id: "user-2", content: "Second turn" }
   ];
   await writeFile(chatPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
-  await writeFile(join(alphaSession, "events.jsonl"), [
+  const eventsPath = join(alphaSession, "events.jsonl");
+  await writeFile(eventsPath, [
     JSON.stringify({ turn_number: 1, ts: "2026-07-01T10:00:00.000Z" }),
     "{malformed"
   ].join("\n") + "\n");
@@ -142,5 +210,5 @@ async function createFixture() {
   await writeFile(join(sessionsRoot, "session_search.sqlite"), "not a database");
   await writeFile(join(root, ".grok", "auth.json"), "SECRET_AUTH");
   await symlink(alphaSession, join(beta, "linked-session"));
-  return { root, sessionsRoot, chatPath };
+  return { root, sessionsRoot, chatPath, eventsPath };
 }

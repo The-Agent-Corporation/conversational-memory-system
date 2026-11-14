@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { IsoDateTimeSchema } from "../domain/types.js";
 
+export const CONFIGURED_HISTORY_SOURCES = [
+  "codex", "claude-code", "openclaw", "hermes", "cordis", "grok-cli"
+] as const;
+
+export type ConfiguredHistorySource = typeof CONFIGURED_HISTORY_SOURCES[number];
+
 export const CodexHistoryCandidateSchema = z.object({
   id: z.string().min(1),
   application: z.literal("codex"),

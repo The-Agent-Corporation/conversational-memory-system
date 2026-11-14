@@ -1,4 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { ConversationTurnEvent } from "../domain/events.js";
 import type { SourceGrant } from "../domain/source-lifecycle.js";
@@ -37,7 +37,7 @@ export class GrokCliHistoryImporter {
   }
 
   async importApprovedSource(approval: GrokHistoryApproval): Promise<HistoryImportResult> {
-    return this.importSource(approval, false);
+    return this.importSource(approval);
   }
 
   async importApprovedGrantBatch(grant: SourceGrant, options: ApprovedGrantBatchOptions = {}): Promise<ImportBatchReceipt> {
@@ -58,17 +58,22 @@ export class GrokCliHistoryImporter {
       profileId: grant.profileId,
       scopeId: grant.scopeId,
       approvedAt: grant.approvedAt
-    }, true);
+    });
     return commitStagedGrantBatch(this.store, staging, grant, clock, options);
   }
 
-  private async importSource(approval: GrokHistoryApproval, trustDurableGrant: boolean): Promise<HistoryImportResult> {
+  private async importSource(approval: GrokHistoryApproval): Promise<HistoryImportResult> {
     const parsed = GrokHistoryApprovalSchema.parse(approval);
-    const workspace = await realpath(resolve(parsed.rootPath));
+    const approvedPath = resolve(parsed.rootPath);
+    const approvedMetadata = await lstat(approvedPath);
+    if (!approvedMetadata.isDirectory() || approvedMetadata.isSymbolicLink()) {
+      throw new Error("Approved Grok workspace must remain a regular directory");
+    }
+    const workspace = await realpath(approvedPath);
     const sessionsRoot = await realpath(dirname(workspace));
     const decodedScope = decodeGrokWorkspaceName(basename(workspace));
-    if (basename(sessionsRoot) !== "sessions" || decodedScope !== parsed.scopeId ||
-        (!trustDurableGrant && grokCandidateId(workspace) !== parsed.candidateId)) {
+    if (workspace !== approvedPath || basename(sessionsRoot) !== "sessions" || decodedScope !== parsed.scopeId ||
+        grokCandidateId(workspace) !== parsed.candidateId) {
       throw new Error("Approved Grok workspace does not match its discovered candidate and scope");
     }
 
@@ -87,17 +92,18 @@ export class GrokCliHistoryImporter {
       await maybeYield();
       result.filesScanned += 1;
       const sessionId = basename(dirname(file.absolutePath));
-      const timestamps = await this.readTurnTimestamps(dirname(file.absolutePath), file.resourcePath, parsed, quarantine, result);
+      const sidecar = await this.readTurnTimestamps(dirname(file.absolutePath), file.resourcePath, parsed, quarantine, result);
       const metadata = await stat(file.absolutePath);
       const fallbackTimestamp = metadata.mtime.toISOString();
       const checkpointId = importCheckpointId(parsed.personId, parsed.candidateId, file.resourcePath);
       const previous = await this.store.getImportCheckpoint(checkpointId);
       const canResume = previous !== null && fileIdentityMatches(previous.fileIdentity, metadata) &&
-        previous.parserVersion === PARSER_VERSION && metadata.size >= previous.byteOffset;
+        previous.parserVersion === PARSER_VERSION && previous.rowHighWaterMark === sidecar.identity &&
+        metadata.size >= previous.byteOffset;
       const startingOffset = canResume ? previous.byteOffset : 0;
       let committedOffset = startingOffset;
       let recordIndex = canResume ? previous.recordIndex : 0;
-      let turnNumber = canResume ? checkpointTurnNumber(previous?.nativeSessionId, sessionId) : firstTurnNumber(timestamps) - 1;
+      let turnNumber = canResume ? checkpointTurnNumber(previous?.nativeSessionId, sessionId) : firstTurnNumber(sidecar.timestamps) - 1;
 
       for await (const line of readCompleteLines(file.absolutePath, startingOffset)) {
         await maybeYield();
@@ -105,7 +111,7 @@ export class GrokCliHistoryImporter {
         recordIndex += 1;
         const classified = classifyRecord(line.content);
         if (classified.startsTurn) turnNumber += 1;
-        const joinedTimestamp = timestamps.get(turnNumber);
+        const joinedTimestamp = sidecar.timestamps.get(turnNumber);
         const parsedLine = this.parseRecord(classified, parsed, file.resourcePath, sessionId, recordIndex, turnNumber,
           joinedTimestamp ?? fallbackTimestamp, joinedTimestamp ? "events_turn" : "chat_history_mtime");
         if (parsedLine.quarantineReason) {
@@ -129,7 +135,8 @@ export class GrokCliHistoryImporter {
       await this.store.saveImportCheckpoint(ImportCheckpointSchema.parse({
         id: checkpointId, personId: parsed.personId, candidateId: parsed.candidateId,
         resourcePath: file.resourcePath, fileIdentity: composeFileIdentity(metadata), byteOffset: committedOffset,
-        recordIndex, nativeSessionId: `${sessionId}|${turnNumber}`, parserVersion: PARSER_VERSION, updatedAt: this.clock()
+        recordIndex, nativeSessionId: `${sessionId}|${turnNumber}`, parserVersion: PARSER_VERSION,
+        rowHighWaterMark: sidecar.identity, updatedAt: this.clock()
       }));
     }
     return result;
@@ -141,11 +148,17 @@ export class GrokCliHistoryImporter {
     approval: GrokHistoryApproval,
     quarantine: QuarantineService,
     result: HistoryImportResult
-  ): Promise<Map<number, string>> {
+  ): Promise<{ timestamps: Map<number, string>; identity: string }> {
     const timestamps = new Map<number, string>();
     let index = 0;
+    const sidecarPath = resolve(sessionPath, "events.jsonl");
     try {
-      for await (const line of readCompleteLines(resolve(sessionPath, "events.jsonl"), 0)) {
+      const metadata = await lstat(sidecarPath);
+      if (!metadata.isFile() || metadata.isSymbolicLink() || await realpath(sidecarPath) !== sidecarPath) {
+        return { timestamps, identity: "absent" };
+      }
+      const identity = `${composeFileIdentity(metadata)}:${metadata.size}:${Math.trunc(metadata.mtimeMs)}`;
+      for await (const line of readCompleteLines(sidecarPath, 0)) {
         index += 1;
         let value: unknown;
         try { value = JSON.parse(line.content); } catch { value = null; }
@@ -163,10 +176,11 @@ export class GrokCliHistoryImporter {
           result.recordsQuarantined += 1;
         }
       }
+      return { timestamps, identity };
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
-    return timestamps;
+    return { timestamps, identity: "absent" };
   }
 
   private parseRecord(
@@ -209,7 +223,7 @@ export class GrokCliHistoryImporter {
         sequence: recordIndex * 1_000 + index + 1, createdAt,
         parentId: content !== null ? nativeEventId : null, metadata, sanitizeContent: this.sanitizeContent }));
     });
-    return events.length > 0 ? { events } : { events: [], quarantineReason: "unsupported_record" };
+    return { events };
   }
 }
 

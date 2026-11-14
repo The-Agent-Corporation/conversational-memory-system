@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SourceGrant } from "../../src/domain/source-lifecycle.js";
+import { grokCandidateId } from "../../src/imports/grok-cli-discovery.js";
 import type {
   DaemonNotification,
   NotificationApplicationIdentity,
@@ -363,7 +364,9 @@ function approvedSource(
   const personId = options.personId ?? "person_daemon";
   const profileId = options.profileId ?? "default";
   const approvedAt = options.approvedAt ?? FIXED_NOW;
-  const candidateId = `${application}_candidate_synthetic`;
+  const candidateId = application === "grok-cli"
+    ? grokCandidateId(rootPath)
+    : `${application}_candidate_synthetic`;
   const id = `grant_${createHash("sha256").update(JSON.stringify([personId, candidateId])).digest("hex")}`;
   return {
     application,

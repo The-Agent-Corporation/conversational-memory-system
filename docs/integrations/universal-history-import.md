@@ -1,6 +1,6 @@
 # Universal Agent History Import
 
-The local bootstrap supports Codex, Claude Code, OpenClaw, and Hermes. Every source uses a two-step flow: metadata-only discovery, followed by import with the exact candidate ID as explicit approval.
+The local bootstrap supports Codex, Claude Code, OpenClaw, Hermes, Cordis, and Grok CLI. Every source uses a two-step flow: metadata-only discovery, followed by import with the exact candidate ID as explicit approval.
 
 Native files and databases remain in their original locations and are opened read-only. Imported events are copied into the person-level canonical timeline with native session and event provenance.
 
@@ -14,6 +14,7 @@ Tool calls are stored as compact assistant events containing the tool name and a
 | Claude Code | `~/.claude` | `projects/**/*.jsonl`, including sidechains | root prompt index, progress/hooks, tool results, symlinks |
 | OpenClaw | `~/.openclaw` | `agents/<agentId>/sessions/*.jsonl` | `sessions.json`, cron logs, nested sidecars, tool results, out-of-root overrides |
 | Hermes | `~/.hermes/state.db` | `sessions`, user/assistant messages, and capability-detected tool calls | tool-result rows, reasoning columns, legacy JSONL duplicates |
+| Grok CLI | `~/.grok/sessions` | direct `<encoded-cwd>/<session-id>/chat_history.jsonl` transcripts | reasoning, encrypted content, tool results, system prompts, indexes, uploads, auth data, symlinks |
 
 ## Source Lifecycle
 
@@ -86,6 +87,22 @@ Hermes discovery and import open the source database read-only. New message rows
 
 Codex retains its dedicated commands; see [Codex History Bootstrap](./codex-history.md).
 
+## Grok CLI
+
+Discovery returns one candidate per encoded workspace directory. Review the metadata-only list and approve only the workspace intended for import:
+
+```bash
+npm run memory:grok:discover -- --root ~/.grok/sessions
+
+npm run memory:grok:import -- \
+  --root ~/.grok/sessions/%2Fworkspace%2Fexample \
+  --db /path/to/personal-memory.sqlite \
+  --person person_default \
+  --approve grok-cli_<candidate-hash>
+```
+
+The decoded working directory is the candidate's immutable scope. Omit `--scope`, or pass exactly that decoded path; a different value is rejected. Import remains blocked until the specific workspace candidate ID is explicitly approved.
+
 ## Contract the Unified Timeline
 
 After any import, process all approved sources for the person as one continuous historical conversation:
@@ -102,7 +119,7 @@ npm run memory:status -- \
 
 Bootstrap is incremental and idempotent. Native session boundaries remain source provenance; summaries, anchors, boxes, and traces operate across the unified chronology. Box and trace changes remain proposals until explicitly reviewed.
 
-Each approved source has one scope, defaulting to `personal`. Use stable identifiers such as `workspace:<name>`, `client:<id>`, or `case:<id>` without putting sensitive names or document content into the scope itself. Repeated imports must pass the same scope. Strict retrieval requires a person ID plus an explicit scope allow-list.
+Each approved source has one scope, defaulting to `personal`. Grok CLI is the exception: its scope is the decoded workspace path and cannot be overridden. For other sources, use stable identifiers such as `workspace:<name>`, `client:<id>`, or `case:<id>` without putting sensitive names or document content into the scope itself. Repeated imports must pass the same scope. Strict retrieval requires a person ID plus an explicit scope allow-list.
 
 ## Safety Boundaries
 

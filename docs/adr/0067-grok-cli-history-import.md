@@ -28,8 +28,9 @@ representation and retrieval decision.
 Turn timestamps are joined by `turn_number` from `events.jsonl`. Missing or unusable timestamps fall
 back to the transcript mtime with explicit low-confidence provenance. Accepted text and tool-call
 summaries pass through the import redactor. Malformed or unsupported transcript and event records use
-the bounded quarantine contract from ADR 0045. Checkpoints and deterministic native identities make
-replay idempotent under ADR 0053.
+the bounded quarantine contract from ADR 0045. The checkpoint records the timestamp sidecar identity;
+when that input appears or changes, the transcript is replayed so authoritative timestamps replace
+earlier fallbacks. Checkpoints and deterministic native identities make replay idempotent under ADR 0053.
 
 Discovery is metadata-only. Import is read-only against Grok's files, and a real source remains
 blocked until its per-workspace candidates receive explicit owner approval.

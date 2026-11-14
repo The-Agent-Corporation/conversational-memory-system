@@ -52,6 +52,7 @@ describe("ApprovedSourceRunner", () => {
         authority: daemonAuthority("token-b")
       });
       const replay = await replacement.runGrant(source.grant.personId, source.grant.candidateId);
+      expect(replay, source.application).toMatchObject({ ok: true });
       expect(replay.ok && replay.receipt.canonicalEventIds).toHaveLength(1);
       const idempotent = await replacement.runGrant(source.grant.personId, source.grant.candidateId);
       expect(idempotent.ok && idempotent.receipt.canonicalEventIds).toEqual([]);
