@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { approveGrokCliHistory, discoverGrokCliHistory } from "../../src/imports/grok-cli-discovery.js";
 import { GrokCliHistoryImporter } from "../../src/imports/grok-cli-importer.js";
+import { planConfiguredHistoryImport } from "../../src/imports/history-import-command.js";
+import { createProfileAuthority } from "../../src/mcp/authority.js";
+import { SourceLifecycleService } from "../../src/service/source-lifecycle-service.js";
 import { InMemoryStore } from "../../src/storage/in-memory-store.js";
 
 const NOW = "2026-11-14T12:00:00.000Z";
@@ -74,6 +77,36 @@ describe("Grok CLI history import", () => {
     const approval = { ...approveGrokCliHistory(candidate, "person_1", "default", NOW), scopeId: "/workspace/other" };
     await expect(new GrokCliHistoryImporter(new InMemoryStore()).importApprovedSource(approval))
       .rejects.toThrow("does not match");
+  });
+
+  it("allows configured ingestion only for the approved workspace alias and exact authority scope", async () => {
+    const fixture = await createFixture();
+    const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
+      .find((item) => item.scopeId === "/workspace/alpha")!;
+    const store = new InMemoryStore();
+    await new SourceLifecycleService(store).approve({
+      personId: "person_1", candidateId: candidate.id, application: candidate.application,
+      format: candidate.format, sourceLocator: candidate.rootPath, profileId: "default",
+      scopeId: candidate.scopeId, approvedAt: NOW
+    });
+    const authority = createProfileAuthority({
+      profileName: "default", databasePath: "/tmp/memory.sqlite", personId: "person_1",
+      allowedScopeIds: [candidate.scopeId], ingestScopeId: candidate.scopeId,
+      sourceRoots: { grok: candidate.rootPath, parent: fixture.sessionsRoot }, scopeAliases: {}, allowedHosts: null
+    });
+
+    await expect(planConfiguredHistoryImport(store, authority, {
+      sourceAlias: "grok", source: "grok-cli", requestedAt: NOW
+    })).resolves.toMatchObject({ candidateId: candidate.id, normalizedParameters: { ingestScopeId: candidate.scopeId } });
+    await expect(planConfiguredHistoryImport(store, authority, {
+      sourceAlias: "parent", source: "grok-cli", requestedAt: NOW
+    })).rejects.toThrow("UNAUTHORIZED_OR_NOT_FOUND");
+    const wrongScope = createProfileAuthority({
+      ...authority, allowedScopeIds: ["/workspace/other"], ingestScopeId: "/workspace/other"
+    });
+    await expect(planConfiguredHistoryImport(store, wrongScope, {
+      sourceAlias: "grok", source: "grok-cli", requestedAt: NOW
+    })).rejects.toThrow("UNAUTHORIZED_OR_NOT_FOUND");
   });
 });
 
