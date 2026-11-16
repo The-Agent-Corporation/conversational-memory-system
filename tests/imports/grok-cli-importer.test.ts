@@ -81,7 +81,8 @@ describe("Grok CLI history import", () => {
     const fixture = await createFixture();
     const protectedPayloads = [
       "MALFORMED_ENCRYPTED_PAYLOAD", "ESCAPED_PREFIX_PAYLOAD", "ESCAPED_INTERIOR_PAYLOAD", "ESCAPED_ALL_PAYLOAD",
-      "ESCAPED_AFTER_BAD_KEY_PAYLOAD", "REASONING_SUMMARY_PAYLOAD", "SYSTEM_PAYLOAD", "UPPERCASE_HEX_PAYLOAD"
+      "ESCAPED_AFTER_BAD_KEY_PAYLOAD", "REASONING_SUMMARY_PAYLOAD", "SYSTEM_PAYLOAD", "UPPERCASE_HEX_PAYLOAD",
+      "UPPERCASE_HEX_ENCRYPTED_PAYLOAD"
     ];
     await appendFile(fixture.chatPath,
       `{"type":"reasoning","\\u0065ncrypted_content":"${protectedPayloads[1]}"\n` +
@@ -91,6 +92,7 @@ describe("Grok CLI history import", () => {
       `{"type":"reasoning","summary":"${protectedPayloads[5]}"\n` +
       `{"role":"system","content":"${protectedPayloads[6]}"\n` +
       `{"type":"reasoning","\\u0065ncrypted_cont\\u0045nt":"${protectedPayloads[7]}"\n` +
+      `{"type":"user","encrypted\\u005Fcontent":"${protectedPayloads[8]}"\n` +
       `{"type":"user","content":"SAFE_MALFORMED_PAYLOAD"\n`);
     const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
       .find((item) => item.scopeId === "/workspace/alpha")!;
