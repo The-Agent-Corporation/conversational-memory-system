@@ -238,8 +238,15 @@ function classifyRecord(line: string): ClassifiedRecord {
   if (line.trim().length === 0) return { record: null, startsTurn: false, recognizedExclusion: true };
   let value: unknown;
   try { value = JSON.parse(line); } catch {
-    if (containsJsonPropertyName(line, "encrypted_content")) {
-      return { record: null, startsTurn: false, recognizedExclusion: true };
+    const propertyTokens = /"((?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*)"\s*:\s*(?:"((?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*)")?/gu;
+    for (const [, encodedName, encodedValue] of line.matchAll(propertyTokens)) {
+      const name = JSON.parse(`"${encodedName}"`);
+      const stringValue = encodedValue === undefined ? undefined : JSON.parse(`"${encodedValue}"`);
+      if (name === "encrypted_content" || name === "summary" ||
+          (name === "role" || name === "type") &&
+          (stringValue === "reasoning" || stringValue === "system" || stringValue === "tool" || stringValue === "tool_result")) {
+        return { record: null, startsTurn: false, recognizedExclusion: true };
+      }
     }
     return { record: null, startsTurn: false, recognizedExclusion: false, quarantineReason: "malformed_json" };
   }
@@ -249,14 +256,6 @@ function classifyRecord(line: string): ClassifiedRecord {
   const exclusion = role === "reasoning" || role === "tool" || role === "tool_result" || role === "system" ||
     "encrypted_content" in record || "summary" in record && role !== "assistant";
   return { record, startsTurn: role === "user", recognizedExclusion: exclusion };
-}
-
-function containsJsonPropertyName(line: string, propertyName: string): boolean {
-  const propertyTokens = /"((?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-f]{4}))*)"\s*:/giu;
-  for (const [, encoded] of line.matchAll(propertyTokens)) {
-    if (JSON.parse(`"${encoded}"`) === propertyName) return true;
-  }
-  return false;
 }
 
 function emptyResult(): HistoryImportResult {
