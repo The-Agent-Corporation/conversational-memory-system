@@ -296,6 +296,7 @@ export const CommitHistoryImportInputSchema = z.object({
   expectedSource: MemorySourceSchema.nullable(),
   expectedSourceStateFingerprint: IdSchema,
   expectedCheckpoint: ImportCheckpointSchema.nullable(),
+  expectedCanonicalEvents: z.array(CanonicalEventSchema).default([]),
   expectedGrant: SourceGrantSchema,
   targetCanonicalEventIds: IdListSchema,
   nextSources: z.array(MemorySourceSchema),
@@ -307,6 +308,7 @@ export const CommitHistoryImportInputSchema = z.object({
   receipt: MutationCommitReceiptSchema
 }).strict().superRefine((input, context) => {
   const owned = [input.expectedSource, input.expectedCheckpoint, input.expectedGrant, input.nextCheckpoint,
+    ...input.expectedCanonicalEvents,
     ...input.nextSources, ...input.nextCanonicalEvents, ...input.auditEvents].filter(Boolean) as Array<{ personId: string }>;
   if (owned.some((item) => item.personId !== input.personId)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "History import crosses a person boundary" });
@@ -323,6 +325,11 @@ export const CommitHistoryImportInputSchema = z.object({
   assertIdsEqual(input.targetCanonicalEventIds, input.effects.eventIds, context, ["targetCanonicalEventIds"]);
   assertIdsEqual(input.nextSources.map((item) => item.id), input.effects.sourceIds, context, ["effects", "sourceIds"]);
   assertIdsEqual(input.nextCanonicalEvents.map((item) => item.id), input.effects.eventIds, context, ["effects", "eventIds"]);
+  const nextEventIds = new Set(input.nextCanonicalEvents.map((item) => item.id));
+  if (input.expectedCanonicalEvents.some((item) => !nextEventIds.has(item.id)) ||
+      new Set(input.expectedCanonicalEvents.map((item) => item.id)).size !== input.expectedCanonicalEvents.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Expected canonical events must be unique update targets", path: ["expectedCanonicalEvents"] });
+  }
   assertIdsEqual([input.nextCheckpoint.id], input.effects.checkpointIds, context, ["effects", "checkpointIds"]);
   assertIdsEqual(input.auditEvents.map((item) => item.id), input.effects.auditEventIds, context, ["effects", "auditEventIds"]);
   if (input.receipt.operation !== input.operation || input.receipt.personId !== input.personId || input.receipt.targetId !== input.candidateId) {

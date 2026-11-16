@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { IsoDateTimeSchema } from "../domain/types.js";
 
+export const CONFIGURED_HISTORY_SOURCES = [
+  "codex", "claude-code", "openclaw", "hermes", "cordis", "grok-cli"
+] as const;
+
+export type ConfiguredHistorySource = typeof CONFIGURED_HISTORY_SOURCES[number];
+
 export const CodexHistoryCandidateSchema = z.object({
   id: z.string().min(1),
   application: z.literal("codex"),
@@ -47,6 +53,14 @@ export const OpenClawHistoryCandidateSchema = z.object({
   ...FileHistoryCandidateFields
 });
 
+export const GrokHistoryCandidateSchema = z.object({
+  id: z.string().min(1),
+  application: z.literal("grok-cli"),
+  format: z.literal("grok-cli-session-jsonl"),
+  scopeId: z.string().min(1),
+  ...FileHistoryCandidateFields
+});
+
 export const HermesHistoryCandidateSchema = z.object({
   id: z.string().min(1),
   application: z.literal("hermes"),
@@ -78,6 +92,17 @@ export const OpenClawHistoryApprovalSchema = z.object({
   rootPath: z.string().min(1),
   profileId: z.string().min(1),
   scopeId: z.string().min(1).default("personal"),
+  approvedAt: IsoDateTimeSchema
+});
+
+export const GrokHistoryApprovalSchema = z.object({
+  candidateId: z.string().min(1),
+  personId: z.string().min(1),
+  application: z.literal("grok-cli"),
+  format: z.literal("grok-cli-session-jsonl"),
+  rootPath: z.string().min(1),
+  profileId: z.string().min(1),
+  scopeId: z.string().min(1),
   approvedAt: IsoDateTimeSchema
 });
 
@@ -119,9 +144,11 @@ export type HistorySourceApproval = z.infer<typeof HistorySourceApprovalSchema>;
 export type ImportCheckpoint = z.infer<typeof ImportCheckpointSchema>;
 export type ClaudeHistoryCandidate = z.infer<typeof ClaudeHistoryCandidateSchema>;
 export type OpenClawHistoryCandidate = z.infer<typeof OpenClawHistoryCandidateSchema>;
+export type GrokHistoryCandidate = z.infer<typeof GrokHistoryCandidateSchema>;
 export type HermesHistoryCandidate = z.infer<typeof HermesHistoryCandidateSchema>;
 export type ClaudeHistoryApproval = z.infer<typeof ClaudeHistoryApprovalSchema>;
 export type OpenClawHistoryApproval = z.infer<typeof OpenClawHistoryApprovalSchema>;
+export type GrokHistoryApproval = z.infer<typeof GrokHistoryApprovalSchema>;
 export type HermesHistoryApproval = z.infer<typeof HermesHistoryApprovalSchema>;
 
 export const CordisHistoryCandidateSchema = z.object({

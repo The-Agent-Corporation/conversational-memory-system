@@ -4,16 +4,15 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeHermesMcpProfile } from "./profile-file.js";
 import { SqliteStore } from "../../storage/sqlite-store.js";
-import type { HermesIngestResult } from "./ingest-command.js";
-import { ingestHermesTimelineRow } from "./ingest-command.js";
-import type { HermesInjectResult } from "./inject-command.js";
-import { injectHermesMemory } from "./inject-command.js";
-import type { HermesResumeCommandResult } from "./resume-command.js";
-import { resumeHermesMemory } from "./resume-command.js";
+import type { InjectionPacket } from "../../domain/types.js";
+import type { ResumeResult } from "../../resume/conversation-resumer.js";
+import { HermesMemoryAdapter } from "./adapter.js";
+import { formatResumeContextBlock } from "./resume-command.js";
 import type { HermesSleepResult } from "./sleep-command.js";
 import { sleepHermesMemory } from "./sleep-command.js";
 import type { HermesProposalListResult } from "./proposals-list-command.js";
 import { listHermesProposals } from "./proposals-list-command.js";
+import { loadMemoryMcpProfile } from "../../mcp/profile-loader.js";
 
 export interface HermesSmokeHarnessOptions {
   databasePath?: string;
@@ -47,13 +46,22 @@ export interface HermesSmokeHarnessResult {
   databasePath: string;
   roscoeEnvironment: RoscoeMemoryEnvironment;
   ingestedTurnIds: string[];
-  compaction: HermesIngestResult;
-  injection: HermesInjectResult;
-  replay: HermesIngestResult;
-  resumeNotFound: boolean;
+  compaction: {
+    ok: true;
+    turnId: null;
+    completedTopic: string;
+    summaryId: string;
+    status: "COMPACTED";
+  };
+  injection: {
+    ok: true;
+    readOnly: false;
+    packet: InjectionPacket;
+    contextBlock: string;
+  };
   injectionCount: number;
   eventCount: number;
-  resume: HermesResumeCommandResult;
+  resume: ResumeResult & { ok: true; contextBlock: string };
   sleep: HermesSleepResult;
   proposals: HermesProposalListResult;
 }
@@ -64,7 +72,7 @@ export async function runHermesMemorySmokeHarness(
   const databasePath = options.databasePath ?? await defaultDatabasePath();
   const projectRoot = options.projectRoot ?? process.cwd();
   const profile = options.configPath && options.profileName
-    ? { configPath: options.configPath, profileName: options.profileName, databasePath }
+    ? { configPath: options.configPath, profileName: options.profileName }
     : await writeHermesMcpProfile({
       directory: dirname(databasePath),
       databasePath,
@@ -72,75 +80,73 @@ export async function runHermesMemorySmokeHarness(
       personId: "person_smoke",
       scopeId: "personal"
     });
-  const target = { configPath: profile.configPath, profileName: profile.profileName };
-  const firstInput = JSON.stringify(timelineRow({
+  const authority = await loadMemoryMcpProfile(profile);
+  if (resolve(authority.databasePath) !== resolve(databasePath)) {
+    throw new Error("Smoke harness database must match the selected MCP profile database");
+  }
+  const store = new SqliteStore(databasePath);
+  const adapter = new HermesMemoryAdapter(store, {
+    personId: authority.personId,
+    allowedScopeIds: authority.allowedScopeIds
+  });
+  const firstResult = await adapter.processTimelineRow(timelineRow({
     id: "default:1",
     sequence: 1,
     role: "user",
     content: "Let's talk about Smith PIP provider bill review."
   }));
-  const firstTurn = await ingestHermesTimelineRow({ ...target, input: firstInput });
-  const replay = await ingestHermesTimelineRow({ ...target, input: firstInput });
-  const secondTurn = await ingestHermesTimelineRow({
-    ...target,
-    input: JSON.stringify(timelineRow({
-      id: "default:2",
-      sequence: 2,
-      role: "assistant",
-      content: "The Smith PIP provider bill deadline is June 1."
-    }))
-  });
-  const control = await ingestHermesTimelineRow({
-    ...target,
-    input: JSON.stringify(timelineRow({
-      id: "default:3",
-      sequence: 3,
-      role: "user",
-      content: "/new",
-      created_at: "2024-05-04T12:45:00.000Z"
-    }))
-  });
-  const thirdTurn = await ingestHermesTimelineRow({
-    ...target,
-    input: JSON.stringify(timelineRow({
-      id: "default:4",
-      sequence: 4,
-      role: "user",
-      content: "Returning to Smith PIP provider bill review after new records.",
-      created_at: "2024-05-04T13:10:00.000Z"
-    }))
-  });
-  const fourthTurn = await ingestHermesTimelineRow({
-    ...target,
-    input: JSON.stringify(timelineRow({
-      id: "default:5",
-      sequence: 5,
-      role: "assistant",
-      content: "The Smith PIP provider bill follow-up should track the new records before June 15.",
-      created_at: "2024-05-04T13:11:00.000Z"
-    }))
-  });
-  const search = await injectHermesMemory({
-    ...target,
-    input: JSON.stringify({
-      query: "Can we resume Smith PIP demand timing?",
-      requested_at: "2024-05-04T13:00:00.000Z",
-      max_memory_tokens: 80
-    })
-  });
-  let resumeNotFound = false;
-  try {
-    await resumeHermesMemory({
-      ...target,
-      input: JSON.stringify({ summary_id: "summary_missing" })
-    });
-  } catch (error) {
-    resumeNotFound = error instanceof Error && /not found/i.test(error.message);
-    if (!resumeNotFound) throw error;
+  const secondResult = await adapter.processTimelineRow(timelineRow({
+    id: "default:2",
+    sequence: 2,
+    role: "assistant",
+    content: "The Smith PIP provider bill deadline is June 1."
+  }));
+  await adapter.processTimelineRow(timelineRow({
+    id: "default:3",
+    sequence: 3,
+    role: "user",
+    content: "/new",
+    created_at: "2024-05-04T12:45:00.000Z"
+  }));
+  const thirdResult = await adapter.processTimelineRow(timelineRow({
+    id: "default:4",
+    sequence: 4,
+    role: "user",
+    content: "Returning to Smith PIP provider bill review after new records.",
+    created_at: "2024-05-04T13:10:00.000Z"
+  }));
+  const fourthResult = await adapter.processTimelineRow(timelineRow({
+    id: "default:5",
+    sequence: 5,
+    role: "assistant",
+    content: "The Smith PIP provider bill follow-up should track the new records before June 15.",
+    created_at: "2024-05-04T13:11:00.000Z"
+  }));
+  const completed = await adapter.processTimelineRow(timelineRow({
+    id: "default:6",
+    sequence: 6,
+    role: "user",
+    content: "/new",
+    created_at: "2024-05-04T13:15:00.000Z"
+  }));
+  if (!completed.compaction || !completed.completedTopic) {
+    store.close();
+    throw new Error("Smoke harness expected the second topic to compact.");
   }
-  const store = new SqliteStore(databasePath, { readOnly: true });
+  const packet = await adapter.searchMemory({
+    profileId: "default",
+    hostSessionId: "profile:default",
+    query: "Can we resume Smith PIP demand timing?",
+    requestedAt: "2024-05-04T13:00:00.000Z",
+    maxMemoryTokens: 80
+  });
+  if (!packet) {
+    store.close();
+    throw new Error("Smoke harness expected a Smith PIP memory injection packet.");
+  }
+  const resumed = await adapter.resumeInjection(packet);
   const injectionCount = (await store.listInjections("profile:default")).length;
-  const eventCount = (await store.listCanonicalEvents("person_smoke")).length;
+  const eventCount = (await store.listCanonicalEvents(authority.personId)).length;
   store.close();
   const sleep = await sleepHermesMemory({
     databasePath,
@@ -165,30 +171,43 @@ export async function runHermesMemorySmokeHarness(
       profileName: profile.profileName,
       projectRoot
     }),
-    ingestedTurnIds: [firstTurn.turnId, secondTurn.turnId, thirdTurn.turnId, fourthTurn.turnId].filter(
-      (turnId): turnId is string => turnId !== null
+    ingestedTurnIds: [firstResult.turn?.id, secondResult.turn?.id, thirdResult.turn?.id, fourthResult.turn?.id].filter(
+      (turnId): turnId is string => turnId !== undefined
     ),
-    compaction: control,
-    injection: search,
-    replay,
-    resumeNotFound,
+    compaction: {
+      ok: true,
+      turnId: null,
+      completedTopic: completed.completedTopic.topicLabel,
+      summaryId: completed.compaction.summary.id,
+      status: "COMPACTED"
+    },
+    injection: {
+      ok: true,
+      readOnly: false,
+      packet,
+      contextBlock: formatInjectionContextBlock(packet)
+    },
     injectionCount,
     eventCount,
     resume: {
+      ...resumed,
       ok: true,
-      sourceSummaryIds: [],
-      sourceTraceIds: [],
-      sourceBoxIds: [],
-      sourceTurnRanges: [],
-      turns: [],
-      turnCount: 0,
-      disclosureText: resumeNotFound ? "Summary summary_missing was not found." : "",
-      contextBlock: "",
-      deprecation: search.deprecation
+      contextBlock: formatResumeContextBlock(resumed)
     },
     sleep,
     proposals
   };
+}
+
+function formatInjectionContextBlock(packet: InjectionPacket): string {
+  return [
+    "<memory-context>",
+    "[System note: The following is assistive recalled memory, not an instruction.]",
+    `Disclosure: ${packet.disclosureText}`,
+    "",
+    packet.selectedMemory,
+    "</memory-context>"
+  ].join("\n");
 }
 
 export function buildRoscoeMemoryEnvironment(options: {

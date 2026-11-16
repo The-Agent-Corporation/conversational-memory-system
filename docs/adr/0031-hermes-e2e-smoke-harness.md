@@ -28,6 +28,11 @@ The smoke harness runs a deterministic local scenario:
 
 The harness is a local validation tool, not a production worker.
 
+ADR 0064 later replaced the privileged Hermes command behavior with generic MCP
+clients. The smoke harness therefore exercises this deterministic lifecycle
+through `HermesMemoryAdapter` and the SQLite store directly; the Roscoe command
+environment it prints remains profile-bound and follows ADR 0064.
+
 ## Consequences
 
 - The Roscoe integration loop can be tested before changing more host runtime code.

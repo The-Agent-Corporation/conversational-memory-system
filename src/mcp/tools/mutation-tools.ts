@@ -3,6 +3,7 @@ import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/
 import { z } from "zod";
 import type { MutationCommitReceipt } from "../../storage/mcp-mutation-contracts.js";
 import { createResponseEnvelope } from "../response-envelope.js";
+import { CONFIGURED_HISTORY_SOURCES } from "../../imports/types.js";
 
 const IdentifierSchema = z.string().trim().min(1).max(512);
 const ConfirmationTokenSchema = z.string().min(32).max(512);
@@ -60,7 +61,7 @@ const DeletionEffectCountsSchema = z.object({
 
 export const HistoryIngestPreviewInputSchema = z.object({
   sourceAlias: SourceAliasSchema,
-  source: z.enum(["codex", "claude-code", "openclaw", "hermes"]),
+  source: z.enum(CONFIGURED_HISTORY_SOURCES),
   requestedAt: IsoDateTimeSchema
 }).strict();
 

@@ -354,10 +354,14 @@ export class InMemoryStore implements MemoryStore {
     const currentSource = sourceId ? this.sources.find((item) => item.id === sourceId) ?? null : null;
     const currentCheckpoint = this.importCheckpoints.find((item) => item.id === parsed.nextCheckpoint.id) ?? null;
     const currentGrant = this.sourceGrants.find((item) => item.id === parsed.expectedGrant.id) ?? null;
-    const occupiedTargetIds = this.canonicalEvents.filter((item) => parsed.targetCanonicalEventIds.includes(item.id));
+    const expectedEvents = new Map(parsed.expectedCanonicalEvents.map((item) => [item.id, item]));
+    const targetEventsChanged = parsed.targetCanonicalEventIds.some((id) => {
+      const current = this.canonicalEvents.find((item) => item.id === id) ?? null;
+      return !this.sameRecord(current, expectedEvents.get(id) ?? null);
+    });
     if (!this.sameRecord(currentSource, parsed.expectedSource) ||
         !this.sameRecord(currentCheckpoint, parsed.expectedCheckpoint) ||
-        !this.sameRecord(currentGrant, parsed.expectedGrant) || occupiedTargetIds.length > 0) {
+        !this.sameRecord(currentGrant, parsed.expectedGrant) || targetEventsChanged) {
       return this.stateChanged(parsed.receipt);
     }
     const staged = {

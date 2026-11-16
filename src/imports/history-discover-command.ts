@@ -4,19 +4,22 @@ import { pathToFileURL } from "node:url";
 import { discoverClaudeHistory } from "./claude-discovery.js";
 import { discoverCordisHistory } from "./cordis-discovery.js";
 import { discoverHermesHistory } from "./hermes-discovery.js";
+import { discoverGrokCliHistory } from "./grok-cli-discovery.js";
 import { discoverOpenClawHistory } from "./openclaw-discovery.js";
 import type {
   ClaudeHistoryCandidate,
   CordisHistoryCandidate,
   HermesHistoryCandidate,
+  GrokHistoryCandidate,
   OpenClawHistoryCandidate
 } from "./types.js";
 
-export type ImportSource = "claude-code" | "openclaw" | "hermes" | "cordis";
+export type ImportSource = "claude-code" | "openclaw" | "hermes" | "cordis" | "grok-cli";
 export type UniversalHistoryCandidate =
   | ClaudeHistoryCandidate
   | OpenClawHistoryCandidate
   | HermesHistoryCandidate
+  | GrokHistoryCandidate
   | CordisHistoryCandidate;
 
 export interface HistoryDiscoverCommandOptions {
@@ -28,7 +31,7 @@ export interface HistoryDiscoverCommandOptions {
 export interface HistoryDiscoverCommandResult {
   ok: true;
   approvalRequired: true;
-  candidate: UniversalHistoryCandidate;
+  candidates: UniversalHistoryCandidate[];
 }
 
 export async function runHistoryDiscoverCommand(
@@ -36,20 +39,23 @@ export async function runHistoryDiscoverCommand(
 ): Promise<HistoryDiscoverCommandResult> {
   const sourcePath = resolve(options.sourcePath ?? defaultSourcePath(options.source));
   const discoveredAt = options.discoveredAt ?? new Date().toISOString();
-  const candidate = options.source === "claude-code"
-    ? await discoverClaudeHistory(sourcePath, discoveredAt)
+  const candidates: UniversalHistoryCandidate[] = options.source === "grok-cli"
+    ? await discoverGrokCliHistory(sourcePath, discoveredAt)
+    : [options.source === "claude-code"
+      ? await discoverClaudeHistory(sourcePath, discoveredAt)
     : options.source === "openclaw"
       ? await discoverOpenClawHistory(sourcePath, discoveredAt)
       : options.source === "hermes"
         ? await discoverHermesHistory(sourcePath, discoveredAt)
-        : await discoverCordisHistory(sourcePath, discoveredAt);
-  return { ok: true, approvalRequired: true, candidate };
+        : await discoverCordisHistory(sourcePath, discoveredAt)];
+  return { ok: true, approvalRequired: true, candidates: candidates.sort((a, b) => a.id.localeCompare(b.id)) };
 }
 
 function defaultSourcePath(source: ImportSource): string {
   if (source === "claude-code") return join(homedir(), ".claude");
   if (source === "openclaw") return join(homedir(), ".openclaw");
   if (source === "cordis") return join(homedir(), ".cordis");
+  if (source === "grok-cli") return join(homedir(), ".grok", "sessions");
   return join(homedir(), ".hermes");
 }
 
@@ -63,8 +69,8 @@ function parseArgs(args: string[]): HistoryDiscoverCommandOptions {
 }
 
 function parseSource(value: string | undefined): ImportSource {
-  if (value === "claude-code" || value === "openclaw" || value === "hermes" || value === "cordis") return value;
-  throw new Error("Missing or unsupported --source. Use claude-code, openclaw, hermes, or cordis.");
+  if (value === "claude-code" || value === "openclaw" || value === "hermes" || value === "cordis" || value === "grok-cli") return value;
+  throw new Error("Missing or unsupported --source. Use claude-code, openclaw, hermes, cordis, or grok-cli.");
 }
 
 export function readFlags(args: string[]): Map<string, string> {
