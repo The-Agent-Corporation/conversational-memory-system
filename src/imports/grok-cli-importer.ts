@@ -252,32 +252,9 @@ function classifyRecord(line: string): ClassifiedRecord {
 }
 
 function containsJsonPropertyName(line: string, propertyName: string): boolean {
-  for (let start = line.indexOf('"'); start !== -1; start = line.indexOf('"', start + 1)) {
-    let escaped = false;
-    for (let end = start + 1; end < line.length; end += 1) {
-      const character = line[end]!;
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (character === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (character !== '"') continue;
-
-      let separator = end + 1;
-      while (separator < line.length && /\s/u.test(line[separator]!)) separator += 1;
-      if (line[separator] === ":") {
-        try {
-          if (JSON.parse(line.slice(start, end + 1)) === propertyName) return true;
-        } catch {
-          break;
-        }
-      }
-      start = end;
-      break;
-    }
+  const propertyTokens = /"((?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-f]{4}))*)"\s*:/giu;
+  for (const [, encoded] of line.matchAll(propertyTokens)) {
+    if (JSON.parse(`"${encoded}"`) === propertyName) return true;
   }
   return false;
 }

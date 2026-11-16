@@ -79,10 +79,13 @@ describe("Grok CLI history import", () => {
 
   it("never persists malformed encrypted records whose property names use JSON escapes", async () => {
     const fixture = await createFixture();
-    const protectedPayloads = ["MALFORMED_ENCRYPTED_PAYLOAD", "ESCAPED_PREFIX_PAYLOAD", "ESCAPED_ALL_PAYLOAD"];
+    const protectedPayloads = [
+      "MALFORMED_ENCRYPTED_PAYLOAD", "ESCAPED_PREFIX_PAYLOAD", "ESCAPED_ALL_PAYLOAD", "ESCAPED_AFTER_BAD_KEY_PAYLOAD"
+    ];
     await appendFile(fixture.chatPath,
       `{"type":"reasoning","\\u0065ncrypted_content":"${protectedPayloads[1]}"\n` +
       `{"type":"reasoning","\\u0065\\u006e\\u0063\\u0072\\u0079\\u0070\\u0074\\u0065\\u0064\\u005f\\u0063\\u006f\\u006e\\u0074\\u0065\\u006e\\u0074":"${protectedPayloads[2]}"\n` +
+      `{"bad\\q":"prior malformed key","\\u0065ncrypted_content":"${protectedPayloads[3]}"\n` +
       `{"type":"user","content":"SAFE_MALFORMED_PAYLOAD"\n`);
     const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
       .find((item) => item.scopeId === "/workspace/alpha")!;
