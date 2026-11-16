@@ -238,7 +238,7 @@ function classifyRecord(line: string): ClassifiedRecord {
   if (line.trim().length === 0) return { record: null, startsTurn: false, recognizedExclusion: true };
   let value: unknown;
   try { value = JSON.parse(line); } catch {
-    if (line.includes('"encrypted_content"')) {
+    if (containsJsonPropertyName(line, "encrypted_content")) {
       return { record: null, startsTurn: false, recognizedExclusion: true };
     }
     return { record: null, startsTurn: false, recognizedExclusion: false, quarantineReason: "malformed_json" };
@@ -249,6 +249,37 @@ function classifyRecord(line: string): ClassifiedRecord {
   const exclusion = role === "reasoning" || role === "tool" || role === "tool_result" || role === "system" ||
     "encrypted_content" in record || "summary" in record && role !== "assistant";
   return { record, startsTurn: role === "user", recognizedExclusion: exclusion };
+}
+
+function containsJsonPropertyName(line: string, propertyName: string): boolean {
+  for (let start = line.indexOf('"'); start !== -1; start = line.indexOf('"', start + 1)) {
+    let escaped = false;
+    for (let end = start + 1; end < line.length; end += 1) {
+      const character = line[end]!;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (character === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (character !== '"') continue;
+
+      let separator = end + 1;
+      while (separator < line.length && /\s/u.test(line[separator]!)) separator += 1;
+      if (line[separator] === ":") {
+        try {
+          if (JSON.parse(line.slice(start, end + 1)) === propertyName) return true;
+        } catch {
+          break;
+        }
+      }
+      start = end;
+      break;
+    }
+  }
+  return false;
 }
 
 function emptyResult(): HistoryImportResult {

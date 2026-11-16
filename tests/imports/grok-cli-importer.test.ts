@@ -77,6 +77,38 @@ describe("Grok CLI history import", () => {
     expect((await store.listCanonicalEvents("person_1")).map((event) => event.nativeEventId)).toContain("partial");
   });
 
+  it("never persists malformed encrypted records whose property names use JSON escapes", async () => {
+    const fixture = await createFixture();
+    const protectedPayloads = ["MALFORMED_ENCRYPTED_PAYLOAD", "ESCAPED_PREFIX_PAYLOAD", "ESCAPED_ALL_PAYLOAD"];
+    await appendFile(fixture.chatPath,
+      `{"type":"reasoning","\\u0065ncrypted_content":"${protectedPayloads[1]}"\n` +
+      `{"type":"reasoning","\\u0065\\u006e\\u0063\\u0072\\u0079\\u0070\\u0074\\u0065\\u0064\\u005f\\u0063\\u006f\\u006e\\u0074\\u0065\\u006e\\u0074":"${protectedPayloads[2]}"\n` +
+      `{"type":"user","content":"SAFE_MALFORMED_PAYLOAD"\n`);
+    const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))
+      .find((item) => item.scopeId === "/workspace/alpha")!;
+    const databasePath = join(fixture.root, "encrypted-boundary.sqlite");
+    const store = new SqliteStore(databasePath);
+
+    const result = await new GrokCliHistoryImporter(store, { clock: () => NOW })
+      .importApprovedSource(approveGrokCliHistory(candidate, "person_1", "default", NOW));
+    expect(result.recordsQuarantined).toBe(3);
+    const durableBeforeClose = JSON.stringify({
+      events: await store.listCanonicalEvents("person_1"),
+      quarantine: await store.listQuarantineRecords("person_1", candidate.id)
+    });
+    expect(durableBeforeClose).toContain("SAFE_MALFORMED_PAYLOAD");
+    for (const payload of protectedPayloads) expect(durableBeforeClose).not.toContain(payload);
+    store.close();
+
+    const reopened = new SqliteStore(databasePath);
+    const durableAfterReopen = JSON.stringify({
+      events: await reopened.listCanonicalEvents("person_1"),
+      quarantine: await reopened.listQuarantineRecords("person_1", candidate.id)
+    });
+    for (const payload of protectedPayloads) expect(durableAfterReopen).not.toContain(payload);
+    reopened.close();
+  });
+
   it("rejects a candidate whose immutable decoded scope is changed", async () => {
     const fixture = await createFixture();
     const candidate = (await discoverGrokCliHistory(fixture.sessionsRoot, NOW))[0]!;
